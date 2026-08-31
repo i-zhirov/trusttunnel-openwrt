@@ -37,16 +37,26 @@ regenerate() {
 	mv "$RECORDS.new" "$RECORDS" || return 1
 
 	_cert=$(uci -q get trusttunnel.endpoint.certificate)
+	_cert_pem=""
 	if [ -n "$_cert" ]; then
 		printf '%s\n' "$_cert" > "$OUTDIR/endpoint.pem"
 		chmod 600 "$OUTDIR/endpoint.pem"
+		# gen-config takes the pem FILE PATH, not the content: the
+		# certificate is multi-line (never a record value) and is read
+		# back from the file written just above.
+		_cert_pem="$OUTDIR/endpoint.pem"
 	else
 		rm -f "$OUTDIR/endpoint.pem"
-		_cert=""
 	fi
 
-	if ! "$LIBDIR/gen-config" "$RECORDS" "$_cert" > "$OUTDIR/client.toml"; then
-		return 1
+	if [ -n "$_cert_pem" ]; then
+		if ! "$LIBDIR/gen-config" "$RECORDS" "$_cert_pem" > "$OUTDIR/client.toml"; then
+			return 1
+		fi
+	else
+		if ! "$LIBDIR/gen-config" "$RECORDS" > "$OUTDIR/client.toml"; then
+			return 1
+		fi
 	fi
 	chmod 600 "$OUTDIR/client.toml"
 	return 0
