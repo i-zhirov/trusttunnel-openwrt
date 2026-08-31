@@ -119,6 +119,7 @@ jobs:
             tests/test_hotplug.sh \
             tests/test_uci_defaults.sh \
             tests/test_init_regenerate.sh \
+            tests/integration/run.sh \
             tests/install-harness.sh \
             tests/backend/test_backend_contract.sh
           docker run --rm -v "$PWD:/src" -w /src koalaman/shellcheck:v0.11.0 -s sh --severity=error "$@"
