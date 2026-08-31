@@ -131,6 +131,10 @@ jobs:
   # foreign-arch packages in a merged feed, which is why a single ipk
   # feed works. The ipk row list is the apk list minus
   # aarch64_cortex-a76 (that target only exists on 25.12-era SDKs).
+  # Every row first checks whether the same version is already published
+  # on the site and only runs the SDK build for missing packages: the
+  # client version comes from the Makefile, not the release tag, so a
+  # LuCI-only release must not repackage the unchanged client.
   build-client:
     name: Build trusttunnel-client (${{ matrix.arch }})
     runs-on: ubuntu-latest
@@ -267,7 +271,71 @@ jobs:
       - name: Prepare the artifacts directory
         run: mkdir -p out
 
+      # Skip the SDK build when the same package is already published:
+      # rebuilding would only reproduce the identical binaries. The client
+      # version comes from the Makefile, NOT from the release tag — a
+      # LuCI-only release must not repackage the unchanged client. The
+      # version is read from PKG_VERSION/PKG_RELEASE; the apk and ipk file
+      # names join them differently (apk: -r<release>, opkg: -<release>).
+      # The published package is fetched from the GitHub Pages site — the
+      # very files the routers install from. A copy of the client Makefile
+      # is carried in the repositories alongside the packages, so a recipe
+      # change without a version bump also forces a rebuild instead of
+      # silently reusing a stale artifact. Anything missing (new version,
+      # new arch, first publish, recipe drift) falls through to the SDK
+      # build below. NOTE: the SDK pins in this workflow are the other
+      # half of the recipe — when they change, bump PKG_RELEASE so the
+      # reuse check rebuilds.
+      - name: Reuse the published client package when the version is unchanged
+        id: reuse
+        run: |
+          version="$(sed -n 's/^PKG_VERSION:=//p' packages/trusttunnel-client/Makefile)"
+          release="$(sed -n 's/^PKG_RELEASE:=//p' packages/trusttunnel-client/Makefile)"
+          if [ -z "$version" ] || [ -z "$release" ]; then
+            echo "::error::cannot read PKG_VERSION/PKG_RELEASE from packages/trusttunnel-client/Makefile"
+            exit 1
+          fi
+          if [ "${{ matrix.ext }}" = apk ]; then
+            pkg="trusttunnel-client-${version}-r${release}.apk"
+            url="https://i-zhirov.github.io/trusttunnel-openwrt/apk/${{ matrix.arch }}/${pkg}"
+          else
+            pkg="trusttunnel-client_${version}-${release}_${{ matrix.arch }}.ipk"
+            url="https://i-zhirov.github.io/trusttunnel-openwrt/opkg/${pkg}"
+          fi
+          mkdir -p dist
+          tmp="$(mktemp)"
+          if ! curl -fsSL -o "$tmp" "$url" 2>/dev/null; then
+            rm -f "$tmp"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No published ${pkg} for ${{ matrix.arch }}; building it."
+            exit 0
+          fi
+          # The published artifact is reusable only when the recipe that
+          # produced it matches the current Makefile.
+          tmpmk="$(mktemp)"
+          if curl -fsSL -o "$tmpmk" "$(dirname "$url")/trusttunnel-client.Makefile" 2>/dev/null \
+            && diff -q "$tmpmk" packages/trusttunnel-client/Makefile >/dev/null; then
+            if [ "${{ matrix.ext }}" = apk ]; then
+              # The repository stores the apk without the arch suffix; the
+              # -<arch> marker is added back for the release assets, and
+              # the ARCH-* marker lets the repository assembly discover
+              # the built architectures.
+              mv "$tmp" "dist/${pkg%.apk}-${{ matrix.arch }}.apk"
+              printf '%s\n' "${{ matrix.arch }}" > "dist/ARCH-${{ matrix.arch }}"
+            else
+              mv "$tmp" "dist/${pkg}"
+            fi
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "Reusing the published ${pkg} for ${{ matrix.arch }}"
+          else
+            rm -f "$tmp"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "The published ${pkg} for ${{ matrix.arch }} was built from a different recipe; rebuilding."
+          fi
+          rm -f "$tmpmk"
+
       - name: Build trusttunnel-client with the SDK
+        if: steps.reuse.outputs.present != 'true'
         uses: openwrt/gh-action-sdk@v7
         env:
           # Release SDK for the same determinism reason as the build job.
@@ -279,6 +347,7 @@ jobs:
           PACKAGES: trusttunnel-client
 
       - name: Collect the built client package
+        if: steps.reuse.outputs.present != 'true'
         run: |
           mkdir -p dist
           if [ "${{ matrix.ext }}" = apk ]; then
@@ -304,6 +373,16 @@ jobs:
             # The ipk name already carries the arch, so a plain copy is
             # enough to keep the merged feed unambiguous.
             cp "$f" dist/
+          fi
+
+      # Both paths — the SDK build and the published-package reuse — must
+      # leave the expected package in dist/: the upload and the repository
+      # assembly consume exactly what this step asserts.
+      - name: Assert the client package is present
+        run: |
+          if [ -z "$(find dist -name 'trusttunnel-client*.${{ matrix.ext }}' -print -quit)" ]; then
+            echo "::error::no trusttunnel-client package was produced for ${{ matrix.arch }}"
+            exit 1
           fi
 
       - name: Upload the client package
@@ -387,6 +466,10 @@ jobs:
             # apk reconstructs file names from the package metadata, so
             # the -<arch> suffix is stripped on placement.
             cp "$client" "staging/apk/$arch/$(basename "$client" "-${arch}.apk").apk"
+            # The package recipe travels with the packages: the next
+            # release's reuse check diffs it against the current Makefile
+            # before skipping a rebuild.
+            cp packages/trusttunnel-client/Makefile "staging/apk/$arch/trusttunnel-client.Makefile"
           done
 
           # The packages are built unsigned; only the index is signed, so
@@ -418,6 +501,10 @@ jobs:
           cp staging/luci-ipk/*.ipk staging/opkg/
           cp staging/opkg-pkgs/*.ipk staging/opkg/
           cp opkg-key.pub staging/opkg/
+          # The package recipe travels with the feed: the next release's
+          # reuse check diffs it against the current Makefile before
+          # skipping a rebuild.
+          cp packages/trusttunnel-client/Makefile staging/opkg/trusttunnel-client.Makefile
 
           # The canonical index generator, fetched at run time so the
           # pipeline always uses the tooling of the OpenWrt release it
@@ -536,7 +623,7 @@ jobs:
           cp -r staging/apk/. site/apk/
           # Only the feed files are copied: the index tooling and the
           # manifest never reach the site.
-          cp staging/opkg/*.ipk staging/opkg/Packages staging/opkg/Packages.gz staging/opkg/Packages.sig staging/opkg/opkg-key.pub site/opkg/
+          cp staging/opkg/*.ipk staging/opkg/Packages staging/opkg/Packages.gz staging/opkg/Packages.sig staging/opkg/opkg-key.pub staging/opkg/trusttunnel-client.Makefile site/opkg/
           rm -rf staging
 
           # The favicon keeps the browsers' automatic /favicon.ico
