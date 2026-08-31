@@ -1,0 +1,39 @@
+---
+---
+{% comment %}
+The theme's default layout ends with a "This site is open source. Improve
+this page" footer, whose link is built from the page's own source path
+(<url>/edit/<branch>/repo-site/<page-path>). That link is correct for the
+homepage (repo-site/README.md), but the repository index pages are generated
+by the release workflow into site/apk/, site/apk/<arch>/ and site/opkg/ — the
+file the footer would point to does not exist in the repository. This layout
+is the theme's default minus that footer; the index templates must keep using
+it and never switch to `layout: default` for the sake of the footer.
+
+The front matter must stay the FIRST thing in the file: Jekyll only strips
+the `---` delimiters when they open the file, otherwise they are emitted
+into the rendered page as literal text.
+{% endcomment %}
+<!DOCTYPE html>
+<html lang="{{ site.lang | default: "en-US" }}">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+{% seo %}
+    <link rel="stylesheet" href="{{ "/assets/css/style.css?v=" | append: site.github.build_revision | relative_url }}">
+    {% include head-custom.html %}
+  </head>
+  <body>
+    <div class="container-lg px-3 my-5 markdown-body">
+      {% if site.title and site.title != page.title %}
+      <h1><a href="{{ "/" | absolute_url }}">{{ site.title }}</a></h1>
+      {% endif %}
+
+      {{ content }}
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/anchor-js/4.1.0/anchor.min.js" integrity="sha256-lZaRhKri35AyJSypXXs4o6OPFTbTmUoltBbDCbdzegg=" crossorigin="anonymous"></script>
+    <script>anchors.add();</script>
+  </body>
+</html>

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Lab stub: answer like busybox ping -q.
+echo "PING vpn.example.com (1.2.3.4): 56 data bytes"
+echo ""
+echo "--- vpn.example.com ping statistics ---"
+echo "4 packets transmitted, 4 packets received, 0% packet loss"
+echo "round-trip min/avg/max = 10.1/12.3/15.7 ms"
+exit 0

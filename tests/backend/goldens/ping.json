@@ -1,0 +1,1 @@
+{ "results": [ { "host": "1.2.3.4", "sent": 4, "received": 4, "loss": 0, "min": 10.1, "avg": 12.3, "max": 15.7 }, { "host": "2001:db8::1", "sent": 4, "received": 4, "loss": 0, "min": 10.1, "avg": 12.3, "max": 15.7 } ] }

@@ -1,0 +1,9 @@
+# Overrides the site.github.source metadata that the theme's "Improve this
+# page" link is built from. Without this the link points at the branch of
+# the Pages source configuration (a leftover from the branch-based hosting
+# era) and at the wrong path; with it, the link opens the actual homepage
+# template of this repository.
+github:
+  source:
+    branch: main
+    path: repo-site/

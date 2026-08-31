@@ -1,0 +1,13 @@
+#!/bin/sh
+# Lab stub: reports a fixed applied state.
+case "$1" in
+	status)
+		echo "device up"
+		echo "client device tun0"
+		echo "rule present"
+		echo "table present"
+		echo "nft present"
+		;;
+	up|attach|reattach|detach|down) exit 0 ;;
+	*) exit 1 ;;
+esac

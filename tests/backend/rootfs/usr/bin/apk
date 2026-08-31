@@ -1,0 +1,7 @@
+#!/bin/sh
+# Lab stub: apk list -I luci-app-trusttunnel
+if [ "$1" = "list" ]; then
+	echo "luci-app-trusttunnel-1.0.15-r1 architecture: all"
+	exit 0
+fi
+exit 0

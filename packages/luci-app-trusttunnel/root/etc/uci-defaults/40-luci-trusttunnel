@@ -1,0 +1,145 @@
+#!/bin/sh
+# First-boot setup: repair the trusttunnel firewall zone and seed the
+# default routing profile on upgraded installs.
+# shellcheck disable=SC1091
+. /lib/functions.sh
+
+# Keep the first zone named trusttunnel and drop the later duplicates.
+# The callback is invoked indirectly by config_foreach from the OpenWrt
+# shell library, so shellcheck cannot see the call sites.
+# shellcheck disable=SC2329,SC2154
+_dedup_zone() {
+	_dz_sec=$1
+	config_get _dz_name "$_dz_sec" name
+	[ "$_dz_name" = "trusttunnel" ] || return 0
+	if [ -z "$_zone_sec" ]; then
+		_zone_sec=$_dz_sec
+	else
+		uci delete "firewall.$_dz_sec"
+		_removed=1
+	fi
+}
+
+# Keep the first forwarding that targets trusttunnel and drop the rest.
+# shellcheck disable=SC2329,SC2154
+_dedup_forwarding() {
+	_df_sec=$1
+	config_get _df_dest "$_df_sec" dest
+	[ "$_df_dest" = "trusttunnel" ] || return 0
+	if [ -z "$_fwd_sec" ]; then
+		_fwd_sec=$_df_sec
+	else
+		uci delete "firewall.$_df_sec"
+		_removed=1
+	fi
+}
+
+# Re-bind every zone after the first one to the tun+ wildcard. Runs only
+# after a dedup removed duplicate zones: the dedup pass is followed by a
+# repair pass over the remaining zones.
+# shellcheck disable=SC2329,SC2154
+_rebind_zone() {
+	_rz_sec=$1
+	if [ -z "$_first_zone_sec" ]; then
+		_first_zone_sec=$_rz_sec
+		return 0
+	fi
+	uci -q delete "firewall.$_rz_sec.device"
+	uci add_list "firewall.$_rz_sec.device"='tun+'
+	_migrated=1
+}
+
+# Mark the presence of a routing profile; the seed block only fires when
+# the callback never runs.
+# shellcheck disable=SC2329
+_count_profiles() {
+	_has_profile=1
+}
+
+_zone_sec=""
+_fwd_sec=""
+_removed=""
+
+config_load firewall
+config_foreach _dedup_zone zone
+config_foreach _dedup_forwarding forwarding
+
+if [ -n "$_removed" ]; then
+	uci commit firewall
+	/etc/init.d/firewall reload >/dev/null 2>&1
+	logger -t trusttunnel "removed duplicate firewall zones left by an earlier version"
+fi
+
+# Create the zone and its forwarding when no trusttunnel zone exists.
+if [ -z "$_zone_sec" ]; then
+	_new_zone=$(uci add firewall zone)
+	uci set "firewall.$_new_zone.name"='trusttunnel'
+	uci set "firewall.$_new_zone.input"='REJECT'
+	uci set "firewall.$_new_zone.output"='ACCEPT'
+	uci set "firewall.$_new_zone.forward"='REJECT'
+	uci set "firewall.$_new_zone.masq"='1'
+	uci set "firewall.$_new_zone.mtu_fix"='1'
+	uci add_list "firewall.$_new_zone.device"='tun+'
+	_new_fwd=$(uci add firewall forwarding)
+	uci set "firewall.$_new_fwd.src"='lan'
+	uci set "firewall.$_new_fwd.dest"='trusttunnel'
+	uci commit firewall
+	/etc/init.d/firewall reload >/dev/null 2>&1
+fi
+
+# Migrate an old concrete tt0 binding to the tun+ wildcard.
+_migrated=""
+if [ -n "$_zone_sec" ]; then
+	# _devs comes from config_get, which shellcheck cannot trace.
+	config_get _devs "$_zone_sec" device
+	# shellcheck disable=SC2154
+	case " $_devs " in
+		*" tun+ "*)
+			;;
+		*)
+			uci -q delete "firewall.$_zone_sec.device"
+			uci add_list "firewall.$_zone_sec.device"='tun+'
+			_migrated=1
+			;;
+	esac
+	if [ -n "$_removed" ]; then
+		# Reload the config so the repair pass walks the post-dedup
+		# sections, then re-bind every zone after the first one.
+		config_load firewall
+		_first_zone_sec=""
+		config_foreach _rebind_zone zone
+	fi
+fi
+if [ -n "$_migrated" ]; then
+	uci commit firewall
+	/etc/init.d/firewall reload >/dev/null 2>&1
+	logger -t trusttunnel "firewall zone migrated from tt0 to the tun+ wildcard"
+fi
+
+# Seed the default routing profile on installs that predate it: create the
+# profile, move every legacy domains.direct value into its bypass rules and
+# point the endpoint at it.
+_has_profile=""
+config_load trusttunnel
+config_foreach _count_profiles routing_profile
+
+if [ -z "$_has_profile" ]; then
+	_prof=$(uci add trusttunnel routing_profile)
+	uci set "trusttunnel.$_prof.name"='Default'
+	uci set "trusttunnel.$_prof.mode"='vpn'
+	uci -q get trusttunnel.domains.direct 2>/dev/null | while IFS= read -r _d; do
+		[ -n "$_d" ] && uci add_list "trusttunnel.$_prof.bypass_rules"="$_d"
+	done
+	uci set trusttunnel.endpoint.routing_profile='Default'
+	uci commit trusttunnel
+	logger -t trusttunnel "created the default routing profile; the old direct list moved into its bypass rules"
+fi
+
+# Finalize: drop the stale release cache, register the rc.d link so the
+# service starts on boot (the enabled flag is only consulted inside
+# start_service) and clear the LuCI caches.
+mkdir -p /var/cache/trusttunnel
+rm -f /var/cache/trusttunnel/release.json
+/etc/init.d/trusttunnel enable >/dev/null 2>&1
+rm -f /tmp/luci-indexcache /tmp/luci-modulecache/* 2>/dev/null
+exit 0

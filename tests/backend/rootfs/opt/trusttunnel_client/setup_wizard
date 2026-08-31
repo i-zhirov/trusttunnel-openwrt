@@ -1,0 +1,24 @@
+#!/bin/sh
+# Lab stub: writes a fixed endpoint TOML to --settings.
+out=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--settings) out="$2"; shift 2 ;;
+		--mode|--deeplink|--endpoint_config) shift 2 ;;
+		*) shift ;;
+	esac
+done
+cat > "$out" <<'TOML'
+hostname = "vpn.example.com"
+addresses = ["1.2.3.4:443", "[2001:db8::1]:443"]
+username = "alice"
+password = "s3cret"
+custom_sni = "vpn.example.com"
+client_random = "0a0b0c/0f0f0f"
+upstream_protocol = "http2"
+has_ipv6 = false
+skip_verification = true
+anti_dpi = true
+dns_upstreams = ["tls://1.1.1.1"]
+TOML
+exit 0

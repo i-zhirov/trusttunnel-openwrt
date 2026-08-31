@@ -1,0 +1,8 @@
+#!/bin/sh
+# Lab stub: answer the handful of -q get queries the backend makes.
+case "$3" in
+	trusttunnel.main.enabled) echo "1"; exit 0 ;;
+	trusttunnel.endpoint.routing_profile) echo "Default"; exit 0 ;;
+	trusttunnel.network.lan.device) exit 1 ;;
+	*) exit 1 ;;
+esac

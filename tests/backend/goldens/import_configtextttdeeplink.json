@@ -1,0 +1,1 @@
+{ "addresses": [ "1.2.3.4:443", "[2001:db8::1]:443" ], "dns_upstreams": [ "tls://1.1.1.1" ], "hostname": "vpn.example.com", "username": "alice", "password": "s3cret", "custom_sni": "vpn.example.com", "client_random": "0a0b0c/0f0f0f", "protocol": "http2", "has_ipv6": "0", "skip_verification": "1", "anti_dpi": "1" }

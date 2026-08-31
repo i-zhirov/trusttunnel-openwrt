@@ -1,0 +1,22 @@
+/build/
+/dist/
+*.apk
+*.tar.gz
+
+# Local tool settings and agent workspaces: machine-specific settings and
+# intermediate reports that have no place in history.
+.claude/
+.superpowers/
+
+# User documentation lives in the repository root and is tracked: README.md.
+# If another user-facing document is added here, its place is also in the
+# root — otherwise it will silently fall out of the repository and a link to
+# it from README will end up broken.
+
+# Editor and file manager junk.
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db

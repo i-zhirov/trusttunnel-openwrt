@@ -1,0 +1,98 @@
+#!/bin/sh
+# uci-export: dump the trusttunnel UCI config as the records TSV.
+#
+# Every line is "section.option<TAB>value"; list options repeat the key
+# once per value. The emitted key set — 26 keys, fixed order — is the
+# canonical schema the init script's change classifier and the records
+# accessor library consume, so nothing outside it is ever printed:
+# foreign sections or options in the UCI config must not leak into the
+# records.
+#
+# Two hard constraints, both behavioral:
+# - "set -u" must NOT be used: /lib/functions.sh reads uninitialized
+#   variables (IPKG_INSTROOT at source time, CONFIG_LIST_STATE inside
+#   config_load) and dies before printing anything under set -u.
+# - endpoint.certificate is deliberately not exported: PEM is multi-line
+#   and cannot be a record value; the init script writes it separately
+#   to endpoint.pem.
+
+# shellcheck disable=SC1091
+. /lib/functions.sh
+
+config_load trusttunnel
+
+# One line per configured scalar; empty and absent options are skipped
+# (a zero is a real value and is emitted).
+scalar() {
+	_sec=$1
+	_opt=$2
+	_val=""
+	config_get _val "$_sec" "$_opt"
+	[ -n "$_val" ] || return 0
+	printf '%s\t%s\n' "$_sec.$_opt" "$_val"
+}
+
+# One line per list value, through the shared emission callback.
+listopt() {
+	_sec=$1
+	_opt=$2
+	_KEY="$_sec.$_opt"
+	config_list_foreach "$_sec" "$_opt" _emit_one
+}
+
+# Emission callback: prints the pending _KEY once per list value.
+_emit_one() {
+	printf '%s\t%s\n' "$_KEY" "$1"
+}
+
+# config_foreach callback: record the routing_profile section whose name
+# matches the assigned profile; other sections are skipped.
+# shellcheck disable=SC2317,SC2154
+find_profile() {
+	_sec=$1
+	_name=""
+	config_get _name "$_sec" name
+	[ "$_name" = "$profile_want" ] || return 0
+	profile_sec="$_sec"
+}
+
+# The assigned profile is resolved by NAME, so an empty or stale reference
+# exports no profile records at all. The guard is load-bearing: without it
+# an unnamed profile section (empty `name` option) would match the empty
+# reference and leak its mode/rules into the records.
+profile_want=$(uci -q get trusttunnel.endpoint.routing_profile 2>/dev/null) || profile_want=""
+profile_sec=""
+if [ -n "$profile_want" ]; then
+	config_foreach find_profile routing_profile
+fi
+
+# schema-keys: routing_profile.name routing_profile.mode routing_profile.vpn_rules routing_profile.bypass_rules
+
+for o in enabled log_level; do scalar main "$o"; done
+
+for o in hostname username password protocol anti_dpi post_quantum skip_verification has_ipv6 \
+		custom_sni client_random routing_profile; do
+	scalar endpoint "$o"
+done
+
+listopt endpoint address
+listopt endpoint dns_upstream
+
+if [ -n "$profile_sec" ]; then
+	for o in name mode; do
+		config_get _val "$profile_sec" "$o"
+		[ -n "$_val" ] || continue
+		printf '%s\t%s\n' "routing_profile.$o" "$_val"
+	done
+	for o in vpn_rules bypass_rules; do
+		_KEY="routing_profile.$o"
+		config_list_foreach "$profile_sec" "$o" _emit_one
+	done
+fi
+
+for o in mtu table fwmark blackhole_on_down include_router_traffic \
+		lan_devices; do
+	scalar network "$o"
+done
+
+listopt domains direct

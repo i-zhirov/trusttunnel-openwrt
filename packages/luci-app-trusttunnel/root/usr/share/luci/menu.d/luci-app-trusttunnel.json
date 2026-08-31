@@ -1,0 +1,23 @@
+{
+	"admin/services/trusttunnel/status": {
+		"action": { "path": "trusttunnel/status", "type": "view" },
+		"title": "Status",
+		"order": 10
+	},
+	"admin/services/trusttunnel/settings": {
+		"action": { "path": "trusttunnel/settings", "type": "view" },
+		"title": "Settings",
+		"order": 20
+	},
+	"admin/services/trusttunnel/diagnostics": {
+		"action": { "path": "trusttunnel/diagnostics", "type": "view" },
+		"title": "Diagnostics",
+		"order": 30
+	},
+	"admin/services/trusttunnel": {
+		"action": { "type": "firstchild" },
+		"title": "TrustTunnel",
+		"order": 50,
+		"depends": { "uci": { "trusttunnel": true }, "acl": [ "luci-app-trusttunnel" ] }
+	}
+}

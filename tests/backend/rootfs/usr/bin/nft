@@ -1,0 +1,7 @@
+#!/bin/sh
+# Lab stub: the firewall check greps the ruleset for the zone name.
+echo "table inet trusttunnel {"
+echo "  chain prerouting {"
+echo "  }"
+echo "}"
+exit 0

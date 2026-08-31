@@ -1,0 +1,5 @@
+#!/bin/sh
+# Lab stub: a couple of log lines.
+echo "Fri Jan  1 00:00:00 2026 daemon.info trusttunnel[1]: client started"
+echo "Fri Jan  1 00:00:00 2026 daemon.info trusttunnel[1]: tunnel up"
+exit 0

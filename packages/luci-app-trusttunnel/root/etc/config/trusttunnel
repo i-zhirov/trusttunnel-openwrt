@@ -1,0 +1,31 @@
+config main 'main'
+	option enabled '0'
+	option log_level 'info'
+
+config endpoint 'endpoint'
+	option hostname ''
+	option username ''
+	option password ''
+	option protocol 'http2'
+	option anti_dpi '0'
+	option post_quantum '1'
+	option skip_verification '0'
+	option certificate ''
+	option has_ipv6 '1'
+	option custom_sni ''
+	option client_random ''
+	option routing_profile 'Default'
+
+config network 'network'
+	option mtu '1350'
+	option table '880'
+	option fwmark '0x9527'
+	option blackhole_on_down '1'
+	option include_router_traffic '0'
+	option lan_devices ''
+
+config routing_profile
+	option name 'Default'
+	option mode 'vpn'
+
+config domains 'domains'

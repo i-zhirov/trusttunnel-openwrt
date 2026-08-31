@@ -1,0 +1,353 @@
+#!/bin/sh /etc/rc.common
+
+# shellcheck disable=SC2034 # USE_PROCD/START/STOP are consumed by /etc/rc.common
+USE_PROCD=1
+START=95
+STOP=10
+
+LIBDIR=/usr/libexec/trusttunnel
+OUTDIR=/var/etc/trusttunnel
+RECORDS=$OUTDIR/settings.tsv
+CLIENT=/opt/trusttunnel_client/trusttunnel_client
+
+# Undo the keep-routing handshake of an interrupted restart: a start that
+# aborted before the procd instance came up must tear the routing down for
+# real, otherwise the table, the mark rule and the blackhole would stay
+# hanging while nothing points at them.
+abort_restart_cleanup() {
+	if [ "${_TT_KEEP_ROUTING:-0}" = "1" ]; then
+		_TT_KEEP_ROUTING=0
+		if [ -f "$RECORDS" ]; then
+			"$LIBDIR/routing" down "$RECORDS"
+		fi
+	fi
+}
+
+# Rebuild the applied-state records and the client configuration. The records
+# file is replaced atomically (temp file + mv) so a reader never sees a
+# half-written state; the pinned certificate and the generated config live
+# next to it, both mode 600.
+regenerate() {
+	umask 077
+	mkdir -p "$OUTDIR" || return 1
+	if ! "$LIBDIR/uci-export" > "$RECORDS.new"; then
+		rm -f "$RECORDS.new"
+		return 1
+	fi
+	mv "$RECORDS.new" "$RECORDS" || return 1
+
+	_cert=$(uci -q get trusttunnel.endpoint.certificate)
+	if [ -n "$_cert" ]; then
+		printf '%s\n' "$_cert" > "$OUTDIR/endpoint.pem"
+		chmod 600 "$OUTDIR/endpoint.pem"
+	else
+		rm -f "$OUTDIR/endpoint.pem"
+		_cert=""
+	fi
+
+	if ! "$LIBDIR/gen-config" "$RECORDS" "$_cert" > "$OUTDIR/client.toml"; then
+		return 1
+	fi
+	chmod 600 "$OUTDIR/client.toml"
+	return 0
+}
+
+# Point the client at a CA bundle. A pinned certificate or disabled
+# verification make the store unnecessary; otherwise the first existing
+# non-empty bundle wins. The env vars are exported so the procd instance can
+# pick them up later — an empty SSL_CERT_FILE must never reach the instance
+# (an empty value is treated by the client as a broken lookup), which is why
+# the variable is left unset when nothing was found.
+setup_trust_store() {
+	config_load trusttunnel
+	config_get_bool _skipver endpoint skip_verification 0
+	config_get _pinned endpoint certificate
+	# shellcheck disable=SC2154 # both are assigned by config_get_bool/config_get above
+	if [ "$_skipver" = "1" ] || [ -n "$_pinned" ]; then
+		return 0
+	fi
+	for _cafile in /etc/ssl/cert.pem /etc/ssl/certs/ca-certificates.crt; do
+		if [ -s "$_cafile" ]; then
+			export SSL_CERT_FILE="$_cafile"
+			if [ -d /etc/ssl/certs ]; then
+				export SSL_CERT_DIR=/etc/ssl/certs
+			fi
+			return 0
+		fi
+	done
+	logger -t trusttunnel "error: no CA bundle found; install ca-bundle, pin a certificate, or disable verification"
+	return 1
+}
+
+start_service() {
+	config_load trusttunnel
+	config_get_bool enabled main enabled 0
+	# shellcheck disable=SC2154 # assigned by config_get_bool above
+	if [ "$enabled" != "1" ]; then
+		logger -t trusttunnel "disabled in configuration, not starting"
+		abort_restart_cleanup
+		return 0
+	fi
+	if [ ! -x "$CLIENT" ]; then
+		logger -t trusttunnel "error: $CLIENT not found; run install.sh"
+		abort_restart_cleanup
+		return 1
+	fi
+	if ! setup_trust_store; then
+		abort_restart_cleanup
+		return 1
+	fi
+	if ! regenerate; then
+		logger -t trusttunnel "error: configuration generation failed"
+		abort_restart_cleanup
+		return 1
+	fi
+	wait_for_wan
+	wait_for_time
+	if ! "$LIBDIR/routing" up "$RECORDS" "$OUTDIR"; then
+		logger -t trusttunnel "error: routing setup failed"
+		abort_restart_cleanup
+		return 1
+	fi
+
+	# Remember the newest existing tun index before the client creates its
+	# own device, so the attach below only ever touches the fresh one.
+	_tun_since=$(max_ifindex)
+
+	procd_open_instance trusttunnel
+	procd_set_param command "$CLIENT" -c "$OUTDIR/client.toml"
+	if [ -n "${SSL_CERT_FILE:-}" ]; then
+		if [ -n "${SSL_CERT_DIR:-}" ]; then
+			procd_set_param env SSL_CERT_FILE="$SSL_CERT_FILE" SSL_CERT_DIR="$SSL_CERT_DIR"
+		else
+			procd_set_param env SSL_CERT_FILE="$SSL_CERT_FILE"
+		fi
+	fi
+	procd_set_param respawn 3600 5 0
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_set_param pidfile /var/run/trusttunnel.pid
+	procd_close_instance
+
+	attach_client_device "$_tun_since" || true
+	return 0
+}
+
+stop_service() {
+	if [ "${_TT_KEEP_ROUTING:-0}" != "1" ] && [ -f "$RECORDS" ]; then
+		"$LIBDIR/routing" down "$RECORDS"
+	fi
+	return 0
+}
+
+# The client validates the server certificate against the wall clock, so a
+# freshly flashed router whose clock is still in the past would fail every
+# handshake. Give the clock up to 30 s to catch up with the install time;
+# the mtime of gen-config marks it, with a floor for filesystems that do not
+# carry one.
+wait_for_time() {
+	_floor=$(date -r "$LIBDIR/gen-config" +%s 2>/dev/null) || _floor=1750000000
+	_elapsed=0
+	while [ "$(date +%s)" -lt "$_floor" ] && [ "$_elapsed" -lt 30 ]; do
+		sleep 2
+		_elapsed=$((_elapsed + 2))
+	done
+	if [ "$(date +%s)" -lt "$_floor" ]; then
+		logger -t trusttunnel "warning: clock still behind install time; certificate validation may fail"
+	fi
+	return 0
+}
+
+# A default route is needed before routing setup can do anything useful.
+# Missing it is not fatal by itself — the wan may still come up right after
+# the service starts — so this only warns.
+wait_for_wan() {
+	_elapsed=0
+	while [ -z "$(ip route show default 2>/dev/null)" ] && [ "$_elapsed" -lt 30 ]; do
+		sleep 1
+		_elapsed=$((_elapsed + 1))
+	done
+	if [ -z "$(ip route show default 2>/dev/null)" ]; then
+		logger -t trusttunnel "warning: no default route after 30s"
+	fi
+	return 0
+}
+
+# The highest interface index currently known. Entries that are gone or whose
+# index is unreadable are skipped; with no interfaces at all the answer is 0.
+max_ifindex() {
+	_max=0
+	for _dev in /sys/class/net/*; do
+		[ -f "$_dev/ifindex" ] || continue
+		_idx=$(cat "$_dev/ifindex" 2>/dev/null) || continue
+		case "$_idx" in
+			''|*[!0-9]*) continue ;;
+		esac
+		if [ "$_idx" -gt "$_max" ]; then
+			_max=$_idx
+		fi
+	done
+	echo "$_max"
+}
+
+# Tun devices created after <since> that belong to the client: a tun_flags
+# marker, an index above the snapshot, and the IFF_PERSIST bit (0x800) clear —
+# persistent tuns are not owned by the running client.
+new_client_devices() {
+	_since=$1
+	for _dev in /sys/class/net/*; do
+		[ -f "$_dev/tun_flags" ] || continue
+		_flags=$(cat "$_dev/tun_flags" 2>/dev/null) || continue
+		_idx=$(cat "$_dev/ifindex" 2>/dev/null) || continue
+		[ "$_idx" -gt "$_since" ] || continue
+		if [ $((_flags & 0x800)) -eq 0 ]; then
+			echo "${_dev##*/}"
+		fi
+	done
+}
+
+# One-shot attach of the first client tun that already exists at service
+# start. The hotplug handler is the main mechanism for later devices; this
+# only covers the already-present-device edge, so a single attempt is enough.
+attach_client_device() {
+	_new=$(new_client_devices "$1" | head -n 1)
+	if [ -z "$_new" ]; then
+		return 0
+	fi
+	"$LIBDIR/routing" attach "$RECORDS" "$OUTDIR" "$_new"
+}
+
+# Keys whose multiset of values differs between two records files. List
+# options repeat their key, so the comparison must count occurrences of every
+# key/value pair — a second list entry under an existing key is a change, and
+# so is a scalar value swap. Keys are the text before the first tab; the
+# output is sorted and deduplicated.
+changed_keys() {
+	awk -F '\t' '
+		NR == FNR { n[$1 FS $2]++; next }
+		{ m[$1 FS $2]++ }
+		END {
+			for (p in n) if (!(p in m) || m[p] != n[p]) { split(p, a, FS); print a[1] }
+			for (p in m) if (!(p in n)) { split(p, a, FS); print a[1] }
+		}
+	' "$1" "$2" | sort -u
+}
+
+# The cheapest action that still applies a key correctly. Everything unknown
+# gets the fullest action: a too-cheap guess leaves the UI showing a setting
+# that is not in effect, which is impossible to diagnose.
+change_class() {
+	case "$1" in
+		network.lan_devices|network.blackhole_on_down|network.include_router_traffic)
+			echo "reload"
+			;;
+		network.table|network.fwmark|main.enabled)
+			echo "restart_full"
+			;;
+		domains.direct|main.log_level|network.mtu|endpoint.*|routing_profile.*)
+			echo "restart"
+			;;
+		*)
+			echo "restart_full"
+			;;
+	esac
+}
+
+class_rank() {
+	case "$1" in
+		noop) echo 0 ;;
+		reload) echo 1 ;;
+		restart) echo 2 ;;
+		*) echo 3 ;;
+	esac
+}
+
+class_max() {
+	if [ "$(class_rank "$1")" -ge "$(class_rank "$2")" ]; then
+		echo "$1"
+	else
+		echo "$2"
+	fi
+}
+
+# The class of the whole apply: the most expensive key decides.
+classify_change() {
+	_class=noop
+	for _key in $(changed_keys "$1" "$2"); do
+		_class=$(class_max "$_class" "$(change_class "$_key")")
+	done
+	echo "$_class"
+}
+
+# The service is restarted with SIGTERM blocked: the stop inside must not be
+# interrupted while the routing survives the cycle.
+# shellcheck disable=SC2119,SC2120 # rc.common and apply_settings call restart without arguments
+restart() {
+	trap '' TERM
+	stop "$@"
+	start "$@"
+}
+
+reload_service() {
+	apply_settings
+}
+
+# Save & Apply. Decides between doing nothing, reloading routing only, and
+# restarting the client with or without a routing teardown. The certificate
+# never lands in the records (it is multi-line), so it is compared through
+# the separate pem file.
+apply_settings() {
+	if [ ! -f "$RECORDS" ] || ! running; then
+		restart
+		return $?
+	fi
+
+	umask 077
+	if ! "$LIBDIR/uci-export" > "$RECORDS.next"; then
+		rm -f "$RECORDS.next"
+		logger -t trusttunnel "warning: settings export failed, applying the long way"
+		restart
+		return $?
+	fi
+
+	_class=$(classify_change "$RECORDS" "$RECORDS.next")
+	_cert_uci=$(uci -q get trusttunnel.endpoint.certificate)
+	_cert_pem=$(cat "$OUTDIR/endpoint.pem" 2>/dev/null)
+	if [ "$_cert_uci" != "$_cert_pem" ]; then
+		_class=$(class_max "$_class" restart)
+	fi
+
+	case "$_class" in
+		noop)
+			mv "$RECORDS.next" "$RECORDS"
+			logger -t trusttunnel "settings applied: nothing to do for these keys"
+			;;
+		reload)
+			rm -f "$RECORDS.next"
+			if regenerate && "$LIBDIR/routing" up "$RECORDS" "$OUTDIR"; then
+				"$LIBDIR/routing" reattach "$RECORDS" "$OUTDIR"
+				logger -t trusttunnel "settings applied without restarting the client"
+			else
+				logger -t trusttunnel "warning: applying without a restart failed, restarting the service"
+				restart
+			fi
+			;;
+		restart)
+			rm -f "$RECORDS.next"
+			_TT_KEEP_ROUTING=1
+			restart
+			;;
+		*)
+			rm -f "$RECORDS.next"
+			restart
+			;;
+	esac
+}
+
+# Procd hooks: a UCI change reloads the service (which lands in
+# apply_settings), and a wan interface coming up restarts it so the tunnel
+# follows the network.
+service_triggers() {
+	procd_add_reload_trigger "trusttunnel"
+	procd_add_interface_trigger "interface.*.up" wan /etc/init.d/trusttunnel restart
+}
