@@ -1,7 +1,8 @@
 #!/bin/sh
-# Integration harness — install stage: the real install.sh against a
-# locally assembled and served package repository, inside a dockerized
-# OpenWrt router.
+# Integration harness — install and tunnel stages: the real install.sh
+# against a locally assembled and served package repository, inside a
+# dockerized OpenWrt router, connected to a real TrustTunnel endpoint
+# container, with traffic verified through the tunnel.
 #
 # What it does, end to end:
 #   1. preflight  — docker and /dev/net/tun availability;
@@ -16,18 +17,31 @@
 #   4. router     — boots an openwrt/rootfs container with /sbin/init and
 #      configures its network with the router's own tools (uci import +
 #      /etc/init.d/network restart);
-#   5. install    — runs the repository's install.sh with TT_REPO_URL
+#   5. endpoint   — runs the pinned TrustTunnel endpoint release (static
+#      binary, self-signed certificate for tt.test) in a sibling container
+#      on the lab network;
+#   6. targets    — two REMOTE_ADDR oracle servers: one on the lab network
+#      (reached through the tunnel), one on the docker default bridge
+#      (private range, always direct);
+#   7. install    — runs the repository's install.sh with TT_REPO_URL
 #      pointing at the served repo;
-#   6. asserts    — the install-side contract: exit 0, packages installed,
+#   8. asserts    — the install-side contract: exit 0, packages installed,
 #      client binary runs, config seeded, firewall zone created, service
-#      registered but not started, repository entry configured.
+#      registered but not started, repository entry configured;
+#   9. connect    — configures the endpoint via uci (hostname, address,
+#      credentials, the PINNED certificate), enables and starts the
+#      service, waits for the tunnel;
+#  10. traffic    — the tunnel contract: service running, tun device and
+#      routing state up, client log connected, client.toml carries the
+#      pin, traffic to the lab target arrives with the ENDPOINT's source
+#      address, traffic to the private target stays direct.
 #
 # Usage:
 #   TT_PM=apk sh tests/integration/run.sh                 # default
 #   TT_PM=opkg sh tests/integration/run.sh
 #   TT_REPO_DIR=/path/to/dist sh tests/integration/run.sh # local packages
 #   TT_RELEASE_TAG=v1.0.16 sh tests/integration/run.sh    # pinned release
-#   TT_FILTER=install sh tests/integration/run.sh         # one stage
+#   TT_FILTER=traffic sh tests/integration/run.sh         # one stage
 #   TT_KEEP=1 sh tests/integration/run.sh                 # keep containers
 #
 # Docker-gated like the other docker tests: without docker the harness
@@ -38,8 +52,8 @@
 # paths under /Users (a /tmp or /var/folders mount silently appears empty
 # in the container) — the same constraint install-harness.sh documents.
 # The lab subnet must be a /24 with a globally-shaped range: the router's
-# own marking rules refuse private ranges, and the endpoint (later phases)
-# refuses documentation ranges.
+# own marking rules refuse private ranges, and the endpoint refuses
+# documentation ranges.
 set -u
 
 # --- knobs ---------------------------------------------------------------------
@@ -48,26 +62,37 @@ TT_PM="${TT_PM:-apk}"                       # apk | opkg
 TT_LAB_SUBNET="${TT_LAB_SUBNET:-44.55.66.0/24}"
 TT_REPO_DIR="${TT_REPO_DIR:-}"              # prebuilt package dir (flat)
 TT_RELEASE_TAG="${TT_RELEASE_TAG:-latest}"
+TT_SERVER_VERSION="${TT_SERVER_VERSION:-v1.1.0}"  # the endpoint release
+TT_DIRECT_SUBNET="${TT_DIRECT_SUBNET:-192.168.77.0/24}"  # the private direct network
 TT_KEEP="${TT_KEEP:-0}"
 TT_FILTER="${TT_FILTER:-}"
 
 # The pinned alpine image release.yml uses for apk mkndx/adbsign (apk-tools
-# 3.0.7); bash is added inside for the opkg index generator. The python
-# image serves the repository. The router images are the same ones the
-# release verification installs into.
+# 3.0.7); bash is added inside for the opkg index generator; the same image
+# hosts the static endpoint binary. The python image serves the repository
+# and the targets. The router images are the same ones the release
+# verification installs into.
 IMG_ALPINE="alpine:edge@sha256:266f29255458134745f2bf588cb23ed1ed1768b96ff2580a05d70a8aba59e145"
 IMG_PYTHON="python@sha256:c6ead215bfd31f1e433d968853b7a769989117115b728874824e6c0a27cb96fc"
 IMG_ROUTER_APK="openwrt/rootfs:x86-64-25.12.0"
 IMG_ROUTER_OPKG="openwrt/rootfs:x86-64-22.03.7"
 
+# SHA-256 of the endpoint release tarball (TrustTunnel v1.1.0, linux x86_64).
+TT_SERVER_SHA256="91c2ea3db7416a01b5258a4c047ec22890490bc55e1b194206031aa75144f0e7"
+
 case "$TT_PM" in
 	apk)
 		IMG_ROUTER=$IMG_ROUTER_APK
-		PM_GLOBS="luci-app-trusttunnel-*.apk luci-i18n-trusttunnel-*.apk trusttunnel-client-*-x86_64.apk"
+		# The local (SDK-built) client apk carries no -x86_64 suffix — the
+		# release pipeline adds it only to keep the per-arch uploads apart.
+		PM_GLOBS="luci-app-trusttunnel-*.apk luci-i18n-trusttunnel-*.apk trusttunnel-client-*.apk"
+		PM_RELEASE_GLOBS="luci-app-trusttunnel-*.apk luci-i18n-trusttunnel-*.apk trusttunnel-client-*-x86_64.apk"
 		;;
 	opkg)
 		IMG_ROUTER=$IMG_ROUTER_OPKG
+		# ipk file names always carry the architecture.
 		PM_GLOBS="luci-app-trusttunnel_*_all.ipk luci-i18n-trusttunnel-*_all.ipk trusttunnel-client_*_x86_64.ipk"
+		PM_RELEASE_GLOBS="$PM_GLOBS"
 		;;
 	*)
 		echo "error: unknown TT_PM=$TT_PM (apk or opkg)" >&2
@@ -97,12 +122,19 @@ mkdir -p "$TT_TEST_TMP" "$SCRATCH/pkgs" "$SCRATCH/sign" "$SCRATCH/repo"
 NET="ttit-$TT_PM-$SUFFIX"
 REPO_CID="ttit-repo-$SUFFIX"
 ROUTER_CID="ttit-router-$SUFFIX"
+ENDPOINT_CID="ttit-endpoint-$SUFFIX"
+TARGET_CID="ttit-target-$SUFFIX"
+DIRECT_CID="ttit-direct-$SUFFIX"
 
 # The lab subnet is a /24; the host octets are derived from it.
 IP_BASE=${TT_LAB_SUBNET%/*}
 IP_BASE=${IP_BASE%.*}
 IP_REPO=$IP_BASE.10
+IP_ENDPOINT=$IP_BASE.20
 IP_ROUTER=$IP_BASE.30
+IP_TARGET=$IP_BASE.40
+DIRECT_IP=""    # the direct target's address on the private direct network
+DIRECT_NET="ttit-direct-$SUFFIX"
 
 # stage <name> — returns 0 only when the stage matches TT_FILTER (or the
 # filter is empty).
@@ -116,6 +148,10 @@ stage() {
 teardown() {
 	[ -n "${ROUTER_CID:-}" ] && docker rm -f "$ROUTER_CID" >/dev/null 2>&1
 	[ -n "${REPO_CID:-}" ] && docker rm -f "$REPO_CID" >/dev/null 2>&1
+	[ -n "${ENDPOINT_CID:-}" ] && docker rm -f "$ENDPOINT_CID" >/dev/null 2>&1
+	[ -n "${TARGET_CID:-}" ] && docker rm -f "$TARGET_CID" >/dev/null 2>&1
+	[ -n "${DIRECT_CID:-}" ] && docker rm -f "$DIRECT_CID" >/dev/null 2>&1
+	[ -n "${DIRECT_NET:-}" ] && docker network rm "$DIRECT_NET" >/dev/null 2>&1
 	[ -n "${NET:-}" ] && docker network rm "$NET" >/dev/null 2>&1
 }
 
@@ -183,6 +219,24 @@ verify_pkgs() {
 	return 0
 }
 
+# local_dist_dir — the dist/ built by build-sdk.sh (or the CI artifact
+# layout), when it already holds this PM's packages; prints the dir path
+# or nothing. Tree-built packages are preferred over the published
+# release: the release can lag the tree (a released package predating a
+# fix would otherwise fail the tunnel assertions for no reason).
+local_dist_dir() {
+	[ -d "$PWD/dist" ] || return 1
+	for _pat in $PM_GLOBS; do
+		for _f in "$PWD/dist"/$_pat; do
+			[ -f "$_f" ] && {
+				printf '%s' "$PWD/dist"
+				return 0
+			}
+		done
+	done
+	return 1
+}
+
 st_pkgs() {
 	stage pkgs || return
 	echo "== packages"
@@ -191,6 +245,13 @@ st_pkgs() {
 			_tt_pass "packages collected from TT_REPO_DIR=$TT_REPO_DIR"
 		else
 			_tt_fail "TT_REPO_DIR=$TT_REPO_DIR does not hold all $TT_PM packages (globs: $PM_GLOBS)"
+			return
+		fi
+	elif _local=$(local_dist_dir) && [ -n "$_local" ]; then
+		if collect_pkgs "$_local"; then
+			_tt_pass "packages collected from the local SDK build ($_local)"
+		else
+			_tt_fail "dist/ does not hold all $TT_PM packages (globs: $PM_GLOBS)"
 			return
 		fi
 	else
@@ -210,7 +271,7 @@ r = json.load(sys.stdin)
 for a in r.get("assets", []):
     if any(fnmatch.fnmatch(a["name"], p) for p in sys.argv[1].split()):
         print(a["name"])
-' "$PM_GLOBS") || _names=""
+' "$PM_RELEASE_GLOBS") || _names=""
 		_missing=0
 		for _name in $_names; do
 			curl -fsSL -o "$SCRATCH/pkgs/$_name" \
@@ -506,6 +567,177 @@ st_router() {
 	configure_router_network
 }
 
+# --- stage: endpoint ---------------------------------------------------------------
+
+st_endpoint() {
+	stage endpoint || return
+	echo "== endpoint container"
+	_srv="$SCRATCH/srv"
+	mkdir -p "$_srv"
+	_tb="trusttunnel-v${TT_SERVER_VERSION#v}-linux-x86_64.tar.gz"
+	if [ ! -f "$_srv/endpoint.bin" ]; then
+		if ! curl -fsSL -o "$_srv/$_tb" \
+				"https://github.com/TrustTunnel/TrustTunnel/releases/download/$TT_SERVER_VERSION/$_tb"; then
+			_tt_fail "could not download the endpoint release $TT_SERVER_VERSION"
+			return
+		fi
+		_got=$(openssl dgst -sha256 "$_srv/$_tb" 2>/dev/null | awk '{print $NF}')
+		if [ "$_got" != "$TT_SERVER_SHA256" ]; then
+			_tt_fail "endpoint release checksum mismatch (got $_got, expected $TT_SERVER_SHA256)"
+			return
+		fi
+		if ! tar -xzf "$_srv/$_tb" -C "$_srv"; then
+			_tt_fail "could not unpack the endpoint release"
+			return
+		fi
+		mv "$_srv"/trusttunnel-*/trusttunnel_endpoint "$_srv/endpoint.bin"
+	fi
+	cp "$PWD/tests/integration/fixtures/vpn.toml" "$_srv/"
+	cp "$PWD/tests/integration/fixtures/hosts.toml" "$_srv/"
+	cp "$PWD/tests/integration/fixtures/credentials.toml" "$_srv/"
+	# Self-signed certificate for tt.test. The SAN matters: the client
+	# checks the hostname against the PINNED certificate, so the pin is
+	# exercised for real only when the SAN matches the SNI. The config
+	# file form works on both LibreSSL (macOS) and OpenSSL (CI).
+	cat > "$_srv/openssl.cnf" <<'EOF'
+[req]
+distinguished_name = dn
+prompt = no
+x509_extensions = v3
+[dn]
+CN = tt.test
+[v3]
+subjectAltName = DNS:tt.test
+EOF
+	if ! openssl req -x509 -newkey rsa:2048 -keyout "$_srv/key.pem" \
+			-out "$_srv/cert.pem" -days 30 -nodes \
+			-config "$_srv/openssl.cnf" >/dev/null 2>&1; then
+		_tt_fail "endpoint certificate generation failed"
+		return
+	fi
+	if ! openssl x509 -in "$_srv/cert.pem" -noout -text 2>/dev/null | grep -q "DNS:tt.test"; then
+		_tt_fail "the endpoint certificate carries no SAN for tt.test"
+		return
+	fi
+	_tt_pass "endpoint release and self-signed certificate prepared"
+	if ! docker run -d --name "$ENDPOINT_CID" --network "$NET" --ip "$IP_ENDPOINT" \
+			-v "$_srv:/opt/tt:ro" "$IMG_ALPINE" \
+			sh -c 'cp /opt/tt/endpoint.bin /bin/trusttunnel_endpoint && chmod +x /bin/trusttunnel_endpoint && cd /opt/tt && trusttunnel_endpoint vpn.toml hosts.toml' \
+			>/dev/null 2>&1; then
+		_tt_fail "could not start the endpoint container"
+		return
+	fi
+	_i=0
+	while [ "$_i" -lt 30 ]; do
+		_i=$((_i + 1))
+		docker logs "$ENDPOINT_CID" 2>&1 | grep -q "Listening to TCP 0.0.0.0:8443" && break
+		sleep 1
+	done
+	_listen=$(docker logs "$ENDPOINT_CID" 2>&1 | grep -E "Listening to (TCP|UDP) 0.0.0.0:8443" | tr '\n' ' ')
+	if printf '%s' "$_listen" | grep -q "TCP 0.0.0.0:8443" \
+			&& printf '%s' "$_listen" | grep -q "UDP 0.0.0.0:8443"; then
+		_tt_pass "the endpoint listens on TCP and UDP 8443"
+	else
+		_tt_fail "the endpoint did not come up"
+		docker logs "$ENDPOINT_CID" 2>&1 | tail -5
+	fi
+}
+
+# --- stage: targets -----------------------------------------------------------------
+
+st_targets() {
+	stage targets || return
+	echo "== target servers"
+	_whoami="$PWD/tests/integration/fixtures/whoami.py"
+	if ! docker run -d --name "$TARGET_CID" --network "$NET" --ip "$IP_TARGET" \
+			-v "$_whoami:/whoami.py:ro" "$IMG_PYTHON" \
+			python3 /whoami.py >/dev/null 2>&1; then
+		_tt_fail "could not start the lab target"
+		return
+	fi
+	# The direct target lives on a dedicated PRIVATE network (never marked
+	# by the router). A custom docker network adds only the connected
+	# route — joining the docker DEFAULT bridge would inject a second
+	# default route, and the client's interface selection could then pick
+	# the wrong one and dial the endpoint via the wrong gateway.
+	if ! docker network create --subnet "$TT_DIRECT_SUBNET" "$DIRECT_NET" >/dev/null 2>&1; then
+		_tt_fail "could not create the direct network $DIRECT_NET"
+		return
+	fi
+	if ! docker run -d --name "$DIRECT_CID" --network "$DIRECT_NET" \
+			-v "$_whoami:/whoami.py:ro" "$IMG_PYTHON" \
+			python3 /whoami.py >/dev/null 2>&1; then
+		_tt_fail "could not start the direct target"
+		return
+	fi
+	if ! docker network connect "$DIRECT_NET" "$ROUTER_CID" >/dev/null 2>&1; then
+		_tt_fail "could not connect the router to the direct network"
+		return
+	fi
+	_i=0
+	while [ "$_i" -lt 20 ]; do
+		_i=$((_i + 1))
+		# The range form: a hyphenated network name cannot appear as a
+		# template field (Go templates reject "-").
+		DIRECT_IP=$(docker inspect --format \
+			'{{range $k, $v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{end}}' \
+			"$DIRECT_CID" 2>/dev/null | awk '{print $1}')
+		[ -n "$DIRECT_IP" ] && break
+		sleep 1
+	done
+	if [ -z "$DIRECT_IP" ]; then
+		_tt_fail "the direct target got no address on $DIRECT_NET"
+		return
+	fi
+	_i=0
+	while [ "$_i" -lt 30 ]; do
+		_i=$((_i + 1))
+		docker exec "$ROUTER_CID" sh -c "ip -4 addr show eth1 | grep -q 'inet '" >/dev/null 2>&1 && break
+		sleep 1
+	done
+	# The direct-net connect can race the lab default route's installation
+	# (netifd adds the static default asynchronously; docker's connected
+	# gateway can win with metric 0). The client dials the endpoint
+	# through the interface of the default route, so the lab default is
+	# enforced here and its presence is asserted. Busybox ip (still in
+	# effect before install.sh) ignores the default filter, hence the
+	# explicit ^default counting.
+	docker exec "$ROUTER_CID" sh -c "ip route replace default via $IP_BASE.1 dev eth0" >/dev/null 2>&1
+	_def=$(docker exec "$ROUTER_CID" sh -c 'ip route show default' 2>/dev/null)
+	_cnt=$(printf '%s\n' "$_def" | grep -c '^default')
+	_gw=$(printf '%s\n' "$_def" | grep '^default' | grep -c "via $IP_BASE.1")
+	if [ "$_cnt" = "1" ] && [ "$_gw" = "1" ]; then
+		_tt_pass "the router carries exactly one default route, via the lab gateway"
+	else
+		_tt_fail "the router default route is not the lab gateway (got: $(printf '%s\n' "$_def" | tr '\n' ';'))"
+	fi
+	# The python servers take a moment to bind their sockets on a cold
+	# start (the same race as the repository server); poll until both
+	# answer before asserting anything about them.
+	_i=0
+	_targets_ok=0
+	while [ "$_i" -lt 20 ]; do
+		_i=$((_i + 1))
+		_got=$(docker exec "$ROUTER_CID" sh -c "wget -4 -qO- --timeout=5 http://$IP_TARGET:8080/" 2>/dev/null)
+		[ "$_got" = "REMOTE_ADDR=$IP_ROUTER" ] && _targets_ok=1 && break
+		sleep 2
+	done
+	# Pre-tunnel sanity: both targets answer with the ROUTER's own address
+	# while nothing is marked yet (the service is still disabled).
+	_got=$(docker exec "$ROUTER_CID" sh -c "wget -4 -qO- --timeout=10 http://$IP_TARGET:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$IP_ROUTER" "$_got" "the lab target answers directly before the tunnel"
+	_src=$(docker exec "$ROUTER_CID" sh -c "ip route get $DIRECT_IP | grep -o 'src [0-9.]*' | awk '{print \$2}' | head -1" 2>/dev/null)
+	_i=0
+	while [ "$_i" -lt 20 ]; do
+		_i=$((_i + 1))
+		_got=$(docker exec "$ROUTER_CID" sh -c "wget -4 -qO- --timeout=5 http://$DIRECT_IP:8080/" 2>/dev/null)
+		[ "$_got" = "REMOTE_ADDR=$_src" ] && break
+		sleep 2
+	done
+	_got=$(docker exec "$ROUTER_CID" sh -c "wget -4 -qO- --timeout=10 http://$DIRECT_IP:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$_src" "$_got" "the private target answers directly (source: the router itself)"
+}
+
 # --- stage: install ----------------------------------------------------------------
 
 st_install() {
@@ -605,6 +837,134 @@ st_asserts() {
 	fi
 }
 
+# --- stage: connect ---------------------------------------------------------------
+
+st_connect() {
+	stage connect || return
+	echo "== configuring and starting the service"
+	# The direct-net connect (targets stage) can race the lab default's
+	# installation; the client picks its endpoint interface from the
+	# default route, so the lab default is enforced right before the
+	# service starts.
+	docker exec "$ROUTER_CID" sh -c "ip route replace default via $IP_BASE.1 dev eth0" >/dev/null 2>&1
+	if ! docker cp "$SCRATCH/srv/cert.pem" "$ROUTER_CID:/tmp/cert.pem" >/dev/null 2>&1; then
+		_tt_fail "could not copy the pinned certificate into the router"
+		return
+	fi
+	# The endpoint is configured with the router's own tools, exactly like
+	# the README's headless example — plus the PINNED certificate, which is
+	# what the client verifies against (skip_verification stays off).
+	cat > "$SCRATCH/configure.sh" <<EOF
+#!/bin/sh
+set -e
+uci set trusttunnel.endpoint.hostname='tt.test'
+uci add_list trusttunnel.endpoint.address='$IP_ENDPOINT:8443'
+uci set trusttunnel.endpoint.username='router'
+uci set trusttunnel.endpoint.password='test-pass'
+uci set trusttunnel.endpoint.certificate="\$(cat /tmp/cert.pem)"
+uci set trusttunnel.network.lan_devices='eth0'
+uci set trusttunnel.network.include_router_traffic='1'
+uci set trusttunnel.main.enabled='1'
+uci commit trusttunnel
+/etc/init.d/trusttunnel enable
+/etc/init.d/trusttunnel start
+EOF
+	if ! docker cp "$SCRATCH/configure.sh" "$ROUTER_CID:/tmp/configure.sh" >/dev/null 2>&1; then
+		_tt_fail "could not copy the configure script into the router"
+		return
+	fi
+	if docker exec "$ROUTER_CID" sh /tmp/configure.sh >/dev/null 2>&1; then
+		_tt_pass "the service is configured and started"
+	else
+		_tt_fail "the service configuration or start failed"
+		return
+	fi
+	_i=0
+	_ok=0
+	while [ "$_i" -lt 60 ]; do
+		_i=$((_i + 1))
+		if docker exec "$ROUTER_CID" \
+				sh -c 'logread 2>/dev/null | grep -q "Successfully connected to endpoint"' \
+				>/dev/null 2>&1 \
+				&& [ "$(docker exec "$ROUTER_CID" sh -c 'cat /sys/class/net/tun0/carrier 2>/dev/null' 2>/dev/null)" = "1" ]; then
+			_ok=1
+			break
+		fi
+		sleep 1
+	done
+	if [ "$_ok" = "1" ]; then
+		_tt_pass "the tunnel came up"
+	else
+		_tt_fail "the tunnel did not come up within 60s"
+		docker exec "$ROUTER_CID" sh -c 'logread | grep trusttunnel | tail -8' 2>/dev/null
+	fi
+}
+
+# --- stage: traffic assertions -------------------------------------------------------
+
+st_traffic() {
+	stage traffic || return
+	echo "== tunnel and traffic assertions"
+
+	# A7: the service is running and the procd instance is alive.
+	if docker exec "$ROUTER_CID" /etc/init.d/trusttunnel running >/dev/null 2>&1; then
+		_tt_pass "the service reports running"
+	else
+		_tt_fail "the service does not report running"
+	fi
+	_pid=$(docker exec "$ROUTER_CID" sh -c 'cat /var/run/trusttunnel.pid 2>/dev/null' 2>/dev/null)
+	if [ -n "$_pid" ] && docker exec "$ROUTER_CID" sh -c "kill -0 $_pid 2>/dev/null"; then
+		_tt_pass "the procd instance is alive (pid $_pid)"
+	else
+		_tt_fail "the procd instance pidfile is missing or the process is dead"
+	fi
+
+	# A8: the tun device and the routing state.
+	_carrier=$(docker exec "$ROUTER_CID" sh -c 'cat /sys/class/net/tun0/carrier 2>/dev/null' 2>/dev/null)
+	assert_eq "1" "$_carrier" "tun0 exists with the carrier up"
+	_rs=$(docker exec "$ROUTER_CID" \
+		sh -c '/usr/libexec/trusttunnel/routing status /var/etc/trusttunnel/settings.tsv' 2>/dev/null)
+	assert_contains "$_rs" "device up" "routing: the tunnel device is up"
+	assert_contains "$_rs" "client device tun0" "routing: the route is attached to tun0"
+	assert_contains "$_rs" "rule present" "routing: the fwmark rule is present"
+	assert_contains "$_rs" "table present" "routing: table 880 carries the route"
+	assert_contains "$_rs" "nft present" "routing: the nft table is present"
+
+	# A9: the client log reports the established connection.
+	_log=$(docker exec "$ROUTER_CID" \
+		sh -c 'logread | grep "Successfully connected to endpoint" | head -1' 2>/dev/null)
+	assert_contains "$_log" "Successfully connected to endpoint" \
+		"the client log reports the connection"
+
+	# A10: the generated client.toml carries the pinned certificate and the
+	# fixed contract fields.
+	_toml=$(docker exec "$ROUTER_CID" cat /var/etc/trusttunnel/client.toml 2>/dev/null)
+	assert_contains "$_toml" "certificate = '''" \
+		"client.toml opens the pinned certificate literal"
+	assert_contains "$_toml" "-----BEGIN CERTIFICATE-----" \
+		"client.toml carries the pinned PEM"
+	assert_contains "$_toml" "killswitch_enabled = false" \
+		"client.toml leaves the killswitch to the routing table"
+	assert_contains "$_toml" "change_system_dns = false" \
+		"client.toml never changes the system DNS"
+	assert_contains "$_toml" 'vpn_mode = "general"' \
+		"the Default profile means general mode"
+
+	# A11: traffic to the lab target flows through the tunnel — the target
+	# observes the ENDPOINT's address as the source.
+	_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" \
+		"traffic to the lab target arrives with the endpoint's source address"
+
+	# A12: traffic to the private target stays direct — the target observes
+	# the ROUTER's own address (the source the main table picks for it).
+	_src=$(docker exec "$ROUTER_CID" \
+		sh -c "ip route get $DIRECT_IP 2>/dev/null | grep -o 'src [0-9.]*' | awk '{print \$2}' | head -1" 2>/dev/null)
+	_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$DIRECT_IP:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$_src" "$_got" \
+		"traffic to the private target stays direct (source: the router itself)"
+}
+
 # --- main -------------------------------------------------------------------------
 
 st_preflight
@@ -612,7 +972,11 @@ st_pkgs
 st_repo
 st_serve
 st_router
+st_endpoint
+st_targets
 st_install
 st_asserts
+st_connect
+st_traffic
 
 tt_test_summary

@@ -1,0 +1,7 @@
+# The endpoint's TLS host for the integration lab. The client dials the
+# endpoint by address but sends SNI "tt.test" (its configured hostname),
+# and the pinned self-signed certificate carries the matching SAN.
+[[main_hosts]]
+hostname = "tt.test"
+cert_chain_path = "cert.pem"
+private_key_path = "key.pem"

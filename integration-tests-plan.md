@@ -351,20 +351,23 @@ NEW  .github/workflows/integration.yml        CI wiring (build-repo + integratio
                                              (Phase 4)
 NEW  tests/integration/run.sh                 the harness (docker-gated, TT_* overrides,
                                               assert_* helpers mirroring tests/lib.sh,
-                                              exit 77 without docker)  — Phase 1 DONE
+                                              exit 77 without docker)  — Phase 1+2 DONE
+NEW  tests/integration/build-sdk.sh           SDK build of the tree's packages (dist/)
+                                              — Phase 2 DONE
 NEW  tests/integration/README.md              how to run locally (TT_REPO_DIR, TT_PM,
-                                              TT_KEEP)                  — Phase 1 DONE
-NEW  tests/integration/fixtures/vpn.toml      endpoint main settings (Phase 2)
-NEW  tests/integration/fixtures/hosts.toml    main_hosts tt.test + cert paths (Phase 2)
-NEW  tests/integration/fixtures/credentials.toml  one test user (Phase 2)
-NEW  tests/integration/fixtures/whoami.py     REMOTE_ADDR HTTP oracle (Phase 2)
+                                              TT_KEEP)                  — Phase 1+2 DONE
+NEW  tests/integration/fixtures/vpn.toml      endpoint main settings (Phase 2 DONE)
+NEW  tests/integration/fixtures/hosts.toml    main_hosts tt.test + cert paths (Phase 2 DONE)
+NEW  tests/integration/fixtures/credentials.toml  one test user (Phase 2 DONE)
+NEW  tests/integration/fixtures/whoami.py     REMOTE_ADDR HTTP oracle (Phase 2 DONE)
 FIX  packages/luci-app-trusttunnel/root/etc/init.d/trusttunnel
                                              regenerate(): pass the endpoint.pem PATH to
                                              gen-config (Phase 0 — DONE, §4)
 NEW  tests/test_init_regenerate.sh           regression for the pinned-cert path
                                              (Phase 0 — DONE, §4)
 EDIT ci.yml                                   shellcheck list += tests/test_init_regenerate.sh,
-                                             tests/integration/run.sh (Phase 0/1 — DONE)
+                                             tests/integration/run.sh, build-sdk.sh
+                                             (Phase 0/1/2 — DONE)
 EDIT AGENTS.md / README.md                    document the suite and how to run it
 
 ## 11. Implementation order
@@ -373,6 +376,7 @@ EDIT AGENTS.md / README.md                    document the suite and how to run 
 |---|---|---|
 | 0 | Fix the pinned-cert bug (§4) + unit regression | **DONE** — `sh tests/run.sh` green; `client.toml` contains the cert block; negative control verified; install harness + backend contract test + shellcheck green |
 | 1 | Repo assembly + signing helpers (apk + opkg) in the harness; serve + install into a scratch router container; install-side assertions A1–A6 | **DONE** — `tests/integration/run.sh` green for both `TT_PM=apk` (26 assertions) and `TT_PM=opkg` (28 assertions) with release-sourced packages; shellcheck clean; `tests/integration/README.md` written. Two startup races are waited out deterministically (repo server socket bind; firewall lan-zone rule after the network restart) and apk packages are renamed to their metadata-derived names (`apk adbdump`) because the release assets carry a `-x86_64` suffix and a GitHub-mangled tilde — both would 404 otherwise |
+| 2 | Endpoint + target containers; full connect + traffic flow; assertions A7–A12 | **DONE** — BOTH variants are fully green end to end: apk 49 assertions, opkg 50 assertions, with SDK-built packages from this tree (`tests/integration/build-sdk.sh`, the gh-action-sdk recipe as a script). Endpoint container (pinned release v1.1.0, hash-checked, self-signed cert with SAN), whoami targets, uci-configured endpoint with the PINNED certificate (skip_verification stays off — a live tunnel proves the Phase 0 fix), through-tunnel traffic arrives with the endpoint's source address, private traffic stays direct. Three harness traps fixed during bring-up: the docker default bridge injects a second default route that makes the client dial the endpoint via the wrong gateway (the direct target moved to a custom private network), the direct-net connect can race netifd's static default installation (the lab default is enforced and asserted), and busybox `ip route show default` ignores the default filter (the check counts `^default` lines) |
 | 2 | Endpoint + target containers; full connect + traffic flow; assertions A7–A12 | harness green end to end (apk variant, http2) |
 | 3 | Killswitch/lifecycle/idempotence assertions A13–A16; opkg variant; `TT_FILTER`/`TT_KEEP`; failure log dumps | both variants green locally |
 | 4 | `integration.yml`; /dev/net/tun preflight; artifact upload of logs on failure; PR run passes | CI green on a PR |
