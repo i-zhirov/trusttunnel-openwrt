@@ -56,6 +56,7 @@ scratch directory and the served public key is what install.sh installs.
 | `asserts` | install contract: packages installed, client binary runs, Default profile + firewall zone seeded, service registered but not started, repo entry + keys |
 | `connect` | endpoint configured via uci (hostname, address, credentials, the **pinned** certificate), service enabled+started, tunnel up |
 | `traffic` | service running, tun0 + routing state, client log connected, client.toml carries the pin, through-tunnel traffic arrives with the **endpoint's** source address, private traffic stays direct |
+| `lifecycle` | the blackhole killswitch (kernel-level: with the device down, the marked lookup fails into the blackhole), a clean stop tears the routing down and a start restores it, install.sh / uci-defaults / reload idempotence, and the endpoint log shows the tunneled CONNECTs |
 
 ### Knobs
 
@@ -66,11 +67,13 @@ scratch directory and the served public key is what install.sh installs.
 | `TT_RELEASE_TAG` | `latest` | release tag to download packages from |
 | `TT_SERVER_VERSION` | `v1.1.0` | the endpoint release (tarball is hash-checked) |
 | `TT_LAB_SUBNET` | `44.55.66.0/24` | the lab network (must be a /24, globally-shaped range) |
-| `TT_FILTER` | — | run only stages whose name contains the value (`preflight`, `pkgs`, `repo`, `serve`, `router`, `endpoint`, `targets`, `install`, `asserts`, `connect`, `traffic`) |
+| `TT_FILTER` | — | space-separated list of stage names to run; a partial run must include the stages it depends on (e.g. `TT_FILTER="serve router targets"`) |
 | `TT_KEEP` | `0` | keep containers/network/scratch for debugging |
 
-On failure the scratch directory (logs, install output, repository state)
-is kept and its path is printed; `TT_KEEP=1` keeps the containers too.
+On failure the harness collects the router state (logread, trusttunnel log,
+routing status, kernel state, configs) and the container logs into
+`$SCRATCH/logs/` before tearing anything down, and prints the scratch
+path; `TT_KEEP=1` keeps the containers too.
 
 ## Why the stages look the way they do
 
@@ -114,3 +117,20 @@ is kept and its path is printed; `TT_KEEP=1` keeps the containers too.
   version's tilde is mangled into a dot by GitHub — both would 404, so
   every package file is renamed to `name-version.apk` (read via
   `apk adbdump`) before the index is created.
+- **The install retries once on a package-manager mirror flake.** The
+  update step hits the public OpenWrt mirrors, and busybox wget does not
+  retry; install.sh is safe to rerun (its repository setup is
+  idempotent, which the lifecycle stage asserts), so one retry absorbs
+  the transient download failures.
+- **On the apk path the uci-defaults script is consumed by the package
+  manager.** apk runs `/etc/uci-defaults/*` right after placing them and
+  removes them; install.sh's immediate run is the fallback that only
+  fires on opkg. The lifecycle stage runs the idempotence rerun only
+  when the file still exists and asserts the no-duplicate state on both
+  paths.
+- **The killswitch is asserted at the kernel level.** `ip route get
+  <target> mark 0x9527` resolves via tun0 while the tunnel is up; with
+  the device down the kernel drops the attached route, the table holds
+  only the blackhole, and the same lookup fails (`ip route get` answers
+  EINVAL for a blackhole match) — no client process is involved, so the
+  check is deterministic.
