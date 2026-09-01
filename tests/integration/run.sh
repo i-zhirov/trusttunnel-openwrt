@@ -69,6 +69,7 @@ TT_REPO_DIR="${TT_REPO_DIR:-}"              # prebuilt package dir (flat)
 TT_RELEASE_TAG="${TT_RELEASE_TAG:-latest}"
 TT_SERVER_VERSION="${TT_SERVER_VERSION:-v1.1.0}"  # the endpoint release
 TT_DIRECT_SUBNET="${TT_DIRECT_SUBNET:-192.168.77.0/24}"  # the private direct network
+TT_LOGS_DIR="${TT_LOGS_DIR:-}"                  # fixed logs location (CI artifact)
 TT_KEEP="${TT_KEEP:-0}"
 TT_FILTER="${TT_FILTER:-}"
 
@@ -164,10 +165,11 @@ teardown() {
 }
 
 # dump_logs — on failure, collect the router state and the container logs
-# into $SCRATCH/logs BEFORE the teardown removes the containers. The
-# directory is the CI artifact and the local debugging surface.
+# into the logs directory BEFORE the teardown removes the containers.
+# TT_LOGS_DIR gives CI a fixed place for the artifact upload; otherwise
+# the logs live in the scratch.
 dump_logs() {
-	_logs="$SCRATCH/logs"
+	_logs="${TT_LOGS_DIR:-$SCRATCH/logs}"
 	mkdir -p "$_logs"
 	[ -f "$SCRATCH/install.out" ] && cp "$SCRATCH/install.out" "$_logs/"
 	[ -f "$SCRATCH/reinstall.out" ] && cp "$SCRATCH/reinstall.out" "$_logs/"
