@@ -1,15 +1,14 @@
 # Integration tests: the dockerized end-to-end suite (tests/integration/).
 #
 # Builds THIS tree's packages with the OpenWrt SDK — one x86-64 build per
-# package manager (apk on 25.12, ipk on 22.03), the same recipe the
-# release pipeline's SDK action uses — and runs the harness against them
-# for both variants: the real install.sh inside a dockerized OpenWrt
-# router, the router configured with its own tools (uci, /etc/init.d/*),
-# connected to a real TrustTunnel endpoint container, with the tunnel
-# traffic verified end to end (through-tunnel requests arrive with the
-# endpoint's source address, private traffic stays direct, the blackhole
-# killswitch swallows marked traffic, and install/uci-defaults/reload are
-# idempotent).
+# package manager (apk on 25.12, ipk on 22.03) — and runs the harness
+# against them for both variants: the real install.sh inside a dockerized
+# OpenWrt router, the router configured with its own tools (uci,
+# /etc/init.d/*), connected to a real TrustTunnel endpoint container, with
+# the tunnel traffic verified end to end (through-tunnel requests arrive
+# with the endpoint's source address, private traffic stays direct, the
+# blackhole killswitch swallows marked traffic, and
+# install/uci-defaults/reload are idempotent).
 #
 # Separate from ci.yml on purpose: the SDK builds are the slow part, and
 # the fast contract gates must not wait for them. The release workflow
@@ -50,58 +49,37 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7
 
-      # The SDK action chowns the mount paths before starting its
-      # container, so the artifacts directory must already exist — the
-      # same arrangement as release.yml.
-      - name: Prepare the artifacts directory
-        run: mkdir -p out
-
       # Release SDKs for determinism (the snapshot container pins a
       # moving packages-feed commit; release.yml documents the curl
       # Kconfig failure that causes). One x86-64 build covers the lab
-      # router. Both packages are built in one run: the LuCI app (with
-      # its i18n companion) and the x86_64 client binary.
+      # router. The recipe is tests/integration/build-sdk.sh — the same
+      # one the harness runs locally: the gh-action-sdk's package
+      # selection is driven by the generated .config, which in CI
+      # sometimes does not select the i18n companion (its packaging is a
+      # side product of the app's compile), so the translation package
+      # is compiled EXPLICITLY here and cannot be skipped.
       - name: Build the packages with the SDK
-        uses: openwrt/gh-action-sdk@v7
-        env:
-          VERSION_PATH: releases/${{ matrix.version }}
-          ARCH: x86-64-${{ matrix.version }}
-          FEEDNAME: ttowrt
-          FEED_DIR: ${{ github.workspace }}
-          ARTIFACTS_DIR: ${{ github.workspace }}/out
-          PACKAGES: luci-app-trusttunnel trusttunnel-client
+        run: sh tests/integration/build-sdk.sh ${{ matrix.version }}
 
-      # The SDK bin layout differs between the apk and ipk SDKs, so the
-      # files are collected by name; a missing package fails the job
+      # The recipe collects the packages into dist/ already; only the
+      # presence is asserted here so a missing package fails the job
       # loudly instead of surfacing as a confusing harness failure.
-      - name: Collect the built packages
+      - name: Assert the built packages
         run: |
-          mkdir -p dist
-          find out/bin/ -name "luci-app-trusttunnel*.${{ matrix.ext }}" -exec cp {} dist/ \;
-          find out/bin/ -name "luci-i18n-trusttunnel-*.${{ matrix.ext }}" -exec cp {} dist/ \;
-          find out/bin/ -name "trusttunnel-client*.${{ matrix.ext }}" -exec cp {} dist/ \;
           for p in luci-app-trusttunnel luci-i18n-trusttunnel- trusttunnel-client; do
             if [ -z "$(find dist -name "$p*.${{ matrix.ext }}" -print -quit)" ]; then
               echo "::error::no $p package was built"
               exit 1
             fi
           done
+          echo "packages:"
+          find dist -name "*.${{ matrix.ext }}" | sort
 
       - name: Upload the packages
         uses: actions/upload-artifact@v7
         with:
           name: repo-${{ matrix.version }}
           path: dist/*
-
-      - name: Upload the build logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: build-logs-${{ matrix.version }}
-          path: out/logs/
-          # Some failure modes never create logs; the job must not fail
-          # again while reporting itself.
-          if-no-files-found: ignore
 
   integration:
     name: Integration test (${{ matrix.pm }})
