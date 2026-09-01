@@ -28,7 +28,7 @@ The harness prefers, in order:
 
 1. `TT_REPO_DIR` — a flat dir of built packages (the CI artifact layout);
 2. `dist/` — the output of `tests/integration/build-sdk.sh`, which builds
-   `luci-app-trusttunnel`, the i18n package and `trusttunnel-client` from
+   `luci-app-trusttunnel` and `trusttunnel-client` from
    **this tree** with the OpenWrt SDK (the same recipe the release
    pipeline's SDK action uses);
 3. the latest GitHub release (`TT_RELEASE_TAG` pins a specific one).
@@ -46,7 +46,7 @@ scratch directory and the served public key is what install.sh installs.
 | Stage | What it verifies |
 |---|---|
 | `preflight` | docker, `/dev/net/tun` |
-| `pkgs` | the three packages for the PM, from TT_REPO_DIR / dist/ / release |
+| `pkgs` | the two packages for the PM (luci-app + client), from TT_REPO_DIR / dist/ / release |
 | `repo` | hermetic repo assembly + signing (apk: mkndx+adbsign; opkg: ipkg-make-index+usign) |
 | `serve` | repo server on the lab network (44.55.66.0/24), polled until it answers |
 | `router` | openwrt/rootfs booted with `/sbin/init`, network configured via `uci import` + `/etc/init.d/network restart`, firewall settled |
@@ -79,12 +79,17 @@ prints the scratch path; `TT_KEEP=1` keeps the containers too.
 ## CI
 
 `.github/workflows/integration.yml` runs the suite on pull requests, main
-pushes and manual dispatch: a matrix job builds this tree's packages with
-the OpenWrt SDK (apk on 25.12, ipk on 22.03), then one job per package
-manager runs the harness against the built repositories and uploads the
-failure logs as an artifact. The `/dev/net/tun` preflight (with a
-mknod/modprobe fallback) fails loudly instead of letting the harness
-confuse everyone.
+pushes and manual dispatch and is verified green end to end (PR #20):
+a matrix job builds this tree's packages with the OpenWrt SDK (apk on
+25.12, ipk on 22.03), then one job per package manager runs the harness
+against the built repositories and uploads the failure logs as an
+artifact. The `/dev/net/tun` preflight (with a mknod/modprobe fallback)
+fails loudly instead of letting the harness confuse everyone.
+
+Note: `main` dropped the localisation (PRs #17/#19), so the suite's
+contract is the two packages — `luci-app-trusttunnel` and
+`trusttunnel-client` — and the harness has no translation-specific
+steps.
 
 ## Why the stages look the way they do
 
@@ -124,8 +129,8 @@ confuse everyone.
   the tunnel needs up to a minute to establish — the harness polls for
   all three instead of sleeping.
 - **apk fetches packages by their metadata-derived names.** The release
-  assets carry a `-x86_64` suffix (per-arch uploads) and the i18n
-  version's tilde is mangled into a dot by GitHub — both would 404, so
+  assets carry a `-x86_64` suffix (per-arch uploads), which would 404 on
+  the metadata-derived name, so
   every package file is renamed to `name-version.apk` (read via
   `apk adbdump`) before the index is created.
 - **The install retries once on a package-manager mirror flake.** The

@@ -43,7 +43,7 @@ for _ver in $TT_SDK_VERSION; do
 		-v "$PWD/dist:/artifacts" \
 		-v "$HOME/.tt-sdk-dl:/builder/dl" \
 		-e FEEDNAME=ttowrt \
-		-e PACKAGES="luci-app-trusttunnel luci-i18n-trusttunnel-ru trusttunnel-client" \
+		-e PACKAGES="luci-app-trusttunnel trusttunnel-client" \
 		-e TT_SDK_NJOBS="$TT_SDK_NJOBS" \
 		"$_img" sh -c '
 			set -e
@@ -63,7 +63,12 @@ for _ver in $TT_SDK_VERSION; do
 				echo "== download $PKG"
 				make "package/$PKG/download" >/dev/null 2>&1
 				echo "== compile $PKG"
-				make -j"$TT_SDK_NJOBS" "package/$PKG/compile"
+				make -j"$TT_SDK_NJOBS" "package/$PKG/compile" || {
+					# The parallel build hides the failing command; the
+					# verbose retry is what the OpenWrt docs prescribe.
+					echo "== retrying $PKG verbosely"
+					make -j1 V=s "package/$PKG/compile" || exit 1
+				}
 			done
 			# Collect only the feed packages (the SDK bin tree also holds
 			# base toolchain packages); the feed directory is

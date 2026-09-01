@@ -53,11 +53,7 @@ jobs:
       # moving packages-feed commit; release.yml documents the curl
       # Kconfig failure that causes). One x86-64 build covers the lab
       # router. The recipe is tests/integration/build-sdk.sh — the same
-      # one the harness runs locally: the gh-action-sdk's package
-      # selection is driven by the generated .config, which in CI
-      # sometimes does not select the i18n companion (its packaging is a
-      # side product of the app's compile), so the translation package
-      # is compiled EXPLICITLY here and cannot be skipped.
+      # one the harness runs locally.
       - name: Build the packages with the SDK
         run: sh tests/integration/build-sdk.sh ${{ matrix.version }}
 
@@ -66,7 +62,7 @@ jobs:
       # loudly instead of surfacing as a confusing harness failure.
       - name: Assert the built packages
         run: |
-          for p in luci-app-trusttunnel luci-i18n-trusttunnel- trusttunnel-client; do
+          for p in luci-app-trusttunnel trusttunnel-client; do
             if [ -z "$(find dist -name "$p*.${{ matrix.ext }}" -print -quit)" ]; then
               echo "::error::no $p package was built"
               exit 1
