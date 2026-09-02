@@ -5,6 +5,9 @@
 #   - the noarch LuCI packages and the per-architecture client builds,
 #   - per-architecture signed apk repositories and one merged, signed
 #     opkg feed, each verified by installing into fresh rootfs containers,
+#   - an end-to-end integration verification of the release's own x86-64
+#     packages (the dockerized suite from tests/integration/) that the
+#     publish step waits for,
 #   - a GitHub release carrying the package files (tag pushes only), and
 #   - the GitHub Pages site that serves the repositories (the URL the
 #     installer writes into the router's package-manager configuration).
@@ -399,12 +402,89 @@ jobs:
           path: out/logs/
           if-no-files-found: ignore
 
+  # The end-to-end verification: the same dockerized suite the
+  # integration workflow runs on PRs, executed against the packages THIS
+  # pipeline just built. No SDK rebuild — the release's own x86-64
+  # artifacts are consumed directly — and publish-repo waits for the
+  # results, so only a behaviorally tested release ships. The packages
+  # come from this pipeline's tree on purpose: the harness must test the
+  # artifacts being released, not any pre-built ones.
+  verify-integration:
+    name: Verify the release with the integration tests (${{ matrix.pm }})
+    needs: [build, build-client]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      # One variant's failure must not cancel the other: both results are
+      # needed to tell a package-manager regression from a generic one.
+      fail-fast: false
+      matrix:
+        include:
+          - pm: apk
+            version: 25.12.5
+          - pm: opkg
+            version: 22.03.7
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      # The client creates its tun device inside the router container,
+      # which needs the host's /dev/net/tun; the mknod/modprobe fallback
+      # covers runners without the node, and a clear failure beats a
+      # confusing one deep inside the harness.
+      - name: Preflight /dev/net/tun
+        run: |
+          if [ ! -e /dev/net/tun ]; then
+            sudo mknod -m 666 /dev/net/tun c 10 200 || true
+            sudo modprobe tun || true
+          fi
+          test -e /dev/net/tun || {
+            echo "::error::/dev/net/tun is not available (load the tun module)"
+            exit 1
+          }
+          echo "/dev/net/tun is available"
+
+      # The LuCI app artifact (package-<version>) and the x86_64 client
+      # artifact (package-client-<version>-x86_64) land in one directory;
+      # the harness selects its package manager's files by name globs.
+      - name: Download the LuCI package
+        uses: actions/download-artifact@v7
+        with:
+          name: package-${{ matrix.version }}
+          path: repos
+          merge-multiple: true
+
+      - name: Download the client package
+        uses: actions/download-artifact@v7
+        with:
+          name: package-client-${{ matrix.version }}-x86_64
+          path: repos
+          merge-multiple: true
+
+      - name: Run the integration harness
+        run: |
+          TT_PM=${{ matrix.pm }} \
+          TT_REPO_DIR="$PWD/repos" \
+          TT_LOGS_DIR="$PWD/logs" \
+            sh tests/integration/run.sh
+
+      # On failure the harness collects the router state and the
+      # container logs into $TT_LOGS_DIR — upload them for the release
+      # review.
+      - name: Upload the logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: verify-integration-logs-${{ matrix.pm }}
+          path: logs/
+          if-no-files-found: ignore
+
   # Assembly, signing and publishing. The repositories are served from
   # GitHub Pages, which serves the files byte-identically, as the
   # package managers rely on.
   publish-repo:
     name: Assemble and publish the repositories
-    needs: [build, build-client]
+    needs: [build, build-client, verify-integration]
     # Tag pushes publish a release; dispatch runs publish the repositories
     # and the site. Plain branch CI runs never publish anything.
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'

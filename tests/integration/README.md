@@ -91,6 +91,11 @@ contract is the two packages — `luci-app-trusttunnel` and
 `trusttunnel-client` — and the harness has no translation-specific
 steps.
 
+The release pipeline additionally runs the harness against the
+release's own x86-64 packages (`verify-integration` in `release.yml`)
+and waits for it before publishing — no SDK rebuild there, the release
+artifacts are consumed directly.
+
 ## Why the stages look the way they do
 
 - **The lab subnet must look public.** The router's own marking rules (and
