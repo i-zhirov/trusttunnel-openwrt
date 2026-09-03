@@ -71,7 +71,18 @@ if [ "$PM" = "apk" ]; then
 	mkdir -p /etc/apk/keys /etc/apk/repositories.d
 	# The signing key goes in first: apk refuses an index it cannot verify.
 	wget -O /etc/apk/keys/trusttunnel.pub "$TT_REPO_URL/apk/key-build.pub"
-	_arch_dir=$(apk --print-arch) || die "could not determine the architecture (apk --print-arch failed)"
+	# The repository directories are named after the device's package
+	# architecture, which /etc/apk/arch holds (e.g. mipsel_24kc).
+	# `apk --print-arch` reports apk-tools' own compiled arch (e.g. plain
+	# "mipsel"), which does not always match those directory names — prefer
+	# the file and fall back to the probe only when it is absent or empty.
+	_arch_dir=""
+	if [ -r /etc/apk/arch ]; then
+		_arch_dir=$(cat /etc/apk/arch)
+	fi
+	if [ -z "$_arch_dir" ]; then
+		_arch_dir=$(apk --print-arch) || die "could not determine the architecture (apk --print-arch failed)"
+	fi
 	[ -n "$_arch_dir" ] || die "could not determine the architecture (apk --print-arch returned nothing)"
 	printf '%s\n' "$TT_REPO_URL/apk/$_arch_dir/packages.adb" > /etc/apk/repositories.d/trusttunnel.list
 else
