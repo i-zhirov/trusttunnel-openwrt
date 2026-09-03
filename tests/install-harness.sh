@@ -148,6 +148,7 @@ write_prep() {
         echo 'set -u'
         echo 'mkdir -p /var/lock /etc/apk/keys /etc/apk/repositories.d /etc/opkg/keys /usr/local/bin'
         echo 'rm -f /etc/opkg/keys/* /etc/apk/keys/* 2>/dev/null || true'
+        echo 'rm -f /etc/apk/arch 2>/dev/null || true'
         echo 'uname -m > /tmp/tt_uname_default 2>/dev/null || true'
         echo 'for t in apk opkg uname usign wget; do'
         echo '    p=$(command -v "$t" 2>/dev/null) || continue'
@@ -330,6 +331,24 @@ sc_apk_repo_arch_fail() {
 }
 as_apk_repo_arch_fail() {
     assert_no_file /etc/apk/repositories.d/trusttunnel.list "no apk repo entry is written"
+}
+
+sc_apk_repo_arch_file() {
+    run_scenario "chunk3: /etc/apk/arch names the repo directory" "$IMG_APK" 0 "uname apk wget" "25.12.0" "" \
+        'printf "%s\n" "mipsel_24kc" > /etc/apk/arch' as_apk_repo_arch_file
+}
+as_apk_repo_arch_file() {
+    assert_file_content /etc/apk/repositories.d/trusttunnel.list "http://repo.test/apk/mipsel_24kc/packages.adb" "the /etc/apk/arch value names the repo directory"
+    assert_no_log "apk --print-arch" "apk --print-arch is not consulted when /etc/apk/arch exists"
+}
+
+sc_apk_repo_arch_file_empty() {
+    run_scenario "chunk3: empty /etc/apk/arch falls back to the probe" "$IMG_APK" 0 "uname apk wget" "25.12.0" "" \
+        ': > /etc/apk/arch' as_apk_repo_arch_file_empty
+}
+as_apk_repo_arch_file_empty() {
+    assert_log "apk --print-arch" "an empty /etc/apk/arch falls back to the probe"
+    assert_file_content /etc/apk/repositories.d/trusttunnel.list "http://repo.test/apk/x86_64/packages.adb" "the probe value names the repo directory"
 }
 
 sc_opkg_repo_fresh() {
@@ -678,6 +697,8 @@ run_all() {
     sc_apk_repo_happy
     sc_apk_repo_wget_fail
     sc_apk_repo_arch_fail
+    sc_apk_repo_arch_file
+    sc_apk_repo_arch_file_empty
     sc_opkg_repo_fresh
     sc_opkg_repo_stock_file
     sc_opkg_repo_idempotent
