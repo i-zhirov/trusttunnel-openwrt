@@ -333,14 +333,25 @@ Triggered by `v*` tag pushes (also builds a GitHub release) and
   `aarch64_cortex-a76`). apk files get an `-<arch>` suffix and an
   `ARCH-<arch>` marker for repository assembly; ipk names already carry
   the arch.
-- `publish-repo` — downloads the artifacts, assembles:
+- `publish-repo` — downloads the artifacts plus every prior release's
+  packages via `gh release download` (only the current package set is
+  merged: the early `-lite` releases and the dropped i18n packages are
+  filtered out, and an ipk-less first release is skipped, not failed),
+  assembles:
   - per-arch signed apk repositories (`apk mkndx --allow-untrusted` +
-    `apk adbsign` with `secrets.TT_APK_SIGN_KEY`),
+    `apk adbsign` with `secrets.TT_APK_SIGN_KEY`), cumulative: prior
+    client apks are placed by their `-<arch>` asset suffix and prior
+    noarch LuCI apks land in every arch dir, so every released version
+    stays installable — but a prior client is merged only when its
+    version equals the current build's (the package managers install
+    the highest version, and an old client must not shadow the pinned
+    one),
   - one merged opkg feed (`ipkg-make-index.sh` fetched from openwrt-22.03,
     manifest fields stripped, gzip, `usign -S` with
     `secrets.TT_OPKG_SIGN_KEY`; the signature covers the UNCOMPRESSED
     `Packages`). The two-empty-line padding works around usign's SHA-512
-    size bug — keep it.
+    size bug — keep it. The feed indexes the prior ipks too (same client
+    version filter).
   - verification: installs the built repos into fresh rootfs containers
     exactly as `install.sh` sets them up (25.12.0 apk; 23.05.6 and 24.10.8
     opkg) and runs the client `--version`.
