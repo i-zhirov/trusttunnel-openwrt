@@ -357,9 +357,10 @@ Triggered by `v*` tag pushes (also builds a GitHub release) and
     opkg) and runs the client `--version`.
   - GitHub release upload (tag pushes only, single writer).
   - GitHub Pages site assembly: `repo-site/` templates + generated index
-    pages (`sed r` substitutions must keep file-read and delete on
-    separate lines), rendered with Jekyll, deployed via Pages
-    (`permissions: contents, pages, id-token`).
+    pages — the apk arch pages and the opkg index list what their
+    directories actually hold (`sed r` substitutions must keep file-read
+    and delete on separate lines), rendered with Jekyll, deployed via
+    Pages (`permissions: contents, pages, id-token`).
 
 Repositories are served from the Pages site, not from release assets: the
 i18n package version contains `~`, which GitHub mangles in asset names,

@@ -872,8 +872,26 @@ jobs:
           }" repo-site/apk-index.md > site/apk/index.md
           rm -f "$arch_list"
 
-          # The opkg index is fully static.
-          cp repo-site/opkg-index.md site/opkg/index.md
+          # The opkg index lists what the feed actually holds: the ipk
+          # packages are generated into the page (the machinery links
+          # above them are static), so a released version shows up here
+          # without touching the template. Generated from the directory
+          # itself, like the apk arch pages below — no second copy of
+          # the package list to keep in sync.
+          files="$(mktemp)"
+          for p in site/opkg/*.ipk; do
+            [ -e "$p" ] || continue
+            b="$(basename "$p")"
+            printf '%s\n' "- [$b]($b)" >> "$files"
+          done
+          # r swallows the rest of its line: file read and delete must
+          # sit on separate lines inside the braces (see the __ARCH_LIST__
+          # substitution above).
+          sed "/__FILES__/{
+            r $files
+            d
+          }" repo-site/opkg-index.md > site/opkg/index.md
+          rm -f "$files"
 
           # One index per architecture, listing what that directory
           # actually holds: the signed index and every apk, each as a
