@@ -16,7 +16,11 @@ configures on the router:
   Feed URL for the router:
   `https://i-zhirov.github.io/trusttunnel-openwrt/opkg`
 
-Currently serving the packages from the `__TAG__` release.
+The repositories are cumulative: they serve every released version of
+the LuCI app — the `__TAG__` release on top of all earlier releases — so
+pinning or downgrading to an older version stays possible. The client is
+served at the version the current release pins (the package managers
+install the highest version, so older client builds are not offered).
 
 The GitHub
 [releases](https://github.com/i-zhirov/trusttunnel-openwrt/releases)
