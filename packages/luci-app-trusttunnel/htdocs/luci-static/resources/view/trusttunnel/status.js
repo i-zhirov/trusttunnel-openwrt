@@ -96,9 +96,13 @@ return view.extend({
 	},
 
 	row: function(label, value) {
+		// The value cell wraps its content in an array: current LuCI's
+		// E() (DOM.create) treats an element in the SECOND argument
+		// position as attributes, not data — a bare element value (the
+		// State span, the Server code) used to render an empty cell.
 		return E('tr', [
 			E('td', { 'class': 'left', 'style': 'width:30%' }, label),
-			E('td', value)
+			E('td', [value])
 		]);
 	},
 
