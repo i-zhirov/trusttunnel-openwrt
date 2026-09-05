@@ -4,7 +4,7 @@
 		"read": {
 			"ubus": {
 				"luci.trusttunnel": [
-					"status", "ping", "probe", "check_domain", "log", "versions", "diagnose"
+					"status", "ping", "probe", "check_domain", "log", "diagnose"
 				]
 			},
 			"uci": [ "trusttunnel" ]

@@ -1,6 +1,6 @@
 'use strict';
 
-import { popen, readfile, writefile, access, unlink, stat, mkdir, chmod } from 'fs';
+import { popen, readfile, writefile, access, unlink, stat, chmod } from 'fs';
 import { rand, srand } from 'math';
 
 // The tmp_path() helper below uses rand(), which lives in the math module,
@@ -13,13 +13,6 @@ const LIBDIR = '/usr/libexec/trusttunnel';
 const OUTDIR = '/var/etc/trusttunnel';
 const RECORDS = OUTDIR + '/settings.tsv';
 const CLIENT = '/opt/trusttunnel_client/trusttunnel_client';
-const RELEASE_URL = 'https://api.github.com/repos/i-zhirov/trusttunnel-openwrt/releases/latest';
-const VERSION_CACHE = '/var/cache/trusttunnel/release.json';
-// Six hours between update checks: four requests per day per router, a
-// vanishing fraction of the 60 unauthenticated requests GitHub allows per
-// hour. The status page polls every ten seconds, so without a disk cache a
-// single open browser would exhaust the limit in minutes.
-const RELEASE_TTL = 21600;
 
 // Run a command and return { code, out } with stderr merged into stdout.
 // Merging matters wherever the error text is itself the result (service
@@ -71,36 +64,6 @@ function write_secret_tmp(prefix, data) {
 	writefile(path, data);
 	chmod(path, 384); // 0600
 	return path;
-}
-
-// Compare version strings by numeric components. String comparison is wrong
-// here: "1.0.10" sorts before "1.0.9", so an update would silently never be
-// offered on every tenth release. A leading "v" and a "-rN" package suffix
-// are dropped before comparing. Components that do not start with a digit
-// count as 0. Returns >0 when a is newer, <0 when older, 0 when equal.
-function vercmp(a, b) {
-	function parts(s) {
-		s = replace('' + s, /^[vV]/, '');
-		s = replace(s, /-.*$/, '');
-		let out = [];
-		for (let p in split(s, '.')) {
-			let m = match(p, /^([0-9]+)/);
-			push(out, m ? +m[1] : 0);
-		}
-		return out;
-	}
-
-	let pa = parts(a), pb = parts(b);
-	let n = length(pa) > length(pb) ? length(pa) : length(pb);
-
-	for (let i = 0; i < n; i++) {
-		let x = i < length(pa) ? pa[i] : 0;
-		let y = i < length(pb) ? pb[i] : 0;
-		if (x != y)
-			return x > y ? 1 : -1;
-	}
-
-	return 0;
 }
 
 // Read the UCI value at the given dotted path. The output is trimmed.
@@ -588,104 +551,6 @@ return {
 				let verdict = counts.fail > 0 ? 'fail' : (counts.warn > 0 ? 'warn' : 'ok');
 
 				return { checks: checks, counts: counts, verdict: verdict };
-			}
-		},
-
-		versions: {
-			args: { refresh: false },
-			call: function(req) {
-				let refresh = req.args?.refresh ?? false;
-				let res = {
-					client: null, package: null, latest: null,
-					update_available: false, checked_at: null,
-					stale: false, ahead: false
-				};
-
-				let cv = sh_out(CLIENT + ' --version');
-				if (cv.code == 0) {
-					let m = match(cv.out, /[0-9]+\.[0-9]+\.[0-9]+[^ \t\n]*/);
-					if (m)
-						res.client = m[0];
-				}
-
-				let apk = sh_out('apk list -I luci-app-trusttunnel');
-				if (apk.code == 0) {
-					let m = match(apk.out, /luci-app-trusttunnel-([^ \t\n]+)/);
-					if (m)
-						res.package = m[1];
-				}
-				if (res.package == null) {
-					let opkg = sh_out('opkg info luci-app-trusttunnel');
-					let m = match(opkg.out, /Version: ([^ \t\n]+)/);
-					if (m)
-						res.package = m[1];
-				}
-
-				let now = time();
-				let cache = null;
-				let cached = readfile(VERSION_CACHE);
-
-				if (cached != null) {
-					// A corrupted or foreign cache file must not crash the
-					// update check: json() throws on malformed input.
-					let j = null;
-					try { j = json(cached); } catch (e) { }
-					if (type(j) == 'object')
-						cache = j;
-				}
-
-				let fresh = cache != null &&
-					(type(cache.checked_at) == 'int' || type(cache.checked_at) == 'double') &&
-					(now - cache.checked_at) < RELEASE_TTL;
-
-				// A fresh cache is authoritative unless the installed
-				// package is already newer than the cached tag: then the
-				// cache is behind and must be refreshed regardless.
-				let behind = res.package != null && cache != null &&
-					type(cache.tag) == 'string' && vercmp(cache.tag, res.package) < 0;
-
-				if (!refresh && fresh && !behind && cache != null && type(cache.tag) == 'string') {
-					res.latest = cache.tag;
-					res.checked_at = cache.checked_at;
-				} else {
-					let r = sh_out('curl -fsS --max-time 15 ' + RELEASE_URL);
-
-					if (r.code == 0) {
-						// The endpoint is not a JSON API: any non-JSON body
-						// (an error page, a proxy notice) means "no answer",
-						// not a crash.
-						let j = null;
-						try { j = json(r.out); } catch (e) { }
-						let tag = type(j) == 'object' ? j.tag_name : null;
-
-						if (type(tag) == 'string' && length(tag)) {
-							res.latest = tag;
-							res.checked_at = now;
-							res.stale = false;
-
-							mkdir('/var/cache');
-							mkdir('/var/cache/trusttunnel');
-							if (!writefile(VERSION_CACHE, sprintf('%J', { tag: tag, checked_at: now })))
-								sh('/usr/bin/logger -t trusttunnel "failed to write the update cache"');
-						}
-					} else if (cache != null && type(cache.tag) == 'string') {
-						// Network failure: fall back to the cached answer
-						// with its original timestamp, marked stale. The
-						// cache file is left untouched — a failed check
-						// does not refresh it.
-						res.latest = cache.tag;
-						res.checked_at = cache.checked_at;
-						res.stale = true;
-					}
-				}
-
-				if (res.package != null && res.latest != null) {
-					let cmp = vercmp(res.latest, res.package);
-					res.update_available = cmp > 0;
-					res.ahead = cmp < 0;
-				}
-
-				return res;
 			}
 		},
 

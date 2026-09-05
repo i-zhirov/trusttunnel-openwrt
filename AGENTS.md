@@ -153,13 +153,13 @@ First-boot / reinstall setup: dedups the `trusttunnel` firewall zone and
 forwarding, creates them when missing (zone bound to `tun+`, `lan →
 trusttunnel` forwarding), migrates old concrete `tt0` bindings to `tun+`,
 seeds the Default routing profile (migrating `domains.direct` into its
-bypass rules), registers the rc.d link, drops the stale release cache and
-clears LuCI caches. Idempotent; also run immediately by `install.sh`.
+bypass rules), registers the rc.d link and clears LuCI caches. Idempotent;
+also run immediately by `install.sh`.
 
 ### rpcd backend (`/usr/share/rpcd/ucode/luci.trusttunnel`)
 
 Exposes `luci.trusttunnel` RPC methods (the ACL grants read on
-`status ping probe check_domain log versions diagnose` and write on
+`status ping probe check_domain log diagnose` and write on
 `service import_config`):
 
 - `status` — service state, device, rule/table/nft flags, endpoint,
@@ -172,9 +172,6 @@ Exposes `luci.trusttunnel` RPC methods (the ACL grants read on
 - `diagnose` — the chain walk: config → prerequisites → service → kernel
   → network, each check `{group, label, status, detail, hint}`, plus
   counts and an overall verdict.
-- `versions` — client/package versions vs. the GitHub latest-release API,
-  cached in `/var/cache/trusttunnel/release.json` for `RELEASE_TTL` (21600s),
-  with stale-cache fallback and `vercmp` (numeric, not string).
 - `import_config` — feeds server config text or a `tt://` link to the
   vendor's `setup_wizard`, parses the produced settings and returns the
   endpoint fields; secrets go through `write_secret_tmp` (mode 0600).
@@ -185,8 +182,8 @@ file compiles under the pinned ucode.
 
 ### LuCI views
 
-- `status.js` — verdict banner, facts (state/mode/server), versions table
-  with "Check now", Start/Stop/Restart buttons, client log; polls every 10s.
+- `status.js` — verdict banner, facts (state/mode/server), Start/Stop/
+  Restart buttons, client log; polls every 10s.
 - `settings.js` — a single tabbed `form.Map` whose sections become tabs
   (General, Server, Routing profiles, Network), plus the Import… modal
   that calls `import_config` and applies results to pending UCI (nothing
@@ -387,7 +384,7 @@ while Pages serves files byte-identically. No branch ever holds packages.
   `/etc/init.d/trusttunnel`, `/opt/trusttunnel_client`,
   `/usr/libexec/trusttunnel/{uci-export,gen-config,routing,records.sh}`,
   `/var/etc/trusttunnel/{settings.tsv,client.toml,endpoint.pem,device}`,
-  `/var/cache/trusttunnel/release.json`, `/etc/uci-defaults/40-luci-trusttunnel`,
+  `/etc/uci-defaults/40-luci-trusttunnel`,
   `/etc/hotplug.d/net/40-trusttunnel`. Kernel constants: fwmark `0x9527`,
   table `880`, rule priority `30820`, blackhole metric `1000`.
 - **Scope**: the package must not touch dnsmasq, `https-dns-proxy`, cron,

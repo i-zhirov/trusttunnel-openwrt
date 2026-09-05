@@ -20,13 +20,6 @@ var callService = rpc.declare({
 	expect: {}
 });
 
-var callVersions = rpc.declare({
-	object: 'luci.trusttunnel',
-	method: 'versions',
-	params: [ 'refresh' ],
-	expect: {}
-});
-
 var callLog = rpc.declare({
 	object: 'luci.trusttunnel',
 	method: 'log',
@@ -131,47 +124,6 @@ return view.extend({
 		return E('table', { 'class': 'table' }, rows);
 	},
 
-	renderVersions: function(v, box) {
-		var self = this;
-		var rows = [];
-
-		rows.push(this.row(_('Package'), v.package || _('unknown')));
-		rows.push(this.row(_('TrustTunnel client'), v.client || _('not installed')));
-
-		if (v.latest == null)
-			rows.push(this.row(_('Update check'), _('unavailable — no network and no cached result')));
-		else if (v.update_available)
-			rows.push(this.row(_('Update'), [
-				E('strong', _('%s is available').format(v.latest)),
-				' — ',
-				_('run install.sh again to update')
-			]));
-		else if (v.ahead)
-			rows.push(this.row(_('Update'), _('the installed version is newer than the latest release (%s)').format(v.latest)));
-		else
-			rows.push(this.row(_('Update'), _('up to date')));
-
-		if (v.stale)
-			rows.push(this.row(_('Update check'), _('GitHub unreachable, showing the last cached result')));
-
-		var button = E('button', {
-			'class': 'cbi-button cbi-button-neutral',
-			'click': function(ev) {
-				callVersions(true).then(function(nv) {
-					dom.content(box, self.renderVersions(nv, box));
-				}).catch(function(e) {
-					ui.addNotification(null, E('p', e.message || String(e)), 'danger');
-				});
-			}
-		}, _('Check now'));
-
-		return E('div', [
-			E('table', { 'class': 'table' }, rows),
-			E('br'),
-			button
-		]);
-	},
-
 	handleAction: function(action, ev) {
 		ui.showModal(_('Please wait'), E('p', { 'class': 'spinning' }, _('Running…')));
 
@@ -199,14 +151,7 @@ return view.extend({
 
 		var verdictBox = E('div', this.renderVerdict(st));
 		var factsBox = E('div', this.renderFacts(st));
-		var versionsBox = E('div', E('em', _('Checking…')));
 		var logBox = E('pre', { 'style': 'max-height:22em;overflow:auto;margin:0' });
-
-		callVersions(false).then(function(v) {
-			dom.content(versionsBox, self.renderVersions(v, versionsBox));
-		}).catch(function(e) {
-			dom.content(versionsBox, E('em', e.message || String(e)));
-		});
 
 		poll.add(function() {
 			return callStatus().then(function(s) {
@@ -243,16 +188,8 @@ return view.extend({
 				])
 			]),
 			E('div', { 'class': 'cbi-section' }, [
-				E('div', { 'style': 'display:flex;flex-wrap:wrap;gap:1em' }, [
-					E('div', { 'style': 'flex:1 1 24em;min-width:0' }, [
-						E('h3', _('Now')),
-						factsBox
-					]),
-					E('div', { 'style': 'flex:1 1 24em;min-width:0' }, [
-						E('h3', _('Versions')),
-						versionsBox
-					])
-				])
+				E('h3', _('Now')),
+				factsBox
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', _('Client log')),

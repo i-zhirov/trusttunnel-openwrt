@@ -412,9 +412,7 @@ EOF
     ucd_trusttunnel_default "$ucd_e_dir"
     ucd_stubs "$ucd_e_dir"
 
-    ucd_extra='mkdir -p /var/cache/trusttunnel
-echo stale > /var/cache/trusttunnel/release.json
-mkdir -p /tmp/luci-modulecache
+    ucd_extra='mkdir -p /tmp/luci-modulecache
 echo stale > /tmp/luci-modulecache/cache-entry
 : > /tmp/luci-indexcache'
 
@@ -428,10 +426,8 @@ echo stale > /tmp/luci-modulecache/cache-entry
         "side-effects: the rc.d link points at the init script"
     assert_contains "$ucd_out" "ENABLE=1" \
         "side-effects: the service enable call happened exactly once"
-    assert_contains "$ucd_out" "CACHE_DIR=present" \
-        "side-effects: the cache directory exists"
-    assert_eq "0" "$(ucd_grep_count 'release.json' "$ucd_out")" \
-        "side-effects: the cached release file is removed"
+    assert_contains "$ucd_out" "CACHE_DIR=missing" \
+        "side-effects: the update-check cache directory is not created"
     assert_eq "0" "$(ucd_grep_count 'luci-indexcache' "$ucd_out")" \
         "side-effects: the LuCI index cache is removed"
     assert_eq "0" "$(ucd_grep_count 'cache-entry' "$ucd_out")" \

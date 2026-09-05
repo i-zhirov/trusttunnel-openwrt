@@ -46,8 +46,6 @@ golden_call() {
 		log) printf 'log\t{}' ;;
 		loglines5) printf 'log\t{"lines":5}' ;;
 		diagnose) printf 'diagnose\t{}' ;;
-		versions) printf 'versions\t{}' ;;
-		versionsrefreshtrue) printf 'versions\t{"refresh":true}' ;;
 		import_configtextsampleconf*) printf 'import_config\t{"text":"sample config text"}' ;;
 		import_configtextttdeeplink*) printf 'import_config\t{"text":"tt://deeplink-value"}' ;;
 		*) printf '' ;;
@@ -121,7 +119,6 @@ chmod +x /usr/libexec/trusttunnel/routing
 cat > /usr/bin/curl <<"EOF"
 #!/bin/sh
 case "$*" in
-	*releases/latest*) echo "{\"tag_name\":\"1.0.17\",\"name\":\"v1.0.17\"}" ;;
 	*--interface*) echo "198.51.100.7" ;;
 	*) echo "203.0.113.77" ;;
 esac

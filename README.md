@@ -51,8 +51,7 @@ affected.
 
   Anything else — for example ARMv5/ARMv6 boards, `mips64`, `riscv64` or
   `powerpc` — is refused before a single file is changed.
-- **Internet access from the router**: needed once at install time, and
-  again whenever the Status page runs its update check.
+- **Internet access from the router**: needed once at install time.
 
 ## Installation
 
@@ -180,7 +179,7 @@ the service starts or settings are applied — they must not be edited.
 | `mtu` | `1350` | Tunnel MTU. Too high a value makes small pages load while TLS handshakes and large downloads stall. |
 | `lan_devices` | — | LAN interfaces whose forwarded traffic is considered; empty means the device of the `lan` network, with `br-lan` as the last-resort fallback |
 | `blackhole_on_down` | `1` | Add the blackhole route so marked traffic is dropped instead of leaking to the provider when the tunnel is down. |
-| `include_router_traffic` | `0` | Also route traffic originated by the router itself — including the update check. |
+| `include_router_traffic` | `0` | Also route traffic originated by the router itself. |
 | `fwmark` | `0x9527` | The firewall mark, decimal or `0x`-prefixed hex. Change only on a conflict with mwan3, SQM or another package that marks packets. |
 | `table` | `880` | The routing table id; anything except `0` and the reserved `253–255`. |
 
@@ -242,14 +241,14 @@ an IP address, an `IP:port` pair, or a CIDR range.
 
   Anything outside the schema gets the fullest action too: an unknown key
   can never be applied cheaply, so the safe default is a full restart.
-- **LuCI pages.** The Status page presents the service state, the package
-  and client versions, the client log, and a Mode row that names the
-  assigned routing profile and which half of its rules goes through the
-  tunnel. It renders no device row — the client's tun device is inspected
-  in Diagnostics, whose Tunnel device check reports it. Diagnostics walks
-  the chain from configuration over the client and the tunnel device to
-  routing, firewall and network, with a verdict per check, and offers
-  `ping`, `probe` and `check_domain` tools.
+- **LuCI pages.** The Status page presents the service state, the client
+  log, and a Mode row that names the assigned routing profile and which
+  half of its rules goes through the tunnel. It renders no device row —
+  the client's tun device is inspected in Diagnostics, whose Tunnel
+  device check reports it. Diagnostics walks the chain from configuration
+  over the client and the tunnel device to routing, firewall and network,
+  with a verdict per check, and offers `ping`, `probe` and `check_domain`
+  tools.
 
 ## Diagnostics
 
@@ -265,31 +264,8 @@ here: Status and Diagnostics (Settings is covered under Configuration).
 - **Now**: a State row ("working" only when everything is), a Mode row —
   the assigned profile and which half of its rules goes through the
   tunnel, or "Everything through VPN" without a profile — and the server
-  host name.
-- **Versions**: the installed package version, the client version, and
-  the update check (below). Start / Stop / Restart buttons. The state
-  facts and the client-log tail refresh every ten seconds.
-
-### Update check
-
-The Status page compares the installed package version against this
-repository's latest release
-(`https://api.github.com/repos/i-zhirov/trusttunnel-openwrt/releases/latest`),
-caching the answer in `/var/cache/trusttunnel/release.json` for 21600
-seconds (four requests per day, well below GitHub's anonymous limit). The
-row reads one of:
-
-- **up to date**;
-- **X is available — run install.sh again**;
-- **the installed version is newer than the latest release** (a build from
-  `main`, or a cache that could not be refreshed);
-- **unavailable — no network and no cached result**.
-
-When GitHub is unreachable but a cached answer exists, the cached result
-is shown with an explicit "GitHub unreachable" note. **Check now** asks
-GitHub immediately, bypassing the cache. The client version row is
-informational: the client is a hard dependency of the package and updates
-together with it.
+  host name. Start / Stop / Restart buttons. The state facts and the
+  client-log tail refresh every ten seconds.
 
 ### Diagnostics page
 
@@ -339,7 +315,6 @@ The page also carries three tools:
 | `/var/etc/trusttunnel/endpoint.pem` | The pinned certificate, when one is set (mode 600) |
 | `/var/etc/trusttunnel/device` | The tun device the tunnel route is currently attached to |
 | `/opt/trusttunnel_client/` | The client binaries: `trusttunnel_client` and `setup_wizard` |
-| `/var/cache/trusttunnel/release.json` | The cached update-check answer |
 
 ## Troubleshooting
 
@@ -369,9 +344,6 @@ The page also carries three tools:
 - **The firewall zone is missing from the live ruleset.** The kernel
   checks report it; run `/etc/init.d/firewall reload` — the uci-defaults
   script recreates the zone on the next boot.
-- **The update check reports "unavailable".** The router had no network
-  and no cached answer at check time; the update check needs internet
-  access from the router.
 - **The interface shows a new value, the client behaves as before.**
   Save & Apply updates the applied state only after regenerating the
   client configuration; when the interface and the applied state diverge,
