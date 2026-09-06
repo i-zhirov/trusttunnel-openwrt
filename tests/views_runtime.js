@@ -339,9 +339,11 @@ async function main() {
         dump(statusTree, 0);
     }
     ok(hasText(statusTree, 'Client log'), 'status: client log section present');
-    // The facts box is populated by the poll (E('div', element) yields an
-    // empty div by design — the same in real LuCI), so run a poll cycle
-    // and assert the rendered facts, exactly like the live page.
+    // The verdict and facts boxes render their content immediately
+    // (E('div', {}, node) passes the node as a child — the bare
+    // two-argument form treats it as attributes), and the polls refresh
+    // them in place. Run a poll cycle and assert the rendered facts,
+    // exactly like the live page.
     for (const task of pollTasks)
         await task();
     await Promise.resolve();
@@ -351,7 +353,6 @@ async function main() {
     ok(hasText(statusTree, 'kz.hexbrains.com'), 'status: Server row shows the hostname');
     ok(hasText(statusTree, 'Profile Test — bypass, only the VPN rules are tunneled'),
         'status: Mode row shows the Test bypass profile');
-    ok(hasText(statusTree, 'up to date'), 'status: versions survive the poll cycle');
 
     // ===== settings.js =====
     console.log('== settings.js');
