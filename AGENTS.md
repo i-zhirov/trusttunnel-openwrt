@@ -286,6 +286,44 @@ absent, so the plain suite runs anywhere.
   picked up by `tests/run.sh` (name has no `test_` prefix) but run as its
   own ci.yml step; supports `TT_FILTER`.
 
+### View contract and GUI tests
+
+- `tests/view-contract.js` — a node gate (its own ci.yml step) cross-
+  checking the views against the backend without a browser:
+  1. every `rpc.declare({object, method, params})` in the views must name
+     an object/method the backend registers (parsed from
+     `luci.trusttunnel.uc`) and one the ACL grants (read or write), and
+     the declared params must be a subset of the backend's `args`;
+  2. every literal label/detail/hint the diagnose method emits — as
+     pinned by the backend contract goldens — must be a key of the
+     `DIAG_TEXT` map in `diagnostics.js` (templated values like versions,
+     addresses and ping averages are exempt via the allowlist, which
+     documents the backend expression producing each pattern). A new
+     literal string in a golden without a `DIAG_TEXT` entry fails the
+     gate; cover a new state in the backend contract test first, then
+     this gate sees it.
+- `tests/gui/` — the browser layer of the view contract. The REAL views
+  (real `luci.js` loader, real `form.Map`, real RPC batching) run in a
+  headless chromium inside the pinned `mcr.microsoft.com/playwright`
+  image against a stubbed ubus backend (`tests/gui/stub/server.js`) that
+  serves the backend contract goldens byte-identically, so the browser
+  sees exactly the responses `tests/backend` pins. The specs
+  (`specs/{status,settings,diagnostics}.spec.js`) assert on the rendered
+  DOM and on the RPC frames the stub records (`/__stub` control
+  endpoint). `tests/gui/run.sh` orchestrates: docker-gated (skip 77),
+  fetches the pinned luci-base resources (`openwrt-25.12` commit,
+  `TT_GUI_REF` to override) into `tests/gui/.cache`, installs the pinned
+  `@playwright/test` into `tests/gui/node_modules`, then runs stub +
+  specs inside the image. Both cache dirs are gitignored.
+- The luci-base pin matters: the loader, `dom.create()`'s argument
+  handling (`E()` reads only `arguments[2]` — children must be arrays,
+  and a DOM node as the second argument is treated as the attribute
+  object) and the uci module API (`uci.load()` resolves with the
+  package-name list; `TypedSection` maps sections by `s['.name']`, which
+  rpcd fills in) all move between LuCI generations. When the pin is
+  bumped, re-run `tests/gui/run.sh` and the suite against the old pin to
+  see what changed.
+
 ## CI gates (`.github/workflows/ci.yml`)
 
 Every step is a contract gate; the tree must pass all of them. Locally
@@ -299,6 +337,9 @@ reproducible equivalents:
   tests/backend` (the contract-test lab image), then
   `sh tests/backend/test_backend_contract.sh` and
   `sh tests/install-harness.sh` — a skip (exit 77) passes the step.
+- `node tests/view-contract.js` — the RPC-surface and DIAG_TEXT gate.
+- `sh tests/gui/run.sh` — the Playwright GUI suite; a skip (exit 77)
+  passes the step.
 - Shellcheck (pinned `koalaman/shellcheck:v0.11.0`, `-s sh
   --severity=error`) over the explicit file list — every shipped script
   and test harness file, a missing file fails the step:
