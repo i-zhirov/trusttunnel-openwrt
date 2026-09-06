@@ -89,10 +89,15 @@ return view.extend({
 		if (v.level === 'success')
 			return E('div');
 
-		return E('div', { 'class': 'alert-message ' + v.level },
-			E('strong', v.head),
-			v.detail ? E('br') : null,
-			v.detail ? v.detail : null);
+		// Children as an ARRAY: dom.create() reads only arguments[2], so
+		// the detail line was silently dropped. Nulls must not be passed
+		// in the array either — dom.append() turns them into "null" text.
+		var nodes = [ E('strong', v.head) ];
+
+		if (v.detail)
+			nodes.push(E('br'), v.detail);
+
+		return E('div', { 'class': 'alert-message ' + v.level }, nodes);
 	},
 
 	row: function(label, value) {
@@ -153,8 +158,8 @@ return view.extend({
 	render: function(st) {
 		var self = this;
 
-		var verdictBox = E('div', this.renderVerdict(st));
-		var factsBox = E('div', this.renderFacts(st));
+		var verdictBox = E('div', {}, this.renderVerdict(st));
+		var factsBox = E('div', {}, this.renderFacts(st));
 		var logBox = E('pre', { 'style': 'max-height:22em;overflow:auto;margin:0' });
 
 		poll.add(function() {
