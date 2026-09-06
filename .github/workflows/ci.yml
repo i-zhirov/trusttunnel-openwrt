@@ -98,6 +98,13 @@ jobs:
         run: |
           sh tests/install-harness.sh || { rc=$?; [ "$rc" -eq 77 ] && exit 0; exit "$rc"; }
 
+      # The views call RPC methods and render backend strings; this gate
+      # cross-checks the rpc.declare surface against the backend and the
+      # ACL, and every literal diagnose string (as pinned by the contract
+      # goldens) against the DIAG_TEXT map. See tests/view-contract.js.
+      - name: Check the view contract (RPC surface and DIAG_TEXT)
+        run: node tests/view-contract.js
+
       # Shellcheck is pinned to v0.11.0 so the gate is stable across
       # runner image updates; the docker invocation keeps the check
       # reproducible on any machine. Every shipped script and test
