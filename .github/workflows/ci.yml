@@ -105,6 +105,15 @@ jobs:
       - name: Check the view contract (RPC surface and DIAG_TEXT)
         run: node tests/view-contract.js
 
+      # The LuCI GUI tests drive the real views (real luci.js loader,
+      # real form.Map) in a headless browser against a stubbed ubus
+      # backend serving the contract goldens. Docker-gated like the
+      # other harnesses: without docker or the pinned Playwright image
+      # it SKIPs, and a skip (exit 77) passes the step.
+      - name: Run the LuCI GUI interface tests
+        run: |
+          sh tests/gui/run.sh || { rc=$?; [ "$rc" -eq 77 ] && exit 0; exit "$rc"; }
+
       # Shellcheck is pinned to v0.11.0 so the gate is stable across
       # runner image updates; the docker invocation keeps the check
       # reproducible on any machine. Every shipped script and test
@@ -129,7 +138,8 @@ jobs:
             tests/integration/run.sh \
             tests/integration/build-sdk.sh \
             tests/install-harness.sh \
-            tests/backend/test_backend_contract.sh
+            tests/backend/test_backend_contract.sh \
+            tests/gui/run.sh
           docker run --rm -v "$PWD:/src" -w /src koalaman/shellcheck:v0.11.0 -s sh --severity=error "$@"
 
       # A syntax error in the init script would take the service down at
