@@ -4,16 +4,38 @@
 # (tests/integration/run.sh prefers dist/ over the published release).
 #
 # The recipe mirrors the openwrt/gh-action-sdk entrypoint release.yml
-# uses: the repository becomes the "ttowrt" feed (src-link), the default
-# feeds are fetched (luci is needed by luci.mk), and the two packages are
-# compiled. The SDK image already carries the toolchain, so only the feed
-# sources are downloaded per run; the package download cache persists in
-# $HOME/.tt-sdk-dl (Docker Desktop on macOS requires mounts under $HOME).
+# uses: the repository becomes the "ttowrt" feed (src-link) and the two
+# packages are compiled. The SDK image already carries the toolchain, so
+# only the feed sources are downloaded per run.
+#
+# Two deliberate divergences from the action entrypoint, both CI
+# speedups:
+#
+# 1. feeds are RESTRICTED to the ones the packages actually need. The
+#    default feeds.conf.default lists six feeds; base (the SDK's own
+#    package tree), packages (curl) and luci (luci.mk) cover every
+#    dependency of luci-app-trusttunnel and trusttunnel-client, while
+#    routing/telephony/video are cloned but used by nothing in this
+#    project. Skipping them cuts 3-4 minutes off every SDK build. The
+#    kept feed lines are filtered from the image's feeds.conf.default
+#    verbatim, so their pinned commits stay in sync with the SDK release
+#    (the grep matches the feed NAME token, so --root=package lines are
+#    preserved).
+#
+# 2. the feeds and the package download cache are mounted from
+#    $HOME/.tt-sdk-cache/<version>/ (Docker Desktop on macOS requires
+#    mounts under $HOME). The feeds are pinned per SDK release, so on a
+#    second run the clones already exist and `feeds update` becomes an
+#    incremental fetch instead of a fresh clone. CI restores this
+#    directory with actions/cache; locally it persists across runs. The
+#    old $HOME/.tt-sdk-dl layout is superseded by the dl/ subdirectory
+#    here.
 #
 # Usage:
 #   sh tests/integration/build-sdk.sh              # 25.12.5 (apk) and 22.03.7 (ipk)
 #   sh tests/integration/build-sdk.sh 25.12.5      # one SDK version
 #   TT_SDK_VERSION=22.03.7 sh tests/integration/build-sdk.sh
+#   TT_SDK_CACHE=/path/to/cache sh tests/integration/build-sdk.sh
 #
 # Output: dist/ with the built packages of both variants (the harness
 # selects the right ones by the package-manager globs, like the release
@@ -22,13 +44,14 @@ set -u
 
 TT_SDK_VERSION="${1:-${TT_SDK_VERSION:-25.12.5 22.03.7}}"
 TT_SDK_NJOBS="${TT_SDK_NJOBS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 2)}"
+TT_SDK_CACHE="${TT_SDK_CACHE:-$HOME/.tt-sdk-cache}"
 
 command -v docker >/dev/null 2>&1 || {
 	echo "error: docker is required to build with the SDK" >&2
 	exit 1
 }
 
-mkdir -p dist "$HOME/.tt-sdk-dl"
+mkdir -p dist
 
 for _ver in $TT_SDK_VERSION; do
 	echo "== building with the $_ver SDK"
@@ -36,12 +59,16 @@ for _ver in $TT_SDK_VERSION; do
 	if ! docker image inspect "$_img" >/dev/null 2>&1; then
 		docker pull -q "$_img" || exit 1
 	fi
+	# The caches are mounted per version: the feeds differ between SDK
+	# releases, and the key for CI's actions/cache is the version.
+	mkdir -p "$TT_SDK_CACHE/$_ver/feeds" "$TT_SDK_CACHE/$_ver/dl"
 	# The image runs as buildbot from /builder; root is used so the
 	# mounted dist dir stays writable without host-side chown tricks.
 	docker run --rm --user root \
 		-v "$PWD:/feed" \
 		-v "$PWD/dist:/artifacts" \
-		-v "$HOME/.tt-sdk-dl:/builder/dl" \
+		-v "$TT_SDK_CACHE/$_ver/feeds:/builder/feeds" \
+		-v "$TT_SDK_CACHE/$_ver/dl:/builder/dl" \
 		-e FEEDNAME=ttowrt \
 		-e PACKAGES="luci-app-trusttunnel trusttunnel-client" \
 		-e TT_SDK_NJOBS="$TT_SDK_NJOBS" \
@@ -52,6 +79,11 @@ for _ver in $TT_SDK_VERSION; do
 				-e "s,https://git.openwrt.org/openwrt/,https://github.com/openwrt/," \
 				-e "s,https://git.openwrt.org/project/,https://github.com/openwrt/," \
 				feeds.conf.default > feeds.conf
+			# Restrict the feeds to the ones the packages need (see the
+			# header); the src-link ttowrt line is appended afterwards
+			# and feeds update -a regenerates its index like before.
+			grep -E "(^| )(base|packages|luci)( |$)" feeds.conf > feeds.conf.tmp
+			mv feeds.conf.tmp feeds.conf
 			echo "src-link ttowrt /feed/" >> feeds.conf
 			echo "== feeds update"
 			./scripts/feeds update -a

@@ -57,6 +57,19 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7
 
+      # The SDK feeds are pinned per SDK release (feeds.conf.default in
+      # the image lists commit pins), so the clones under
+      # ~/.tt-sdk-cache/<version>/ are identical on every run. Restoring
+      # them turns the build's `feeds update` from six fresh clones into
+      # incremental fetches — several minutes saved per build. The
+      # version-keyed cache also carries the package download cache (dl/),
+      # which otherwise re-fetches the vendor tarballs on every run.
+      - name: Restore the SDK feed cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.tt-sdk-cache/${{ matrix.version }}
+          key: sdk-cache-${{ matrix.version }}
+
       # Release SDKs for determinism (the snapshot container pins a
       # moving packages-feed commit; release.yml documents the curl
       # Kconfig failure that causes). One x86-64 build covers the lab
