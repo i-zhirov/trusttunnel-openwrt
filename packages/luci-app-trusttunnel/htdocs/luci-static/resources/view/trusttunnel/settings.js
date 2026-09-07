@@ -5,19 +5,68 @@
 'require uci';
 'require rpc';
 'require ui';
+'require dom';
 
 // All settings live in one UCI config, so the page presents them as a
 // single tabbed map: each section turns into a tab, and switching tabs is
 // pure browser-side work, no router round-trip.
+//
+// The tabs are grouped by what the fields mean to the user rather than by
+// the UCI layout: General (service state and the profile picker), Server
+// (the connection), Security (TLS trust and anti-censorship), Routing
+// profiles and Advanced (networking internals and the client's own DNS).
+// Several option classes cover the same UCI section (endpoint) — that is
+// fine, they all save to the same config.
 var callImport = rpc.declare({
 	object: 'luci.trusttunnel',
 	method: 'import_config',
 	params: [ 'text' ]
 });
 
+var callStatus = rpc.declare({
+	object: 'luci.trusttunnel',
+	method: 'status'
+});
+
+var callPing = rpc.declare({
+	object: 'luci.trusttunnel',
+	method: 'ping',
+	params: [ 'target' ]
+});
+
+// Read-only one-liner for the General tab; the full verdict banner with
+// Start/Stop lives on the Status page.
+function statusSummary(st) {
+	if (!st)
+		return _('Status unavailable');
+
+	if (!st.client_installed)
+		return _('The TrustTunnel client is not installed');
+
+	if (!st.running)
+		return st.enabled ? _('The service is not running') : _('The service is off');
+
+	if (!st.device_up)
+		return _('Connecting to the server…');
+
+	var head = st.device ? _('Running on %s').format(st.device) : _('Running');
+
+	if (st.routing_profile)
+		return _('%s — profile %s').format(head, st.routing_profile);
+
+	return head;
+}
+
 return view.extend({
 	load: function() {
-		return uci.load('trusttunnel');
+		// The network config feeds the LAN device hint on the Advanced
+		// tab; the status call feeds the Service line on the General tab.
+		// A failure of either must not take the whole settings page down.
+		return Promise.all([
+			uci.load('trusttunnel'),
+			uci.load('network').catch(function() { return null; }),
+			callStatus().catch(function() { return null; })
+		]);
 	},
 
 	handleImport: function() {
@@ -84,14 +133,63 @@ return view.extend({
 		]);
 	},
 
+	handleTest: function() {
+		var box = E('div', {}, [
+			E('p', { 'class': 'spinning' }, _('Pinging…'))
+		]);
+
+		ui.showModal(_('Test connection'), [
+			E('p', {}, _('Loss and round-trip time for every configured address. The saved settings are used, so press Save & Apply first.')),
+			box,
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Close'))
+			])
+		]);
+
+		callPing('').then(function(res) {
+			if (res.error) {
+				dom.content(box, E('p', res.error));
+				return;
+			}
+
+			var rows = [
+				E('tr', { 'class': 'cbi-section-table-row' }, [
+					E('th', { 'class': 'cbi-section-table-cell' }, _('Host')),
+					E('th', { 'class': 'cbi-section-table-cell' }, _('Loss')),
+					E('th', { 'class': 'cbi-section-table-cell' }, _('min / avg / max'))
+				])
+			];
+
+			(res.results || []).forEach(function(r) {
+				rows.push(E('tr', { 'class': 'cbi-section-table-row' }, [
+					E('td', { 'class': 'cbi-section-table-cell' }, r.host),
+					E('td', { 'class': 'cbi-section-table-cell' }, r.loss + '%'),
+					E('td', { 'class': 'cbi-section-table-cell' },
+						r.avg === null ? '—' : r.min + ' / ' + r.avg + ' / ' + r.max + ' ms')
+				]));
+			});
+
+			dom.content(box, E('table', { 'class': 'cbi-section-table' }, rows));
+		}).catch(function(e) {
+			dom.content(box, E('p', e.message || String(e)));
+		});
+	},
+
 	render: function(data) {
+		var st = data[2];
+
 		var m = new form.Map('trusttunnel', _('TrustTunnel'));
 
 		m.tabbed = true;
 
 		var s, o;
 
+		// Tab 1 — General: the service itself and the profile that applies.
 		s = m.section(form.NamedSection, 'main', 'main', _('General'));
+		s.description = _('When the service runs and which profile decides what goes through the tunnel.');
+
+		o = s.option(form.DummyValue, '_status', _('Service'));
+		o.cfgvalue = function() { return statusSummary(st); };
 
 		o = s.option(form.Flag, 'enabled', _('Start on boot'),
 			_('Whether the service starts when the router boots. The Start button on the Status page runs it right now.'));
@@ -103,7 +201,32 @@ return view.extend({
 		o.value('trace', 'trace');
 		o.description = _('debug and trace write a lot; leave them on only while investigating something.');
 
+		o = s.option(form.ListValue, 'routing_profile', _('Routing profile'),
+			_('The named profile that decides what goes through the tunnel. Profiles are managed on the Routing profiles tab.'));
+		o.value('', _('None — everything through the tunnel'));
+
+		// Names are read through the uci module API (current LuCI
+		// resolves uci.load() with the package-name list, so the load()
+		// result is no source of config data). The endpoint's stored
+		// assignment is appended too when it references a profile that has
+		// been deleted, so that reference keeps saving (legacy fallback).
+		var profiles = uci.sections('trusttunnel', 'routing_profile') || [];
+		var current = uci.get('trusttunnel', 'endpoint', 'routing_profile');
+		var currentKnown = false;
+
+		for (var i = 0; i < profiles.length; i++) {
+			o.value(profiles[i].name, profiles[i].name);
+
+			if (profiles[i].name === current)
+				currentKnown = true;
+		}
+
+		if (current && !currentKnown)
+			o.value(current, current);
+
+		// Tab 2 — Server: the connection to the server.
 		s = m.section(form.NamedSection, 'endpoint', 'endpoint', _('Server'));
+		s.description = _('How the client reaches your server. The Import… button is the fast path.');
 
 		o = s.option(form.Button, '_import', _('Server configuration'),
 			_('The fast path: paste what your server generated and the fields below fill themselves in.'));
@@ -132,6 +255,19 @@ return view.extend({
 		o.value('http2', 'HTTP/2');
 		o.value('http3', 'HTTP/3 (QUIC)');
 		o.description = _('QUIC is often faster, but some networks throttle or block UDP.');
+
+		o = s.option(form.Flag, 'has_ipv6', _('Server carries IPv6'));
+		o.default = '1';
+
+		o = s.option(form.Button, '_test', _('Connection test'),
+			_('Loss and round-trip time for every configured address. Uses the saved settings, so press Save & Apply first.'));
+		o.inputtitle = _('Test connection');
+		o.inputstyle = 'action';
+		o.onclick = ui.createHandlerFn(this, 'handleTest');
+
+		// Tab 3 — Security: TLS trust and anti-censorship.
+		s = m.section(form.NamedSection, 'endpoint', 'endpoint', _('Security'));
+		s.description = _('TLS trust and anti-censorship. These rarely need manual changes after importing the server configuration.');
 
 		o = s.option(form.Flag, 'anti_dpi', _('Anti-DPI'),
 			_('Countermeasures against traffic inspection. Worth enabling if the connection establishes but keeps dropping.'));
@@ -185,33 +321,6 @@ return view.extend({
 			return true;
 		};
 
-		o = s.option(form.ListValue, 'routing_profile', _('Routing profile'),
-			_('The named profile that decides what goes through the tunnel. Profiles are managed on the Routing tab.'));
-		o.value('', _('None — everything through the tunnel'));
-
-		// Names are read from the loaded config; the endpoint's stored
-		// assignment is appended too when it references a profile that has
-		// been deleted, so that reference keeps saving (legacy fallback).
-		// The uci module API is used (not the load() result): on current
-		// LuCI versions uci.load() resolves with the package-name list,
-		// not the configuration object.
-		var profiles = uci.sections('trusttunnel', 'routing_profile') || [];
-		var current = uci.get('trusttunnel', 'endpoint', 'routing_profile');
-		var currentKnown = false;
-
-		for (var i = 0; i < profiles.length; i++) {
-			o.value(profiles[i].name, profiles[i].name);
-
-			if (profiles[i].name === current)
-				currentKnown = true;
-		}
-
-		if (current && !currentKnown)
-			o.value(current, current);
-
-		o = s.option(form.Flag, 'has_ipv6', _('Server carries IPv6'));
-		o.default = '1';
-
 		o = s.option(form.Flag, 'skip_verification', _('Skip certificate verification'),
 			_('Accepts any certificate, which removes the protection against a substituted server. Pin the certificate below instead whenever you can.'));
 
@@ -220,22 +329,9 @@ return view.extend({
 		o.rows = 6;
 		o.optional = true;
 
-		o = s.option(form.DynamicList, 'dns_upstream', _('DNS used by the client itself'),
-			_('Applies to what the TrustTunnel client resolves on its own — for example the exclusion domains it pre-resolves. Empty means the client default, AdGuard DNS unfiltered.'));
-		o.placeholder = 'tls://1.1.1.1';
-		o.value('tls://1.1.1.1', 'Cloudflare — DNS over TLS');
-		o.value('tls://9.9.9.9', 'Quad9 — DNS over TLS');
-		o.value('tls://dns.adguard-dns.com', 'AdGuard — DNS over TLS');
-		o.value('https://cloudflare-dns.com/dns-query', 'Cloudflare — DNS over HTTPS');
-		o.value('https://dns.quad9.net/dns-query', 'Quad9 — DNS over HTTPS');
-		o.value('quic://dns.adguard-dns.com', 'AdGuard — DNS over QUIC');
-		o.value('1.1.1.1:53', 'Cloudflare — ' + _('plain DNS'));
-		o.value('9.9.9.9:53', 'Quad9 — ' + _('plain DNS'));
-
-		// Current LuCI's form module exports TypedSection (type-bound
-		// anonymous sections) but no plain `Section` class — the old name
-		// made the whole view crash with "Class must be a descendant of
-		// CBIAbstractSection".
+		// Tab 4 — Routing profiles: named rule sets.
+		// TypedSection: current LuCI's form module exports no plain
+		// `Section` class.
 		s = m.section(form.TypedSection, 'routing_profile', _('Routing profiles'));
 		s.addremove = true;
 		s.anonymous = true;
@@ -270,7 +366,7 @@ return view.extend({
 		}
 
 		o = s.option(form.Value, 'name', _('Name'),
-			_('Unique name; the Server tab assigns a profile by it.'));
+			_('Unique name; the General tab assigns a profile by it.'));
 		o.optional = false;
 		o.validate = function(section_id, value) {
 			if (!value)
@@ -301,7 +397,8 @@ return view.extend({
 		o.placeholder = 'bank.example';
 		o.validate = validateRule;
 
-		s = m.section(form.NamedSection, 'network', 'network', _('Network'));
+		// Tab 5 — Advanced: networking internals and the client's own DNS.
+		s = m.section(form.NamedSection, 'network', 'network', _('Advanced'));
 		s.description = _('These rarely need changing. MTU is the exception: too high a value makes small pages load while TLS handshakes and large downloads stall.');
 
 		o = s.option(form.Value, 'mtu', _('MTU'));
@@ -310,8 +407,19 @@ return view.extend({
 
 		o = s.option(form.Value, 'lan_devices', _('LAN interfaces'),
 			_('Space-separated list whose forwarded traffic is considered. Empty means the device of the lan network.'));
-		o.placeholder = 'br-lan';
 		o.optional = true;
+
+		// The lan device is read from the network config so the empty-value
+		// behaviour is spelled out instead of being a mystery.
+		var lanDevice = uci.get('network', 'lan', 'device') || '';
+
+		if (lanDevice) {
+			o.description += ' ' + _('Detected: %s').format(lanDevice);
+			o.placeholder = lanDevice;
+		}
+		else {
+			o.placeholder = 'br-lan';
+		}
 
 		o = s.option(form.Flag, 'blackhole_on_down', _('Drop traffic when the tunnel is down'),
 			_('Adds a blackhole route so marked traffic is dropped instead of leaking to the provider.'));
@@ -319,6 +427,18 @@ return view.extend({
 
 		o = s.option(form.Flag, 'include_router_traffic', _('Route the router\'s own traffic too'),
 			_('By default only forwarded LAN traffic is routed. Enabling this also routes traffic originated by the router itself.'));
+
+		o = s.option(form.DynamicList, 'dns_upstream', _('DNS used by the client itself'),
+			_('Applies to what the TrustTunnel client resolves on its own — for example the exclusion domains it pre-resolves. Empty means the client default, AdGuard DNS unfiltered.'));
+		o.placeholder = 'tls://1.1.1.1';
+		o.value('tls://1.1.1.1', 'Cloudflare — DNS over TLS');
+		o.value('tls://9.9.9.9', 'Quad9 — DNS over TLS');
+		o.value('tls://dns.adguard-dns.com', 'AdGuard — DNS over TLS');
+		o.value('https://cloudflare-dns.com/dns-query', 'Cloudflare — DNS over HTTPS');
+		o.value('https://dns.quad9.net/dns-query', 'Quad9 — DNS over HTTPS');
+		o.value('quic://dns.adguard-dns.com', 'AdGuard — DNS over QUIC');
+		o.value('1.1.1.1:53', 'Cloudflare — ' + _('plain DNS'));
+		o.value('9.9.9.9:53', 'Quad9 — ' + _('plain DNS'));
 
 		o = s.option(form.Value, 'fwmark', _('Firewall mark'),
 			_('Decimal or 0x-prefixed hexadecimal. Change only on a conflict with mwan3, SQM or another package that marks packets.'));
