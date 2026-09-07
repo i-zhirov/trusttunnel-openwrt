@@ -15,6 +15,12 @@ on:
     tags: [ 'v*' ]
   pull_request:
 
+# A per-ref group: a new push to the same branch or PR supersedes the
+# previous run instead of stacking redundant gates.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -174,30 +180,28 @@ jobs:
           done
           exit "$fail"
 
-      # The ucode compiler is built from the pinned tag with the fs and
-      # math modules enabled (the backend imports them) and every other
-      # module disabled, so the -c pass resolves the imports and catches
-      # missing declarations. The check itself is controlled: a file that
-      # must not compile is compiled and the step fails if the compiler
-      # accepts it.
-      - name: Build the pinned ucode and check the backend syntax
+      # The ucode compiler is the one baked into the tt-ucode-gate image
+      # built above (same pinned tag v0.0.20250529, same fs/math-only
+      # cmake configuration), so the syntax check reuses it instead of
+      # compiling ucode a second time on the runner. The -c pass resolves
+      # the imports and catches missing declarations. The check itself is
+      # controlled: a file that must not compile is compiled (fed via
+      # stdin as "-", so no host file mount is involved) and the step
+      # fails if the compiler accepts it.
+      - name: Check the backend syntax with the pinned ucode
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential cmake libjson-c-dev pkg-config
-          git clone --depth 1 -b v0.0.20250529 https://github.com/jow-/ucode /tmp/ucode
-          cmake -S /tmp/ucode -B /tmp/ucode/build -DCMAKE_BUILD_TYPE=Release \
-            -DFS_SUPPORT=ON -DMATH_SUPPORT=ON \
-            -DUBUS_SUPPORT=OFF -DUCI_SUPPORT=OFF -DRTNL_SUPPORT=OFF \
-            -DNL80211_SUPPORT=OFF -DRESOLV_SUPPORT=OFF -DLOG_SUPPORT=OFF \
-            -DDEBUG_SUPPORT=OFF
-          cmake --build /tmp/ucode/build -j"$(nproc)"
-          /tmp/ucode/build/ucode -L "/tmp/ucode/build/*.so" -c packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel
-          printf 'let x = ;\n' > /tmp/broken.uc
-          if /tmp/ucode/build/ucode -L "/tmp/ucode/build/*.so" -c /tmp/broken.uc 2>/dev/null; then
+          if ! docker run --rm -v "$PWD:/ws" -w /ws tt-ucode-gate \
+              /opt/ucode/build/ucode -L "/opt/ucode/build/*.so" \
+              -c packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel; then
+            echo "::error::the backend does not compile under the pinned ucode"
+            exit 1
+          fi
+          if printf 'let x = ;\n' | docker run --rm -i -v "$PWD:/ws" -w /ws tt-ucode-gate \
+              /opt/ucode/build/ucode -L "/opt/ucode/build/*.so" -c - 2>/dev/null; then
             echo "::error::the ucode compiler accepted a deliberately broken file; the syntax check is not trustworthy"
             exit 1
           fi
-          # Both compiles drop their output as uc.out in the working
+          # The -c pass drops its output as uc.out in the working
           # directory; remove it after the negative control so the
           # checkout stays clean.
           rm -f uc.out
