@@ -143,6 +143,7 @@ jobs:
             tests/test_init_regenerate.sh \
             tests/integration/run.sh \
             tests/integration/build-sdk.sh \
+            tests/integration/restricted-feeds.sh \
             tests/install-harness.sh \
             tests/backend/test_backend_contract.sh \
             tests/gui/run.sh
