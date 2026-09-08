@@ -185,12 +185,24 @@ file compiles under the pinned ucode.
 - `status.js` — verdict banner, facts (state/mode/server), Start/Stop/
   Restart buttons, client log; polls every 10s.
 - `settings.js` — a single tabbed `form.Map` whose sections become tabs
-  (General, Server, Routing profiles, Network), plus the Import… modal
+  (General, Server, Routing profiles, Advanced), plus the Import… modal
   that calls `import_config` and applies results to pending UCI (nothing
-  is written until Save & Apply).
+  is written until Save & Apply). The endpoint section splits into
+  Connection and Security inner tabs (`s.tab`/`s.taboption`) — map-level
+  tabs key panes by the UCI section type, so two sections of the same
+  type would collide. Extra tools: a read-only service line on General
+  (via the `status` RPC), a Test connection modal on Server (`ping`),
+  and a per-profile rule preview (`check_domain`) whose verdicts only
+  apply to the assigned profile. The routing profile picker lives on
+  General and `dns_upstream` on Advanced; both write the endpoint
+  section via `ucisection`. Config values are read via the `uci` module
+  API (`uci.sections()`/`uci.get()`) — current LuCI resolves
+  `uci.load()` with the package-name list, so the load() result is no
+  data source.
 - `diagnostics.js` — renders the diagnose checks grouped and ordered
   (config → prereq → service → kernel → network), problems first with a
-  toggle for the rest, plus domain-check, ping and address-compare tools.
+  toggle for the rest, plus domain-check, ping and address-compare tools
+  and a Copy report button that serializes the last run into a textarea.
   Backend strings are translated through the `DIAG_TEXT` map; new
   backend strings must be added there (and to the .po) to be translatable.
 

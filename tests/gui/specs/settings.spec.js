@@ -15,24 +15,41 @@ test.beforeEach(async ({ page }) => {
 	await stubReset(page);
 });
 
-test('renders the four tabs in order', async ({ page }) => {
+test('renders the tabs in order', async ({ page }) => {
 	await openView(page, 'settings');
 
-	const tabs = page.locator('#view .cbi-tabmenu li a');
+	// Four map-level tabs, keyed by the UCI section type...
+	const tabs = page.locator('#view .cbi-map > .cbi-tabmenu li a');
 	await expect(tabs).toHaveCount(4);
 	await expect(tabs.nth(0)).toHaveText('General');
 	await expect(tabs.nth(1)).toHaveText('Server');
 	await expect(tabs.nth(2)).toHaveText('Routing profiles');
-	await expect(tabs.nth(3)).toHaveText('Network');
+	await expect(tabs.nth(3)).toHaveText('Advanced');
+
+	// ...and the endpoint section splits into its own inner tabs (map
+	// tabs key panes by section type, so two endpoint sections would
+	// collide; section-level tabs use their own names).
+	const innerTabs = page.locator('#view .cbi-section[data-tab="endpoint"] .cbi-tabmenu li a');
+	await expect(innerTabs).toHaveCount(2);
+	await expect(innerTabs.nth(0)).toHaveText('Connection');
+	await expect(innerTabs.nth(1)).toHaveText('Security');
 });
 
 test('switching tabs activates the corresponding pane', async ({ page }) => {
 	await openView(page, 'settings');
 
-	await page.locator('#view .cbi-tabmenu li a', { hasText: 'Server' }).click();
+	// Outer tabs: the Server pane is the endpoint section.
+	await page.locator('#view .cbi-map > .cbi-tabmenu li a', { hasText: 'Server' }).click();
 	await expect(page.locator('#view .cbi-section[data-tab="endpoint"]'))
 		.toHaveAttribute('data-tab-active', 'true');
 	await expect(page.locator('#view .cbi-section[data-tab="main"]'))
+		.not.toHaveAttribute('data-tab-active', 'true');
+
+	// Inner tabs of the endpoint section.
+	await page.locator('#view .cbi-section[data-tab="endpoint"] .cbi-tabmenu li a', { hasText: 'Security' }).click();
+	await expect(page.locator('[id="container.trusttunnel.endpoint.security"]'))
+		.toHaveAttribute('data-tab-active', 'true');
+	await expect(page.locator('[id="container.trusttunnel.endpoint.connection"]'))
 		.not.toHaveAttribute('data-tab-active', 'true');
 });
 
@@ -53,9 +70,9 @@ test('fields render the loaded UCI state', async ({ page }) => {
 	await expect(page.locator('[id="widget.cbid.trusttunnel.network.mtu"]')).toHaveValue('1350');
 	await expect(page.locator('[id="widget.cbid.trusttunnel.network.fwmark"]')).toHaveValue('0x9527');
 
-	// The Default profile seeded by uci-defaults shows up in the select,
-	// alongside the "None" fallback entry.
-	const profile = page.locator('[id="widget.cbid.trusttunnel.endpoint.routing_profile"]');
+	// The Default profile seeded by uci-defaults shows up in the select
+	// on the General tab, alongside the "None" fallback entry.
+	const profile = page.locator('[id="widget.cbid.trusttunnel.main.routing_profile"]');
 	await expect(profile.locator('option')).toHaveCount(2);
 	await expect(profile.locator('option[value="Default"]')).toHaveText('Default');
 });
