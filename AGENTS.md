@@ -8,8 +8,8 @@ Guidance for AI agents and human contributors working in this repository.
 set for the [TrustTunnel](https://github.com/TrustTunnel/TrustTunnel) client:
 
 - `luci-app-trusttunnel` — a noarch LuCI application: a procd service, a
-  UCI-backed config, an rpcd ucode backend, three LuCI views, a Russian
-  translation, plus firewall/routing integration.
+  UCI-backed config, an rpcd ucode backend, three LuCI views, plus
+  firewall/routing integration.
 - `trusttunnel-client` — a per-architecture packaging of the vendor's
   prebuilt, statically-linked client binaries into `/opt/trusttunnel_client`.
 - `install.sh` / `uninstall.sh` — router-side scripts that configure the
@@ -34,7 +34,6 @@ packages/
     Makefile                  OpenWrt package metadata
     htdocs/luci-static/resources/view/trusttunnel/
       settings.js status.js diagnostics.js   LuCI client-side views
-    po/ru/trusttunnel.po      Russian translation (msgid/msgstr)
     root/etc/config/trusttunnel              Default UCI config
     root/etc/init.d/trusttunnel              procd service script
     root/etc/uci-defaults/40-luci-trusttunnel  First-boot setup
@@ -48,7 +47,11 @@ repo-site/                    Jekyll templates for the GitHub Pages package
                               repository site (index pages, layout)
 tests/                        Shell test suite (see "Testing")
 tests/backend/                Docker-based backend contract test + goldens
+tests/integration/            Dockerized end-to-end suite: real install.sh
+                              against a router and a TrustTunnel endpoint
+                              container (see "Testing"; own workflow)
 .github/workflows/ci.yml      CI gates (test + lint + contract checks)
+.github/workflows/integration.yml  End-to-end suite on PRs/main/dispatch
 .github/workflows/release.yml Release pipeline (build, sign, verify, publish)
 key-build.pub, opkg-key.pub   PUBLIC halves of the repo signing keys (committed)
 LICENSE                       Apache-2.0
@@ -204,7 +207,7 @@ file compiles under the pinned ucode.
   toggle for the rest, plus domain-check, ping and address-compare tools
   and a Copy report button that serializes the last run into a textarea.
   Backend strings are translated through the `DIAG_TEXT` map; new
-  backend strings must be added there (and to the .po) to be translatable.
+  backend strings must be added there to be translatable.
 
 ## Packages and versioning
 
@@ -212,7 +215,7 @@ file compiles under the pinned ucode.
 
 - `PKG_VERSION` comes from `git describe --tags --abbrev=0` (tag `vX.Y.Z`
   → version `X.Y.Z`), falling back to the last released version (currently
-  `1.0.13`). The fallback must track the latest release — the release
+  `1.0.20`). The fallback must track the latest release — the release
   workflow fails a tag build whose artifact does not carry the tag.
 - `LUCI_DEPENDS:=+trusttunnel-client +luci-base +ip-full +nftables +curl
   +ucode-mod-math`. **Do not add `kmod-tun` or `ca-bundle` here**: they
@@ -230,7 +233,7 @@ file compiles under the pinned ucode.
 
 - Wraps the vendor's per-CPU-family tarballs
   (`trusttunnel_client-v$(PKG_VERSION)-linux-<family>.tar.gz`, currently
-  `PKG_VERSION:=1.1.5`). On a vendor release, bump `PKG_VERSION` and the
+  `PKG_VERSION:=1.0.49`). On a vendor release, bump `PKG_VERSION` and the
   per-family `PKG_HASH` values together (digests come from the vendor's
   release API).
 - `VENDOR_ARCH` maps `$(ARCH_PACKAGES)` (subtarget arch) → vendor family
@@ -268,9 +271,20 @@ absent, so the plain suite runs anywhere.
 - Each test file starts with a header comment stating what contract it
   pins, and explains the WHY of tricky assertions.
 - Fixtures: `tests/fixtures/records/{minimal,full,bypass}.tsv`.
+- `tests/test_harness.sh` — self-test of the assertion helpers: proves
+  they accept a passing and a failing check and that a failure inside a
+  subshell is recorded in the counter files.
 - `tests/test_hotplug.sh` — pure-shell scenario harness (no docker):
   sed-rewrites the script's hardcoded paths into a scratch tree, stubs
   init/routing/logger, and covers filters | guards | attach | invariants.
+- `tests/test_views_runtime.sh` + `tests/views_runtime.js` — executes the
+  three views against mocks that replicate the CURRENT LuCI runtime
+  contracts (`uci.load()` resolving with the package-name list, no plain
+  `form.Section`, `E()` reading only `arguments[2]`) and asserts the
+  rendered output. Needs node (skips, exit 77, without it). This is the
+  gate the syntax-only view checks cannot provide: the v1.0.16-1.0.20
+  view bugs were runtime contract mismatches that parse fine and only
+  fail when executed.
 - Tests stub external commands (ip, nft, uci, logger, curl, logread) and
   honor `TT_*` overrides; see `test_routing.sh` (`TT_IP`, `TT_NFT`,
   `TT_LIBDIR`), `test_uci_defaults.sh` (`TT_UCD_SCRIPT`, `TT_UCD_FILTER`).
@@ -297,6 +311,26 @@ absent, so the plain suite runs anywhere.
   `openwrt/rootfs` containers with stubbed apk/opkg/wget/usign. NOT
   picked up by `tests/run.sh` (name has no `test_` prefix) but run as its
   own ci.yml step; supports `TT_FILTER`.
+- `tests/integration/` — the dockerized end-to-end suite: `build-sdk.sh`
+  builds THIS tree's packages with the pinned OpenWrt SDK, then `run.sh`
+  boots a real OpenWrt rootfs router (`/sbin/init`), runs the real
+  `install.sh` against a hermetic signed repository, connects it to a
+  real TrustTunnel endpoint container and asserts the install, service
+  and traffic contracts (through-tunnel traffic arrives with the
+  endpoint's source address, private traffic stays direct, the blackhole
+  killswitch swallows marked traffic, install/uci-defaults/reload are
+  idempotent). Knobs: `TT_PM=apk|opkg`, `TT_REPO_DIR`, `TT_FILTER`,
+  `TT_LOGS_DIR`, `TT_RELEASE_TAG` — see `tests/integration/README.md`.
+  Docker-gated (skip 77), deliberately NOT picked up by `tests/run.sh`;
+  `integration.yml` runs it on PRs/main/dispatch, and the release
+  pipeline reuses it against the release's own artifacts.
+- `tests/integration/restricted-feeds.sh` — the SDK feed pins: prints the
+  `EXTRA_FEEDS` value (base/packages/luci only — the routing/telephony/
+  video clones are dead weight; the client build uses base only) and
+  `--verify` compares the hardcoded pins against the SDK image's
+  `feeds.conf.default`, failing on drift. The pins are the OTHER half of
+  the SDK pin: when release.yml bumps the SDK version, update them
+  together with `VERSION_PATH`.
 
 ### View contract and GUI tests
 
@@ -344,7 +378,8 @@ reproducible equivalents:
 - Executable bits of shipped scripts must be `100755` in the index.
 - Tag pushes must not regress the release: new tag's commit must be newer
   than the previous tag's.
-- `sh tests/run.sh`.
+- `sh tests/run.sh` (includes the node-gated views runtime test, which
+  skips without node).
 - `docker build -q -t tt-ucode-gate -f tests/backend/Dockerfile
   tests/backend` (the contract-test lab image), then
   `sh tests/backend/test_backend_contract.sh` and
@@ -367,6 +402,16 @@ reproducible equivalents:
   parse as JS via `node vm.Script` (views end in a top-level `return`, so
   they are wrapped in a function expression).
 
+Separate from ci.yml, `.github/workflows/integration.yml` runs the
+dockerized end-to-end suite on PRs, main pushes and manual dispatch: a
+matrix job builds this tree's packages with the pinned SDKs (with the
+`restricted-feeds.sh --verify` gate against the SDK image's
+`feeds.conf.default`), then one job per package manager runs
+`tests/integration/run.sh` against the built repositories. It is its own
+workflow on purpose — the SDK builds are the slow part, and the fast
+contract gates must not wait for them. The release pipeline reuses the
+same harness against the release's own artifacts.
+
 ## Release pipeline (`.github/workflows/release.yml`)
 
 Triggered by `v*` tag pushes (also builds a GitHub release) and
@@ -375,14 +420,26 @@ Triggered by `v*` tag pushes (also builds a GitHub release) and
 - `build` — `luci-app-trusttunnel` via `openwrt/gh-action-sdk@v7` on
   25.12.5 (apk) and 22.03.7 (ipk). The SDK is pinned with `VERSION_PATH`
   to the release tarballs — **never the snapshot SDK** (snapshot feeds hit
-  a curl Kconfig recursive dependency). `FEED_DIR` must be an absolute
-  path and must contain `.git` (luci.mk findrev derives the version from
-  it). `fail-fast: false`; artifact file names must match the tag.
+  a curl Kconfig recursive dependency) — and the SDK feeds are restricted
+  to the needed set via `tests/integration/restricted-feeds.sh`, whose
+  `--verify` gate checks the hardcoded pins against the SDK image's
+  `feeds.conf.default` (update them together with the SDK bump).
+  `FEED_DIR` must be an absolute path and must contain `.git` (luci.mk
+  findrev derives the version from it). `fail-fast: false`; artifact file
+  names must match the tag.
 - `build-client` — the client package per subtarget arch (the full matrix
   is in the workflow; the ipk list is the apk list minus
   `aarch64_cortex-a76`). apk files get an `-<arch>` suffix and an
   `ARCH-<arch>` marker for repository assembly; ipk names already carry
-  the arch.
+  the arch. A row first checks whether the same version is already
+  published and reuses it when the recipe matches — a copy of the client
+  Makefile travels in the repositories for exactly that diff, so a recipe
+  change without a version bump still forces a rebuild.
+- `verify-integration` — the same `tests/integration/run.sh` harness the
+  PR workflow runs, executed against the packages THIS pipeline just
+  built (no SDK rebuild; the release's own x86-64 artifacts are consumed
+  directly). `publish-repo` waits for it, so only a behaviorally tested
+  release ships.
 - `publish-repo` — downloads the artifacts plus every prior release's
   packages via `gh release download` (only the current package set is
   merged: the early `-lite` releases and the dropped i18n packages are
@@ -412,9 +469,11 @@ Triggered by `v*` tag pushes (also builds a GitHub release) and
     and delete on separate lines), rendered with Jekyll, deployed via
     Pages (`permissions: contents, pages, id-token`).
 
-Repositories are served from the Pages site, not from release assets: the
-i18n package version contains `~`, which GitHub mangles in asset names,
-while Pages serves files byte-identically. No branch ever holds packages.
+Repositories are served from the Pages site, not from release assets:
+release assets are per-tag snapshots, while the repositories accumulate
+every prior release (the "keep every prior release installable"
+contract), and Pages serves the files byte-identically, which the
+package managers rely on. No branch ever holds packages.
 
 ## Conventions and invariants
 
@@ -429,10 +488,12 @@ while Pages serves files byte-identically. No branch ever holds packages.
   (`docs:`, `release:`, `fix:`, `cleanup:`, `backend:`, `service:`,
   `tests:`, `makefile:`, `gen-config:`, …), one concern per commit,
   merged to `main` via PRs. Feature work happens on branches.
-- **i18n**: new user-visible strings in views use `_()`; backend strings
-  shown in the Diagnostics view go through the `DIAG_TEXT` map in
-  `diagnostics.js`; add Russian translations to
-  `po/ru/trusttunnel.po` (the `luci-i18n-trusttunnel-ru` package).
+- **i18n**: the interface is English-only — no translation package is
+  built or installed. New user-visible strings in views still use `_()`,
+  and backend strings shown in the Diagnostics view go through the
+  `DIAG_TEXT` map in `diagnostics.js`. The Russian translations are
+  parked in the separate translations repository for later
+  reintroduction (see README, Localisation).
 - **Hardcoded paths** (keep consistent): `/etc/config/trusttunnel`,
   `/etc/init.d/trusttunnel`, `/opt/trusttunnel_client`,
   `/usr/libexec/trusttunnel/{uci-export,gen-config,routing,records.sh}`,
