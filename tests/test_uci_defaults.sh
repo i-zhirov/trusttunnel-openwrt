@@ -278,6 +278,7 @@ config forwarding
 
 config zone
 	option name 'lanzone'
+	list device 'eth0.1'
 EOF
     ucd_trusttunnel_default "$ucd_d_dir"
     ucd_stubs "$ucd_d_dir"
@@ -297,6 +298,8 @@ EOF
         "duplicated: two zones total, the unrelated one survives"
     assert_contains "$ucd_out" "name='lanzone'" \
         "duplicated: the unrelated zone is untouched"
+    assert_contains "$ucd_out" "device='eth0.1'" \
+        "duplicated: the unrelated zone keeps its own device binding"
     assert_eq "1" "$(ucd_grep_count "dest='trusttunnel'" "$ucd_out")" \
         "duplicated: one forwarding to trusttunnel kept"
     assert_contains "$ucd_out" "marker='a'" \
@@ -304,13 +307,13 @@ EOF
     assert_eq "0" "$(ucd_grep_count "marker='c'" "$ucd_out")" \
         "duplicated: the third forwarding is removed"
     assert_contains "$ucd_out" "RELOADS=2" \
-        "duplicated: one reload for the dedup and one for the device repair"
+        "duplicated: one reload for the dedup and one for the tun+ migration"
     assert_eq "1" "$(ucd_grep_count 'removed duplicate firewall zones left by an earlier version' "$ucd_out")" \
         "duplicated: the dedup log line appears exactly once"
     assert_eq "1" "$(ucd_grep_count 'firewall zone migrated from tt0 to the tun+ wildcard' "$ucd_out")" \
         "duplicated: the migration log line appears exactly once"
-    assert_eq "2" "$(ucd_grep_count "device='tun+'" "$ucd_out")" \
-        "duplicated: the surviving zones all bind the tun+ wildcard"
+    assert_eq "1" "$(ucd_grep_count "device='tun+'" "$ucd_out")" \
+        "duplicated: only the trusttunnel zone binds the tun+ wildcard"
 }
 
 scenario_legacy() {

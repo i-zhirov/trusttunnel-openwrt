@@ -307,11 +307,14 @@ return {
 				let pmode = first(rec, 'routing_profile.mode', '');
 				let list_key;
 
-				// The effective exclusion list: with a profile assigned its
-				// rules decide (in vpn mode the bypass rules go direct, in
-				// bypass mode the VPN rules go through the tunnel); without
-				// one the legacy flat "do not bypass" list applies.
-				if (length(pname))
+				// The effective exclusion list: with a profile assigned
+				// and a recognizable mode its rules decide (in vpn mode
+				// the bypass rules go direct, in bypass mode the VPN
+				// rules go through the tunnel); an unknown mode falls
+				// back to the legacy flat "do not bypass" list — this
+				// mirrors gen-config, which treats anything other than
+				// bypass/vpn as the legacy general mode.
+				if (length(pname) && (pmode == 'bypass' || pmode == 'vpn'))
 					list_key = pmode == 'bypass' ? 'routing_profile.vpn_rules' : 'routing_profile.bypass_rules';
 				else
 					list_key = 'domains.direct';
@@ -336,7 +339,7 @@ return {
 							: 'the assigned profile is in bypass mode; everything else stays direct'
 					};
 
-				if (length(pname))
+				if (length(pname) && pmode == 'vpn')
 					return {
 						domain: raw, normalized: lc_raw,
 						verdict: in_list ? 'direct' : 'tunnel',
@@ -358,7 +361,13 @@ return {
 		log: {
 			args: { lines: 100 },
 			call: function(req) {
-				let n = req.args?.lines ?? 100;
+				// The lines value lands in a shell command line, so it is
+				// coerced to an integer first: anything non-numeric (or
+				// not positive) falls back to the default, never into the
+				// command. The default 100 is the arg default as well.
+				let n = int(req.args?.lines ?? 100);
+				if (!(n >= 1))
+					n = 100;
 				let r = sh_out('logread -e trusttunnel | tail -n ' + n);
 				let o = trim(r.out);
 
@@ -472,7 +481,7 @@ return {
 							'device ' + dev_mtu + ', configured ' + mtu_cfg,
 							'Restart the service so the client picks up the configured value.'));
 
-					let route = sh_out('ip route show table ' + table);
+					let route = sh_out('ip route show table ' + shq(table));
 					if (index(route.out, 'dev ' + dev) >= 0)
 						push(checks, check('kernel', 'Route attached to the device', 'ok',
 							'default via ' + dev, ''));
@@ -503,8 +512,13 @@ return {
 				else
 					push(checks, check('kernel', 'nftables table', applied ? 'fail' : 'skip', 'absent', ''));
 
+				// The package's own `table inet trusttunnel` always matches
+				// a plain 'trusttunnel' grep, so the check must look for
+				// the fw4 zone's own naming: fw4 builds a
+				// zone_trusttunnel_* chain per zone. Anything else means
+				// the fw4 zone is missing.
 				let fw = sh_out('nft list ruleset');
-				if (index(fw.out, 'trusttunnel') >= 0)
+				if (index(fw.out, 'zone_trusttunnel') >= 0)
 					push(checks, check('kernel', 'Firewall zone', 'ok', 'loaded in fw4', ''));
 				else
 					push(checks, check('kernel', 'Firewall zone', 'warn', 'not in the live ruleset',
@@ -577,6 +591,12 @@ return {
 					r = sh('/opt/trusttunnel_client/setup_wizard --mode non-interactive --endpoint_config ' +
 						shq(input) + ' --settings ' + shq(settings));
 				}
+
+				// The wizard writes the settings file itself (the input
+				// side already went through write_secret_tmp); pin it to
+				// 0600 like the input, because the endpoint password
+				// lands in it in the clear.
+				chmod(settings, 384); // 0600
 
 				let produced = readfile(settings);
 				if (input != null)

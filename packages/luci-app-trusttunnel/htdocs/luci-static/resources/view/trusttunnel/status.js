@@ -68,7 +68,11 @@ return view.extend({
 				detail: _('Everything else stays direct.')
 			};
 
-		if (st.routing_profile)
+		// An unknown profile mode is treated like the legacy full-tunnel
+		// mode: gen-config falls back to domains.direct + general for
+		// anything other than bypass/vpn, so describing the profile as
+		// VPN would mislead.
+		if (st.routing_profile && st.routing_mode === 'vpn')
 			return {
 				level: 'success',
 				head: host ? _('Tunnel works, profile %s — everything except the bypass rules goes through %s').format(st.routing_profile, host)
@@ -120,8 +124,10 @@ return view.extend({
 		if (st.routing_profile) {
 			if (st.routing_mode === 'bypass')
 				rows.push(this.row(_('Mode'), _('Profile %s — bypass, only the VPN rules are tunneled').format(st.routing_profile)));
-			else
+			else if (st.routing_mode === 'vpn')
 				rows.push(this.row(_('Mode'), _('Profile %s — VPN, everything except the bypass rules is tunneled').format(st.routing_profile)));
+			else
+				rows.push(this.row(_('Mode'), _('Everything through VPN')));
 		}
 		else {
 			rows.push(this.row(_('Mode'), _('Everything through VPN')));

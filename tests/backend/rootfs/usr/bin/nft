@@ -1,5 +1,9 @@
 #!/bin/sh
-# Lab stub: the firewall check greps the ruleset for the zone name.
+# Lab stub: the firewall check greps the ruleset for the fw4 zone chain.
+echo "table inet fw4 {"
+echo "  chain zone_trusttunnel_prerouting {"
+echo "  }"
+echo "}"
 echo "table inet trusttunnel {"
 echo "  chain prerouting {"
 echo "  }"
