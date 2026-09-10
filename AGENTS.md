@@ -486,14 +486,8 @@ package managers rely on. No branch ever holds packages.
   (CRLF in a script breaks `/bin/sh\r` on the router).
 - **Commits**: lowercase `area: description` style
   (`docs:`, `release:`, `fix:`, `cleanup:`, `backend:`, `service:`,
-  `tests:`, `makefile:`, `gen-config:`, …). The subject is a single
-  line, short (under 72 chars), imperative and without a trailing
-  period. One concern per commit — a subject that joins several
-  concerns (for example with a semicolon) signals a commit that must
-  be split. A body is optional; when present, wrap it at 72 chars,
-  explain what changed and why, and do not prefix paragraphs with
-  file names. Merged to `main` via PRs; feature work happens on
-  branches.
+  `tests:`, `makefile:`, `gen-config:`, …), one concern per commit,
+  merged to `main` via PRs. Feature work happens on branches.
 - **i18n**: the interface is English-only — no translation package is
   built or installed. New user-visible strings in views still use `_()`,
   and backend strings shown in the Diagnostics view go through the
