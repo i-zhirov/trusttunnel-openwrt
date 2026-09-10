@@ -22,6 +22,26 @@ BASE="$(dirname "$0")"
 MOD="$BASE/mod/luci/trusttunnel.uc"
 BACKEND=packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel
 
+# retry <tries> <sleep> <cmd...> — run the command up to <tries> times,
+# sleeping <sleep> seconds between attempts; succeed on the first exit 0.
+# The healthy-phase apt fetch hits deb.debian.org; a transient failure
+# must not fail the contract test (the same policy as the integration
+# harness).
+retry() {
+	_r_tries=$1
+	_r_sleep=$2
+	shift 2
+	_r_i=0
+	while [ "$_r_i" -lt "$_r_tries" ]; do
+		_r_i=$((_r_i + 1))
+		if "$@"; then
+			return 0
+		fi
+		[ "$_r_i" -lt "$_r_tries" ] && sleep "$_r_sleep"
+	done
+	return 1
+}
+
 docker image inspect tt-ucode-gate >/dev/null 2>&1 || tt_skip "tt-ucode-gate image missing (build tests/backend/Dockerfile first)"
 docker build -q -t tt-backend-rootfs -f "$BASE/lab.Dockerfile" "$BASE" >/dev/null || tt_skip "lab image build failed"
 
@@ -86,7 +106,9 @@ check_goldens "$LAB_BAKED" "$BASE/goldens"
 
 # --- Phase B: a real tun device + healthy stubs --------------------------
 docker run --rm --privileged -d --name "$LAB_HEALTHY" -v "$(pwd)":/ws tt-backend-rootfs sleep 300 >/dev/null || tt_skip "cannot start the healthy lab container"
-docker exec "$LAB_HEALTHY" sh -c 'apt-get install -y -qq python3 iproute2 >/dev/null 2>&1' >/dev/null 2>&1
+# The tun-device creation needs iproute2, which the lab image does not
+# carry; the apt fetch hits deb.debian.org, so it is retried.
+retry 3 5 docker exec "$LAB_HEALTHY" sh -c 'apt-get install -y -qq python3 iproute2 >/dev/null 2>&1' >/dev/null 2>&1
 docker exec "$LAB_HEALTHY" sh -c 'cat > /tmp/mktun.py <<"PYEOF"
 import fcntl, struct, os, time
 TUNSETIFF = 0x400454ca
