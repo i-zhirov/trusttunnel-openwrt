@@ -186,7 +186,9 @@ file compiles under the pinned ucode.
 ### LuCI views
 
 - `status.js` — verdict banner, facts (state/mode/server), Start/Stop/
-  Restart buttons, client log; polls every 10s.
+  Restart buttons, a rules preview for the assigned profile (or the
+  legacy `domains.direct` list without one) that checks each effective
+  rule via `check_domain`, client log; polls every 10s.
 - `settings.js` — a single tabbed `form.Map` whose sections become tabs
   (General, Server, Routing profiles, Advanced), plus the Import… modal
   that calls `import_config` and applies results to pending UCI (nothing
