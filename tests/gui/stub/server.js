@@ -71,9 +71,16 @@ const defaultUci = {
 		// Anonymous section in UCI ("config routing_profile" + option
 		// name), seeded by uci-defaults exactly like the shipped default
 		// config. Anonymous sections are marked with '.anonymous' in the
-		// state; uci.get() renders it like rpcd does.
-		cfg01: { '.type': 'routing_profile', '.anonymous': true, name: 'Default', mode: 'vpn' },
-		domains: { '.type': 'domains', '.anonymous': true }
+		// state; uci.get() renders it like rpcd does. The Default profile
+		// carries rules so the status page's rule preview has something
+		// to check (mirrors the backend contract fixtures).
+		cfg01: {
+			'.type': 'routing_profile', '.anonymous': true, name: 'Default', mode: 'vpn',
+			bypass_rules: [ 'bank.example' ], vpn_rules: [ 'telegram.org' ]
+		},
+		// The legacy "do not bypass" list, consulted when no profile is
+		// assigned (and by the status page's rule preview in that case).
+		domains: { '.type': 'domains', '.anonymous': true, direct: [ 'legacy.example' ] }
 	}
 };
 

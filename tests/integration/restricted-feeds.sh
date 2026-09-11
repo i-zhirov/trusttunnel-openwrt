@@ -32,6 +32,26 @@
 # would not catch it).
 set -u
 
+# retry <tries> <sleep> <cmd...> — run the command up to <tries> times,
+# sleeping <sleep> seconds between attempts; succeed on the first exit 0.
+# The SDK image pull can fail transiently on the registry; the pin
+# verification must not fail on a dropped connection (the same policy as
+# the run.sh harness).
+retry() {
+	_r_tries=$1
+	_r_sleep=$2
+	shift 2
+	_r_i=0
+	while [ "$_r_i" -lt "$_r_tries" ]; do
+		_r_i=$((_r_i + 1))
+		if "$@"; then
+			return 0
+		fi
+		[ "$_r_i" -lt "$_r_tries" ] && sleep "$_r_sleep"
+	done
+	return 1
+}
+
 _mode=print
 _ver=${1:-}
 _set=${2:-luci}
@@ -85,10 +105,10 @@ verify_pins() {
 	_ver=$1
 	_img="openwrt/sdk:x86-64-$_ver"
 	if ! docker image inspect "$_img" >/dev/null 2>&1; then
-		docker pull -q "$_img" >/dev/null || {
+		if ! retry 3 5 docker pull -q "$_img" >/dev/null; then
 			echo "restricted-feeds: cannot pull $_img" >&2
 			return 1
-		}
+		fi
 	fi
 	# The image ships the release SDK, whose feeds.conf.default is
 	# byte-identical to the release tarball's. The same grep filter as
