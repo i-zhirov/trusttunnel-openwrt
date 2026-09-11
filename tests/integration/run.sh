@@ -34,7 +34,12 @@
 #  10. traffic    — the tunnel contract: service running, tun device and
 #      routing state up, client log connected, client.toml carries the
 #      pin, traffic to the lab target arrives with the ENDPOINT's source
-#      address, traffic to the private target stays direct.
+#      address, traffic to the private target stays direct;
+#  11. lifecycle  — killswitch and lifecycle contract: the blackhole
+#      swallows marked traffic when the attached route is gone, a clean
+#      stop tears the routing down and a start restores it, install.sh /
+#      uci-defaults / reload are idempotent, and the endpoint log shows
+#      the tunneled CONNECTs.
 #
 # Usage:
 #   TT_PM=apk sh tests/integration/run.sh                 # default
@@ -136,11 +141,14 @@ IP_TARGET=$IP_BASE.40
 DIRECT_IP=""    # the direct target's address on the private direct network
 DIRECT_NET="ttit-direct-$SUFFIX"
 
-# stage <name> — returns 0 only when the stage matches TT_FILTER (or the
-# filter is empty).
+# stage <name> — returns 0 when the stage is selected by TT_FILTER: a
+# space-separated list of stage names (a partial run needs the stages it
+# depends on — e.g. TT_FILTER="serve router targets" — the dependencies
+# are documented in the header); an empty filter selects everything.
 stage() {
-	case $1 in
-		*"$TT_FILTER"*) return 0 ;;
+	case " $TT_FILTER " in
+		*" $1 "*) return 0 ;;
+		"  ") return 0 ;;
 		*) return 1 ;;
 	esac
 }
@@ -155,16 +163,51 @@ teardown() {
 	[ -n "${NET:-}" ] && docker network rm "$NET" >/dev/null 2>&1
 }
 
+# dump_logs — on failure, collect the router state and the container logs
+# into $SCRATCH/logs BEFORE the teardown removes the containers. The
+# directory is the CI artifact and the local debugging surface.
+dump_logs() {
+	_logs="$SCRATCH/logs"
+	mkdir -p "$_logs"
+	[ -f "$SCRATCH/install.out" ] && cp "$SCRATCH/install.out" "$_logs/"
+	[ -f "$SCRATCH/reinstall.out" ] && cp "$SCRATCH/reinstall.out" "$_logs/"
+	if [ -n "${ROUTER_CID:-}" ] && docker ps -q -f name="$ROUTER_CID" >/dev/null 2>&1; then
+		docker exec "$ROUTER_CID" sh -c 'logread 2>/dev/null' \
+			> "$_logs/router-logread.txt" 2>/dev/null
+		docker exec "$ROUTER_CID" sh -c 'logread 2>/dev/null | grep -i trusttunnel' \
+			> "$_logs/router-trusttunnel.log" 2>/dev/null
+		docker exec "$ROUTER_CID" sh -c \
+			'/usr/libexec/trusttunnel/routing status /var/etc/trusttunnel/settings.tsv 2>/dev/null' \
+			> "$_logs/router-routing-status.txt" 2>/dev/null
+		docker exec "$ROUTER_CID" sh -c \
+			'ip route show 2>/dev/null; echo ---; ip rule show 2>/dev/null; echo ---; nft list table inet trusttunnel 2>/dev/null' \
+			> "$_logs/router-kernel-state.txt" 2>/dev/null
+		docker exec "$ROUTER_CID" sh -c \
+			'cat /var/etc/trusttunnel/client.toml /etc/config/trusttunnel 2>/dev/null' \
+			> "$_logs/router-config.txt" 2>/dev/null
+		docker exec "$ROUTER_CID" sh -c \
+			'cat /etc/apk/repositories.d/trusttunnel.list /etc/opkg/customfeeds.conf /etc/apk/keys/trusttunnel.pub 2>/dev/null; ls /etc/opkg/keys 2>/dev/null' \
+			> "$_logs/router-repo-config.txt" 2>/dev/null
+	fi
+	for _c in "$ENDPOINT_CID" "$TARGET_CID" "$DIRECT_CID" "$REPO_CID"; do
+		[ -n "$_c" ] || continue
+		docker logs "$_c" > "$_logs/$(basename "$_c").log" 2>&1
+	done
+	printf '  collected logs in: %s\n' "$_logs"
+}
+
 finish() {
+	_f=$(cat "$TT_TEST_TMP/failed" 2>/dev/null) || _f=1
+	if [ "$_f" != "0" ]; then
+		dump_logs
+		printf '  integration state and logs left in: %s\n' "$SCRATCH"
+	fi
 	# TT_KEEP=1 keeps the containers and the network for debugging.
 	if [ "$TT_KEEP" != "1" ]; then
 		teardown
-	fi
-	_f=$(cat "$TT_TEST_TMP/failed" 2>/dev/null) || _f=1
-	if [ "$_f" != "0" ]; then
-		printf '  integration state and logs left in: %s\n' "$SCRATCH"
-	elif [ "$TT_KEEP" != "1" ]; then
-		rm -rf "$SCRATCH"
+		if [ "$_f" = "0" ]; then
+			rm -rf "$SCRATCH"
+		fi
 	fi
 }
 trap finish EXIT INT TERM
@@ -622,7 +665,7 @@ EOF
 	_tt_pass "endpoint release and self-signed certificate prepared"
 	if ! docker run -d --name "$ENDPOINT_CID" --network "$NET" --ip "$IP_ENDPOINT" \
 			-v "$_srv:/opt/tt:ro" "$IMG_ALPINE" \
-			sh -c 'cp /opt/tt/endpoint.bin /bin/trusttunnel_endpoint && chmod +x /bin/trusttunnel_endpoint && cd /opt/tt && trusttunnel_endpoint vpn.toml hosts.toml' \
+			sh -c 'cp /opt/tt/endpoint.bin /bin/trusttunnel_endpoint && chmod +x /bin/trusttunnel_endpoint && cd /opt/tt && trusttunnel_endpoint vpn.toml hosts.toml -l debug' \
 			>/dev/null 2>&1; then
 		_tt_fail "could not start the endpoint container"
 		return
@@ -743,9 +786,25 @@ st_targets() {
 st_install() {
 	stage install || return
 	echo "== running install.sh"
-	docker exec -e TT_REPO_URL="http://$IP_REPO:8080" "$ROUTER_CID" \
-		sh /src/install.sh > "$SCRATCH/install.out" 2>&1
+	# run_install — one install.sh attempt against the served repository.
+	run_install() {
+		docker exec -e TT_REPO_URL="http://$IP_REPO:8080" "$ROUTER_CID" \
+			sh /src/install.sh > "$SCRATCH/install.out" 2>&1
+		return $?
+	}
+	run_install
 	_rc=$?
+	if [ "$_rc" -ne 0 ]; then
+		# The package-manager update hits the public OpenWrt mirrors, and
+		# a transient download failure (busybox wget does not retry) is
+		# the common flake. install.sh is safe to rerun — its repository
+		# setup is idempotent, which A15 asserts — so one retry is
+		# attempted before failing.
+		echo "  install.sh failed (rc=$_rc); retrying once"
+		sleep 5
+		run_install
+		_rc=$?
+	fi
 	if [ "$_rc" -eq 0 ]; then
 		_tt_pass "install.sh exits 0"
 	else
@@ -839,6 +898,28 @@ st_asserts() {
 
 # --- stage: connect ---------------------------------------------------------------
 
+# wait_tunnel <label> — polls for the established tunnel: the client log
+# reports the connection AND the tun device carries traffic. Both must
+# hold: the log line alone could come from an earlier incarnation, the
+# carrier alone appears while the client is still connecting.
+wait_tunnel() {
+	_i=0
+	while [ "$_i" -lt 60 ]; do
+		_i=$((_i + 1))
+		if docker exec "$ROUTER_CID" \
+				sh -c 'logread 2>/dev/null | grep -q "Successfully connected to endpoint"' \
+				>/dev/null 2>&1 \
+				&& [ "$(docker exec "$ROUTER_CID" sh -c 'cat /sys/class/net/tun0/carrier 2>/dev/null' 2>/dev/null)" = "1" ]; then
+			_tt_pass "$1"
+			return 0
+		fi
+		sleep 1
+	done
+	_tt_fail "$1 (the tunnel did not come up within 60s)"
+	docker exec "$ROUTER_CID" sh -c 'logread | grep trusttunnel | tail -8' 2>/dev/null
+	return 1
+}
+
 st_connect() {
 	stage connect || return
 	echo "== configuring and starting the service"
@@ -879,25 +960,7 @@ EOF
 		_tt_fail "the service configuration or start failed"
 		return
 	fi
-	_i=0
-	_ok=0
-	while [ "$_i" -lt 60 ]; do
-		_i=$((_i + 1))
-		if docker exec "$ROUTER_CID" \
-				sh -c 'logread 2>/dev/null | grep -q "Successfully connected to endpoint"' \
-				>/dev/null 2>&1 \
-				&& [ "$(docker exec "$ROUTER_CID" sh -c 'cat /sys/class/net/tun0/carrier 2>/dev/null' 2>/dev/null)" = "1" ]; then
-			_ok=1
-			break
-		fi
-		sleep 1
-	done
-	if [ "$_ok" = "1" ]; then
-		_tt_pass "the tunnel came up"
-	else
-		_tt_fail "the tunnel did not come up within 60s"
-		docker exec "$ROUTER_CID" sh -c 'logread | grep trusttunnel | tail -8' 2>/dev/null
-	fi
+	wait_tunnel "the tunnel came up"
 }
 
 # --- stage: traffic assertions -------------------------------------------------------
@@ -965,6 +1028,153 @@ st_traffic() {
 		"traffic to the private target stays direct (source: the router itself)"
 }
 
+# --- stage: killswitch and lifecycle assertions -------------------------------------
+
+st_lifecycle() {
+	stage lifecycle || return
+	echo "== killswitch and lifecycle assertions"
+
+	# --- A13: the blackhole killswitch, at the kernel level ------------------
+	# While the tunnel is up, marked traffic resolves via tun0 (table
+	# 880's default). Bringing the device down makes the kernel drop the
+	# attached route by itself — table 880 then holds only the blackhole,
+	# and the same marked lookup fails (ip route get answers EINVAL for a
+	# blackhole match). The device is then brought up and the route
+	# re-attached exactly like the routing helper's attach does. The
+	# lookup is deterministic: no client process is involved, so there is
+	# nothing to race.
+	_lk=$(docker exec "$ROUTER_CID" sh -c "ip route get $IP_TARGET mark 0x9527 2>&1" 2>/dev/null)
+	if printf '%s' "$_lk" | grep -q "dev tun0"; then
+		_tt_pass "marked traffic routes via the tunnel device"
+	else
+		_tt_fail "marked traffic does not route via tun0 (got: $_lk)"
+	fi
+	docker exec "$ROUTER_CID" sh -c "ip link set tun0 down" >/dev/null 2>&1
+	sleep 1
+	_lk=$(docker exec "$ROUTER_CID" sh -c "ip route get $IP_TARGET mark 0x9527 2>&1" 2>/dev/null)
+	if printf '%s' "$_lk" | grep -q "RTNETLINK answers"; then
+		_tt_pass "with the device down, the marked lookup fails into the blackhole"
+	else
+		_tt_fail "the marked lookup should have failed into the blackhole (got: $_lk)"
+	fi
+	docker exec "$ROUTER_CID" sh -c "ip link set tun0 up" >/dev/null 2>&1
+	docker exec "$ROUTER_CID" sh -c "ip route replace default dev tun0 table 880" >/dev/null 2>&1
+	_lk=$(docker exec "$ROUTER_CID" sh -c "ip route get $IP_TARGET mark 0x9527 2>&1" 2>/dev/null)
+	if printf '%s' "$_lk" | grep -q "dev tun0"; then
+		_tt_pass "the re-attached route restores the tunnel path"
+	else
+		_tt_fail "the re-attached route does not restore the tunnel path (got: $_lk)"
+	fi
+
+	# --- A14: a clean stop tears everything down; a start restores it -------
+	docker exec "$ROUTER_CID" /etc/init.d/trusttunnel stop >/dev/null 2>&1
+	_i=0
+	while [ "$_i" -lt 20 ]; do
+		_i=$((_i + 1))
+		[ -z "$(docker exec "$ROUTER_CID" sh -c 'ps | grep "[t]rusttunnel_client"' 2>/dev/null)" ] && break
+		sleep 1
+	done
+	_rs=$(docker exec "$ROUTER_CID" \
+		sh -c '/usr/libexec/trusttunnel/routing status /var/etc/trusttunnel/settings.tsv' 2>/dev/null)
+	assert_contains "$_rs" "device down" "a clean stop leaves no attached device"
+	assert_contains "$_rs" "rule absent" "a clean stop removes the fwmark rule"
+	assert_contains "$_rs" "table absent" "a clean stop removes the routing table"
+	assert_contains "$_rs" "nft absent" "a clean stop removes the nft table"
+	_proc=$(docker exec "$ROUTER_CID" sh -c 'ps | grep "[t]rusttunnel_client"' 2>/dev/null)
+	assert_eq "" "$_proc" "a clean stop exits the client"
+	_tun=$(docker exec "$ROUTER_CID" sh -c 'ls /sys/class/net/ 2>/dev/null | grep -c tun' 2>/dev/null)
+	assert_eq "0" "$_tun" "a clean stop removes the tun device"
+	# Nothing is marked after a clean stop: both targets observe the
+	# router's own address (no tunnel, no blackhole, no leak into the
+	# tunnel path).
+	_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$IP_ROUTER" "$_got" \
+		"a stopped service sends the lab target direct"
+	_src=$(docker exec "$ROUTER_CID" \
+		sh -c "ip route get $DIRECT_IP 2>/dev/null | grep -o 'src [0-9.]*' | awk '{print \$2}' | head -1" 2>/dev/null)
+	_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$DIRECT_IP:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$_src" "$_got" "a stopped service keeps the private path direct"
+	if docker exec "$ROUTER_CID" /etc/init.d/trusttunnel start >/dev/null 2>&1; then
+		_tt_pass "the service starts again"
+	else
+		_tt_fail "the service does not start again"
+	fi
+	wait_tunnel "the restart brings the tunnel back"
+	_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" "the restored tunnel carries traffic again"
+
+	# --- A15: idempotence ----------------------------------------------------
+	# The uci-defaults rerun (while the script still exists) creates no
+	# duplicates. The apk path consumes the script during the install:
+	# apk runs /etc/uci-defaults/* right after placing them and removes
+	# them (the seeding banner in install.sh is the fallback that only
+	# fires on opkg). The rerun therefore runs only when the file is
+	# still there; the no-duplicate STATE is asserted on both paths.
+	if docker exec "$ROUTER_CID" sh -c 'test -x /etc/uci-defaults/40-luci-trusttunnel' >/dev/null 2>&1; then
+		if docker exec "$ROUTER_CID" /etc/uci-defaults/40-luci-trusttunnel >/dev/null 2>&1; then
+			_tt_pass "the uci-defaults rerun exits 0"
+		else
+			_tt_fail "the uci-defaults rerun failed"
+		fi
+	else
+		_tt_pass "the uci-defaults script was consumed by the package manager"
+	fi
+	_n=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep -c \"name='trusttunnel'\"" 2>/dev/null)
+	assert_eq "1" "$_n" "the firewall zone is not duplicated"
+	_n=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep -c \"dest='trusttunnel'\"" 2>/dev/null)
+	assert_eq "1" "$_n" "the lan to trusttunnel forwarding is not duplicated"
+	_n=$(docker exec "$ROUTER_CID" sh -c "uci show trusttunnel | grep -c \"name='Default'\"" 2>/dev/null)
+	assert_eq "1" "$_n" "the Default routing profile is not duplicated"
+	# install.sh rerun: exit 0 and no duplicated repository entry (the
+	# reinstalled service brings the tunnel back — install.sh restarts a
+	# running service on purpose).
+	docker exec -e TT_REPO_URL="http://$IP_REPO:8080" "$ROUTER_CID" \
+		sh /src/install.sh > "$SCRATCH/reinstall.out" 2>&1
+	assert_eq "0" "$?" "install.sh rerun exits 0"
+	if [ "$TT_PM" = "apk" ]; then
+		_n=$(docker exec "$ROUTER_CID" sh -c 'grep -c . /etc/apk/repositories.d/trusttunnel.list 2>/dev/null' 2>/dev/null)
+		assert_eq "1" "$_n" "the apk repository entry is not duplicated"
+	else
+		_n=$(docker exec "$ROUTER_CID" sh -c 'grep -c "^src/gz trusttunnel " /etc/opkg/customfeeds.conf 2>/dev/null' 2>/dev/null)
+		assert_eq "1" "$_n" "the opkg feed line is not duplicated"
+	fi
+	wait_tunnel "the reinstalled service brings the tunnel back"
+	# The reinstall's own uci-defaults run (by apk on 25.12, by install.sh
+	# on 22.03) must leave the same single-zone, single-forwarding,
+	# single-profile state.
+	_n=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep -c \"name='trusttunnel'\"" 2>/dev/null)
+	assert_eq "1" "$_n" "the reinstall does not duplicate the firewall zone"
+	_n=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep -c \"dest='trusttunnel'\"" 2>/dev/null)
+	assert_eq "1" "$_n" "the reinstall does not duplicate the forwarding"
+	_n=$(docker exec "$ROUTER_CID" sh -c "uci show trusttunnel | grep -c \"name='Default'\"" 2>/dev/null)
+	assert_eq "1" "$_n" "the reinstall does not duplicate the Default profile"
+	# A reload with nothing changed is a noop: the applied-state records
+	# match the fresh export, so nothing is regenerated and the tunnel
+	# stays up.
+	docker exec "$ROUTER_CID" /etc/init.d/trusttunnel reload >/dev/null 2>&1
+	_log=$(docker exec "$ROUTER_CID" sh -c 'logread | grep "nothing to do" | tail -1' 2>/dev/null)
+	assert_contains "$_log" "nothing to do" "an unchanged reload is a noop"
+	_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" "the tunnel survives the noop reload"
+
+	# --- A16: the endpoint saw the tunneled CONNECTs --------------------------
+	# The endpoint (started with -l debug) logs every tunneled CONNECT;
+	# their presence is the server-side confirmation that the traffic
+	# really traveled through the tunnel.
+	_n=$(docker logs "$ENDPOINT_CID" 2>/dev/null | grep -c "CONNECT")
+	if [ "$_n" -gt 0 ]; then
+		_tt_pass "the endpoint logged tunneled CONNECT requests"
+	else
+		_tt_fail "the endpoint logged no CONNECT requests"
+	fi
+	_n=$(docker logs "$ENDPOINT_CID" 2>/dev/null | grep -c "$IP_TARGET:8080")
+	if [ "$_n" -gt 0 ]; then
+		_tt_pass "the endpoint saw the tunneled requests for the lab target"
+	else
+		_tt_fail "the endpoint never saw a request for the lab target"
+	fi
+}
+
 # --- main -------------------------------------------------------------------------
 
 st_preflight
@@ -978,5 +1188,6 @@ st_install
 st_asserts
 st_connect
 st_traffic
+st_lifecycle
 
 tt_test_summary
