@@ -1,0 +1,51 @@
+#!/bin/sh
+# Net hotplug hook: reattach the tunnel route when the client recreates its
+# tun device. Runs once per net event; every event this hook does not act on
+# must exit 0.
+#
+# The hook only reacts to device-add events for the client's tun device: the
+# device must be a tun (sysfs tun_flags marker) and must not be persistent
+# (the IFF_PERSIST bit), because persistent tun devices are created manually
+# or left behind by old package versions, never by the client.
+
+# A non-add event (remove, link up/down, ...) is never ours to act on.
+[ "$ACTION" = "add" ] || exit 0
+
+# The event names the device in INTERFACE, with DEVICENAME as the fallback.
+# Without a device name there is nothing to attach a route to.
+dev="${INTERFACE:-$DEVICENAME}"
+[ -n "$dev" ] || exit 0
+
+# Only tun/tap devices expose tun_flags in sysfs; a device without the file
+# is a regular net device and cannot carry the tunnel route.
+[ -e "/sys/class/net/$dev/tun_flags" ] || exit 0
+
+# Read the flags word; when the read fails there is no way to classify the
+# device, so the event is ignored. The IFF_PERSIST bit (0x800) marks manual
+# and legacy devices: skip them, only the client-created non-persistent tun
+# device triggers the reattach.
+flags=$(cat "/sys/class/net/$dev/tun_flags" 2>/dev/null) || exit 0
+[ "$((flags & 0x800))" = "0" ] || exit 0
+
+# The route is attached from the records written by the service; without the
+# records file there is nothing to attach.
+RECORDS=/var/etc/trusttunnel/settings.tsv
+OUTDIR=/var/etc/trusttunnel
+[ -f "$RECORDS" ] || exit 0
+
+# Only a running service may reattach; a stopped one must not touch routing.
+/etc/init.d/trusttunnel running >/dev/null 2>&1 || exit 0
+
+# The device recorded as currently attached belongs to a working tunnel.
+# When it still exists in sysfs and the event names a different device, the
+# event is foreign: reattaching would tear the working tunnel off.
+cur=$(cat "$OUTDIR/device" 2>/dev/null)
+if [ -n "$cur" ] && [ -d "/sys/class/net/$cur" ] && [ "$cur" != "$dev" ]; then
+	exit 0
+fi
+
+# Every guard passed: reattach the route to the event device. The log line is
+# emitted only when the attach succeeded, and the hook's exit status follows
+# the attach outcome.
+/usr/libexec/trusttunnel/routing attach "$RECORDS" "$OUTDIR" "$dev" &&
+	logger -t trusttunnel "hotplug: reattached routing to $dev"

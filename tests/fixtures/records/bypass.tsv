@@ -1,0 +1,14 @@
+main.enabled	1
+endpoint.hostname	vpn.example.com
+endpoint.address	1.2.3.4:443
+endpoint.username	alice
+endpoint.password	s3cret
+# A bypass-mode profile: only the VPN rules go through the tunnel. The
+# bypass rules and the legacy direct list must NOT become exclusions here.
+endpoint.routing_profile	Games
+routing_profile.name	Games
+routing_profile.mode	bypass
+routing_profile.vpn_rules	telegram.org
+routing_profile.vpn_rules	1.2.3.0/24
+routing_profile.bypass_rules	bank.example
+domains.direct	legacy.example

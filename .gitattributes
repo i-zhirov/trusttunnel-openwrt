@@ -1,0 +1,18 @@
+# All text files are stored AND CHECKED OUT with LF line endings, regardless
+# of core.autocrlf on the developer's machine.
+#
+# This is not cosmetics. The package consists entirely of scripts that run on
+# the router: the init script, generators, hotplug, the installer. A script
+# with CRLF does not run at all — the kernel sees the interpreter as
+# "/bin/sh\r" and answers "not found". With core.autocrlf=true and without
+# this file any fresh checkout on Windows would turn LF into CRLF, and the
+# local SDK build mounts exactly the working tree — i.e. broken scripts would
+# end up in the package, and it could only be noticed on a live router.
+* text=auto eol=lf
+
+# Binary files must not be converted under any settings.
+*.apk    binary
+*.lmo    binary
+*.tar.gz binary
+*.png    binary
+*.jpg    binary

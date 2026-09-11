@@ -1,0 +1,4 @@
+#!/bin/sh
+# Lab stub: answer like api.ipify.org.
+echo "203.0.113.77"
+exit 0

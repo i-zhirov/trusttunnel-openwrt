@@ -1,0 +1,1 @@
+{ "enabled": true, "running": true, "device": "tun0", "device_up": true, "rule": true, "table": true, "nft": true, "endpoint_hostname": "vpn.example.com", "addresses": [ "1.2.3.4:443", "[2001:db8::1]:443" ], "client_installed": true, "routing_profile": "Default", "routing_mode": "vpn", "vpn_mode": "general" }

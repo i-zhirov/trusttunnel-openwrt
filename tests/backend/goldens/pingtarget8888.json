@@ -1,0 +1,1 @@
+{ "results": [ { "host": "8.8.8.8", "sent": 4, "received": 4, "loss": 0, "min": 10.1, "avg": 12.3, "max": 15.7 } ] }

@@ -1,0 +1,1 @@
+{ "domain": "bank.example", "normalized": "bank.example", "verdict": "direct", "reason": "listed in the profile's bypass rules; the client sends it out directly" }

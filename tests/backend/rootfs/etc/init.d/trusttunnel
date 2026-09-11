@@ -1,0 +1,9 @@
+#!/bin/sh
+# Lab stub: the service under test only asks "running?" and fires actions.
+case "$1" in
+	running) exit 0 ;;
+	start|stop|restart|reload)
+		echo "trusttunnel $1 (stub)" >&2
+		exit 0 ;;
+	*) exit 1 ;;
+esac
