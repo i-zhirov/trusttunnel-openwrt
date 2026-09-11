@@ -222,8 +222,7 @@ const canned = {
     service: function () { return { code: 0 }; },
     log: function () { return { lines: ['line one', 'line two'] }; },
     versions: function () {
-        return { package: '1.0.20-r1', client: '1.0.49',
-                 latest: 'v1.0.20', update_available: false, ahead: false, stale: false };
+        return { package: '1.0.20-r1', client_package: '1.0.49-r1', client: '1.0.49' };
     },
     diagnose: function () {
         return {
@@ -462,6 +461,16 @@ async function main() {
     const rpOpt = rpSec && rpSec.options.find(o => o.name === 'routing_profile');
     ok(rpOpt && rpOpt.values.indexOf('Default') !== -1 && rpOpt.values.indexOf('Test') !== -1,
         'settings: the routing profile select lists Default and Test');
+    // The Versions tab is a NamedSection of the UI-only 'about' type
+    // (map-level tabs key panes by the section type, so the section must
+    // exist for the tab to render its rows).
+    const aboutSec = form_lastMap.sections.find(s => s.type === 'about');
+    ok(aboutSec && aboutSec.title === 'Versions',
+        'settings: the Versions tab section is created');
+    ok(aboutSec && [ '_package', '_client_package', '_client' ].every(n =>
+        aboutSec.options.some(o => o.name === n)),
+        'settings: the Versions section carries the three version rows');
+    ok(hasText(settingsTree, 'Versions'), 'settings: the Versions tab title renders');
 
     // Import flow: open the modal, paste a config, press Import, verify the
     // values land in pending UCI only (uci.set recorded, nothing else).
