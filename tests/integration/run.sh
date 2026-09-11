@@ -1,0 +1,618 @@
+#!/bin/sh
+# Integration harness — install stage: the real install.sh against a
+# locally assembled and served package repository, inside a dockerized
+# OpenWrt router.
+#
+# What it does, end to end:
+#   1. preflight  — docker and /dev/net/tun availability;
+#   2. packages   — the luci-app, i18n and client packages for the chosen
+#      package manager, from TT_REPO_DIR (CI artifact layout) or, by
+#      default, from the project's GitHub release;
+#   3. repo       — assembles and signs a hermetic repository with a FRESH
+#      keypair per run (apk: EC P-256 + mkndx/adbsign in the pinned alpine
+#      image; opkg: usign + ipkg-make-index.sh, exactly the release.yml
+#      recipe), then serves it from a python http.server container on the
+#      lab network;
+#   4. router     — boots an openwrt/rootfs container with /sbin/init and
+#      configures its network with the router's own tools (uci import +
+#      /etc/init.d/network restart);
+#   5. install    — runs the repository's install.sh with TT_REPO_URL
+#      pointing at the served repo;
+#   6. asserts    — the install-side contract: exit 0, packages installed,
+#      client binary runs, config seeded, firewall zone created, service
+#      registered but not started, repository entry configured.
+#
+# Usage:
+#   TT_PM=apk sh tests/integration/run.sh                 # default
+#   TT_PM=opkg sh tests/integration/run.sh
+#   TT_REPO_DIR=/path/to/dist sh tests/integration/run.sh # local packages
+#   TT_RELEASE_TAG=v1.0.16 sh tests/integration/run.sh    # pinned release
+#   TT_FILTER=install sh tests/integration/run.sh         # one stage
+#   TT_KEEP=1 sh tests/integration/run.sh                 # keep containers
+#
+# Docker-gated like the other docker tests: without docker the harness
+# reports SKIP (exit 77). It is deliberately NOT picked up by tests/run.sh
+# (the runner globs tests/test_*.sh); CI runs it as its own workflow.
+#
+# The scratch dir lives under $HOME: Docker Desktop on macOS only shares
+# paths under /Users (a /tmp or /var/folders mount silently appears empty
+# in the container) — the same constraint install-harness.sh documents.
+# The lab subnet must be a /24 with a globally-shaped range: the router's
+# own marking rules refuse private ranges, and the endpoint (later phases)
+# refuses documentation ranges.
+set -u
+
+# --- knobs ---------------------------------------------------------------------
+
+TT_PM="${TT_PM:-apk}"                       # apk | opkg
+TT_LAB_SUBNET="${TT_LAB_SUBNET:-44.55.66.0/24}"
+TT_REPO_DIR="${TT_REPO_DIR:-}"              # prebuilt package dir (flat)
+TT_RELEASE_TAG="${TT_RELEASE_TAG:-latest}"
+TT_KEEP="${TT_KEEP:-0}"
+TT_FILTER="${TT_FILTER:-}"
+
+# The pinned alpine image release.yml uses for apk mkndx/adbsign (apk-tools
+# 3.0.7); bash is added inside for the opkg index generator. The python
+# image serves the repository. The router images are the same ones the
+# release verification installs into.
+IMG_ALPINE="alpine:edge@sha256:266f29255458134745f2bf588cb23ed1ed1768b96ff2580a05d70a8aba59e145"
+IMG_PYTHON="python@sha256:c6ead215bfd31f1e433d968853b7a769989117115b728874824e6c0a27cb96fc"
+IMG_ROUTER_APK="openwrt/rootfs:x86-64-25.12.0"
+IMG_ROUTER_OPKG="openwrt/rootfs:x86-64-22.03.7"
+
+case "$TT_PM" in
+	apk)
+		IMG_ROUTER=$IMG_ROUTER_APK
+		PM_GLOBS="luci-app-trusttunnel-*.apk luci-i18n-trusttunnel-*.apk trusttunnel-client-*-x86_64.apk"
+		;;
+	opkg)
+		IMG_ROUTER=$IMG_ROUTER_OPKG
+		PM_GLOBS="luci-app-trusttunnel_*_all.ipk luci-i18n-trusttunnel-*_all.ipk trusttunnel-client_*_x86_64.ipk"
+		;;
+	*)
+		echo "error: unknown TT_PM=$TT_PM (apk or opkg)" >&2
+		exit 2
+		;;
+esac
+
+command -v docker >/dev/null 2>&1 || {
+	echo "  SKIP: docker not available"
+	exit 77
+}
+docker info >/dev/null 2>&1 || {
+	echo "  SKIP: docker daemon not running"
+	exit 77
+}
+
+# --- scratch and helpers --------------------------------------------------------
+
+SCRATCH=$(mktemp -d "$HOME/.tt-integration.XXXXXX") || exit 1
+SUFFIX=${SCRATCH##*.}
+export TT_TEST_TMP="$SCRATCH/assert"
+mkdir -p "$TT_TEST_TMP" "$SCRATCH/pkgs" "$SCRATCH/sign" "$SCRATCH/repo"
+
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../lib.sh"
+
+NET="ttit-$TT_PM-$SUFFIX"
+REPO_CID="ttit-repo-$SUFFIX"
+ROUTER_CID="ttit-router-$SUFFIX"
+
+# The lab subnet is a /24; the host octets are derived from it.
+IP_BASE=${TT_LAB_SUBNET%/*}
+IP_BASE=${IP_BASE%.*}
+IP_REPO=$IP_BASE.10
+IP_ROUTER=$IP_BASE.30
+
+# stage <name> — returns 0 only when the stage matches TT_FILTER (or the
+# filter is empty).
+stage() {
+	case $1 in
+		*"$TT_FILTER"*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+teardown() {
+	[ -n "${ROUTER_CID:-}" ] && docker rm -f "$ROUTER_CID" >/dev/null 2>&1
+	[ -n "${REPO_CID:-}" ] && docker rm -f "$REPO_CID" >/dev/null 2>&1
+	[ -n "${NET:-}" ] && docker network rm "$NET" >/dev/null 2>&1
+}
+
+finish() {
+	# TT_KEEP=1 keeps the containers and the network for debugging.
+	if [ "$TT_KEEP" != "1" ]; then
+		teardown
+	fi
+	_f=$(cat "$TT_TEST_TMP/failed" 2>/dev/null) || _f=1
+	if [ "$_f" != "0" ]; then
+		printf '  integration state and logs left in: %s\n' "$SCRATCH"
+	elif [ "$TT_KEEP" != "1" ]; then
+		rm -rf "$SCRATCH"
+	fi
+}
+trap finish EXIT INT TERM
+
+# --- stage: preflight ------------------------------------------------------------
+
+st_preflight() {
+	stage preflight || return
+	echo "== preflight"
+	if docker run --rm --device /dev/net/tun "$IMG_ROUTER" true >/dev/null 2>&1; then
+		_tt_pass "the docker VM exposes /dev/net/tun"
+		return
+	fi
+	# Best-effort fallback for hosts where the node is missing but the
+	# module is loaded (CI VMs): create the node, then re-check.
+	docker run --rm --privileged --cap-add SYS_MODULE "$IMG_ROUTER" \
+		sh -c 'mkdir -p /dev/net && mknod -m 666 /dev/net/tun c 10 200 2>/dev/null; true' >/dev/null 2>&1
+	if docker run --rm --device /dev/net/tun "$IMG_ROUTER" true >/dev/null 2>&1; then
+		_tt_pass "the docker VM exposes /dev/net/tun (after mknod fallback)"
+	else
+		_tt_fail "/dev/net/tun is not available in the docker VM (load the tun module on the host)"
+	fi
+}
+
+# --- stage: packages ------------------------------------------------------------
+
+# collect_pkgs <dir> — copies the packages matching the PM globs into the
+# scratch; fails when any of the three expected packages is missing.
+collect_pkgs() {
+	_src=$1
+	for _pat in $PM_GLOBS; do
+		_found=0
+		for _f in "$_src"/$_pat; do
+			[ -f "$_f" ] || continue
+			cp "$_f" "$SCRATCH/pkgs/" || return 1
+			_found=1
+		done
+		[ "$_found" = "1" ] || return 1
+	done
+	return 0
+}
+
+# verify_pkgs — every PM glob must match at least one collected file.
+verify_pkgs() {
+	for _pat in $PM_GLOBS; do
+		_found=0
+		for _f in "$SCRATCH/pkgs"/$_pat; do
+			[ -f "$_f" ] && _found=1
+		done
+		[ "$_found" = "1" ] || return 1
+	done
+	return 0
+}
+
+st_pkgs() {
+	stage pkgs || return
+	echo "== packages"
+	if [ -n "$TT_REPO_DIR" ]; then
+		if collect_pkgs "$TT_REPO_DIR"; then
+			_tt_pass "packages collected from TT_REPO_DIR=$TT_REPO_DIR"
+		else
+			_tt_fail "TT_REPO_DIR=$TT_REPO_DIR does not hold all $TT_PM packages (globs: $PM_GLOBS)"
+			return
+		fi
+	else
+		# Download the matching assets of the latest (or pinned) release.
+		_api="https://api.github.com/repos/i-zhirov/trusttunnel-openwrt/releases/latest"
+		[ "$TT_RELEASE_TAG" = "latest" ] || \
+			_api="https://api.github.com/repos/i-zhirov/trusttunnel-openwrt/releases/tags/$TT_RELEASE_TAG"
+		_json=$(curl -fsSL "$_api" 2>/dev/null) || _json=""
+		if [ -z "$_json" ]; then
+			_tt_fail "could not fetch the release info from $_api"
+			return
+		fi
+		_tag=$(printf '%s' "$_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])') || _tag=""
+		_names=$(printf '%s' "$_json" | python3 -c '
+import json, fnmatch, sys
+r = json.load(sys.stdin)
+for a in r.get("assets", []):
+    if any(fnmatch.fnmatch(a["name"], p) for p in sys.argv[1].split()):
+        print(a["name"])
+' "$PM_GLOBS") || _names=""
+		_missing=0
+		for _name in $_names; do
+			curl -fsSL -o "$SCRATCH/pkgs/$_name" \
+				"https://github.com/i-zhirov/trusttunnel-openwrt/releases/download/$_tag/$_name" \
+				>/dev/null 2>&1 || _missing=$((_missing + 1))
+		done
+		if [ "$_missing" -eq 0 ] && verify_pkgs; then
+			_tt_pass "release $_tag: packages downloaded"
+		else
+			_tt_fail "release $_tag did not provide all $TT_PM packages"
+			return
+		fi
+	fi
+	_n=$(ls "$SCRATCH/pkgs" | grep -c .)
+	_tt_pass "collected $_n package files for the $TT_PM repository"
+}
+
+# --- stage: repo -----------------------------------------------------------------
+
+assemble_apk_repo() {
+	_dir="$SCRATCH/repo/apk/x86_64"
+	mkdir -p "$_dir"
+	# EC P-256 — the same key type as the project's committed key-build.pub.
+	if ! openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
+			-out "$SCRATCH/sign/apk.sec" 2>/dev/null; then
+		_tt_fail "apk signing key generation failed"
+		return 1
+	fi
+	if ! openssl pkey -in "$SCRATCH/sign/apk.sec" -pubout \
+			-out "$SCRATCH/repo/apk/key-build.pub" 2>/dev/null; then
+		_tt_fail "apk public key export failed"
+		return 1
+	fi
+	cp "$SCRATCH/pkgs"/*.apk "$_dir/"
+	# Every package file is renamed to its metadata-derived name (name-
+	# version.apk): apk fetches by that name. The release assets carry a
+	# -x86_64 suffix (keeps the per-arch uploads apart) and the i18n
+	# version's tilde is mangled into a dot by GitHub — both would 404.
+	if ! docker run --rm -v "$SCRATCH:/w" "$IMG_ALPINE" sh -c '
+			set -e
+			cd /w/repo/apk/x86_64
+			for f in *.apk; do
+				meta=$(apk adbdump "$f" 2>/dev/null) || exit 1
+				name=$(printf "%s\n" "$meta" | awk "/^  name: / { print \$2; exit }")
+				version=$(printf "%s\n" "$meta" | awk "/^  version: / { print \$2; exit }")
+				[ -n "$name" ] && [ -n "$version" ] || exit 1
+				canonical="${name}-${version}.apk"
+				[ "$f" = "$canonical" ] || mv "$f" "$canonical"
+			done
+		'; then
+		_tt_fail "apk package renaming to metadata names failed"
+		return 1
+	fi
+	# Index and sign in the pinned alpine image, exactly like release.yml.
+	if ! docker run --rm -v "$SCRATCH:/w" "$IMG_ALPINE" sh -c '
+			set -e
+			cd /w/repo/apk/x86_64
+			apk mkndx --allow-untrusted --output packages.adb --arch x86_64 *.apk
+			apk adbsign --allow-untrusted --sign-key /w/sign/apk.sec packages.adb
+		' >/dev/null 2>&1; then
+		_tt_fail "apk index generation or signing failed"
+		return 1
+	fi
+	return 0
+}
+
+assemble_opkg_repo() {
+	mkdir -p "$SCRATCH/repo/opkg"
+	cp "$SCRATCH/pkgs"/*.ipk "$SCRATCH/repo/opkg/"
+	# usign keypair: usign lives in the opkg router image.
+	if ! docker run --rm -v "$SCRATCH/sign:/s" "$IMG_ROUTER_OPKG" \
+			sh -c 'cd /s && usign -G -s opkg.sec -p opkg.pub' >/dev/null 2>&1; then
+		_tt_fail "usign key generation failed"
+		return 1
+	fi
+	cp "$SCRATCH/sign/opkg.pub" "$SCRATCH/repo/opkg/opkg-key.pub"
+	# The canonical index generator, fetched at run time — the same source
+	# release.yml uses.
+	if ! curl -fsSL -o "$SCRATCH/ipkg-make-index.sh" \
+			https://raw.githubusercontent.com/openwrt/openwrt/openwrt-22.03/scripts/ipkg-make-index.sh; then
+		_tt_fail "could not fetch ipkg-make-index.sh"
+		return 1
+	fi
+	cat > "$SCRATCH/mkhash.sh" <<'EOF'
+#!/bin/sh
+sha256sum "$2" | cut -d" " -f1
+EOF
+	chmod +x "$SCRATCH/mkhash.sh"
+	# The generator needs bash and GNU stat/sha256sum, so it runs inside
+	# the pinned alpine image (bash added there) — the macOS host bash and
+	# BSD stat cannot run it.
+	if ! docker run --rm -v "$SCRATCH:/w" "$IMG_ALPINE" sh -c '
+			set -e
+			apk add -q bash >/dev/null 2>&1
+			cd /w/repo/opkg
+			MKHASH=/w/mkhash.sh bash /w/ipkg-make-index.sh . > Packages.manifest 2>/dev/null
+			grep -vE "^(Maintainer|LicenseFiles|Source|SourceName|Require|SourceDateEpoch)" Packages.manifest > Packages
+			rm -f Packages.manifest
+		'; then
+		_tt_fail "opkg index generation failed"
+		return 1
+	fi
+	# usign cannot sign SHA-512 messages of two specific sizes (the same
+	# workaround the release pipeline applies); padding the index by two
+	# empty lines shifts it past the affected sizes.
+	_size=$(wc -c < "$SCRATCH/repo/opkg/Packages")
+	if [ $(( (64 + _size) % 128 )) -eq 110 ] || [ $(( (64 + _size) % 128 )) -eq 111 ]; then
+		printf '\n\n' >> "$SCRATCH/repo/opkg/Packages"
+	fi
+	gzip -9nc "$SCRATCH/repo/opkg/Packages" > "$SCRATCH/repo/opkg/Packages.gz"
+	if ! docker run --rm -v "$SCRATCH/repo/opkg:/repo" \
+			-v "$SCRATCH/sign/opkg.sec:/opkg.sec:ro" "$IMG_ROUTER_OPKG" \
+			sh -c 'cd /repo && usign -S -s /opkg.sec -m Packages -x Packages.sig' >/dev/null 2>&1; then
+		_tt_fail "opkg index signing failed"
+		return 1
+	fi
+	return 0
+}
+
+st_repo() {
+	stage repo || return
+	echo "== assembling the $TT_PM repository"
+	if [ "$TT_PM" = "apk" ]; then
+		if assemble_apk_repo; then
+			_tt_pass "apk repository assembled and signed (key-build.pub, x86_64/packages.adb)"
+		fi
+	else
+		if assemble_opkg_repo; then
+			_tt_pass "opkg repository assembled and signed (opkg-key.pub, Packages, Packages.sig)"
+		fi
+	fi
+}
+
+# --- stage: serve ----------------------------------------------------------------
+
+st_serve() {
+	stage serve || return
+	echo "== serving the repository"
+	if ! docker network create --subnet "$TT_LAB_SUBNET" "$NET" >/dev/null 2>&1; then
+		_tt_fail "could not create the lab network $NET"
+		return
+	fi
+	if ! docker run -d --name "$REPO_CID" --network "$NET" --ip "$IP_REPO" \
+			-v "$SCRATCH/repo:/repo:ro" "$IMG_PYTHON" \
+			python3 -m http.server 8080 --directory /repo >/dev/null 2>&1; then
+		_tt_fail "could not start the repository server"
+		return
+	fi
+	_probe=apk/key-build.pub
+	[ "$TT_PM" = "opkg" ] && _probe=opkg/opkg-key.pub
+	# The python server takes a couple of seconds to bind its socket on a
+	# cold start; a connect into that window fails with busybox wget's
+	# "Operation not permitted", so the health check polls instead of
+	# asserting on the first attempt.
+	_i=0
+	_got=""
+	while [ "$_i" -lt 10 ]; do
+		_i=$((_i + 1))
+		_got=$(docker run --rm --network "$NET" "$IMG_ROUTER" \
+			sh -c "wget -qO- --timeout=5 http://$IP_REPO:8080/$_probe" 2>/dev/null) || _got=""
+		[ -n "$_got" ] && break
+		sleep 2
+	done
+	if [ -n "$_got" ]; then
+		_tt_pass "the repository server answers on the lab network"
+	else
+		_tt_fail "the repository server is unreachable from the lab network"
+	fi
+}
+
+# --- stage: router ---------------------------------------------------------------
+
+# wait_firewall — the network restart reloads fw4 asynchronously; until the
+# input chain carries the lan-zone rule for eth0, inbound replies are
+# dropped and the install's first wget fails ("Operation not permitted"
+# from busybox). The install must not start before the rule lands.
+wait_firewall() {
+	_i=0
+	while [ "$_i" -lt 20 ]; do
+		_i=$((_i + 1))
+		if docker exec "$ROUTER_CID" \
+				sh -c 'nft list chain inet fw4 input 2>/dev/null | grep -q "iifname \"eth0\""' \
+				>/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
+# wait_eth0_ip — on 22.03 the static address lands on eth0 later than on
+# 25.12 (netifd brings the interface up asynchronously); the install needs
+# the address before it can reach the repository, so this polls.
+wait_eth0_ip() {
+	_i=0
+	while [ "$_i" -lt 30 ]; do
+		_i=$((_i + 1))
+		_got=$(docker exec "$ROUTER_CID" \
+			sh -c 'ip -4 addr show eth0 | grep -o "inet [0-9.]*" | head -1' 2>/dev/null)
+		[ "$_got" = "inet $IP_ROUTER" ] && return 0
+		sleep 1
+	done
+	return 1
+}
+
+configure_router_network() {
+	# The static lan config: eth0 carries the lab address, the docker
+	# embedded DNS resolves names. The bridge device (if the image created
+	# one at first boot) is removed so eth0 is NOT enslaved.
+	{
+		printf 'package network\n\n'
+		printf 'config interface "lan"\n'
+		printf '\toption device "eth0"\n'
+		printf '\toption proto "static"\n'
+		printf '\toption ipaddr "%s"\n' "$IP_ROUTER"
+		printf '\toption netmask "255.255.255.0"\n'
+		printf '\toption gateway "%s.1"\n' "$IP_BASE"
+		printf '\toption dns "127.0.0.11"\n'
+	} > "$SCRATCH/network.uci"
+	if ! docker cp "$SCRATCH/network.uci" "$ROUTER_CID:/tmp/network.uci" >/dev/null 2>&1; then
+		_tt_fail "could not copy the network config into the router"
+		return 1
+	fi
+	if ! docker exec "$ROUTER_CID" sh -c '
+			uci -q delete network.@device[0] 2>/dev/null || true
+			uci -q delete network.lan 2>/dev/null || true
+			uci import network < /tmp/network.uci || exit 1
+			/etc/init.d/network restart >/dev/null 2>&1 || exit 1
+			sleep 2
+		'; then
+		_tt_fail "the router network configuration failed"
+		return 1
+	fi
+	if wait_eth0_ip; then
+		_tt_pass "eth0 carries $IP_ROUTER"
+	else
+		_tt_fail "eth0 does not carry $IP_ROUTER (got: $_got)"
+	fi
+	if docker exec "$ROUTER_CID" sh -c 'ip link show eth0 | grep -q master' 2>/dev/null; then
+		_tt_fail "eth0 is enslaved to a bridge; the router network is not usable"
+	else
+		_tt_pass "eth0 is a plain interface"
+	fi
+	# The gateway ping right after the interface comes up can miss a beat;
+	# a few retries keep the check deterministic.
+	_i=0
+	_ping_ok=0
+	while [ "$_i" -lt 10 ]; do
+		_i=$((_i + 1))
+		if docker exec "$ROUTER_CID" sh -c "ping -c 1 -W 3 $IP_BASE.1 >/dev/null 2>&1"; then
+			_ping_ok=1
+			break
+		fi
+		sleep 1
+	done
+	if [ "$_ping_ok" = "1" ]; then
+		_tt_pass "the lab gateway answers ICMP"
+	else
+		_tt_fail "the lab gateway does not answer ICMP"
+	fi
+	_dns=$(docker exec "$ROUTER_CID" sh -c 'grep nameserver /etc/resolv.conf | head -1' 2>/dev/null)
+	if [ -n "$_dns" ]; then
+		_tt_pass "resolv.conf carries a nameserver ($_dns)"
+	else
+		_tt_fail "resolv.conf has no nameserver"
+	fi
+	if wait_firewall; then
+		_tt_pass "the firewall accepts the lan interface (eth0)"
+	else
+		_tt_fail "the firewall never loaded the lan-zone rule for eth0"
+	fi
+}
+
+st_router() {
+	stage router || return
+	echo "== booting the router container"
+	if ! docker run -d --name "$ROUTER_CID" --network "$NET" --ip "$IP_ROUTER" \
+			--cap-add NET_ADMIN --device /dev/net/tun \
+			-v "$PWD:/src:ro" "$IMG_ROUTER" /sbin/init >/dev/null 2>&1; then
+		_tt_fail "could not start the router container"
+		return
+	fi
+	_i=0
+	while ! docker exec "$ROUTER_CID" sh -c 'ps | grep -q "[p]rocd"' >/dev/null 2>&1; do
+		_i=$((_i + 1))
+		[ "$_i" -ge 60 ] && {
+			_tt_fail "procd did not come up in the router"
+			return
+		}
+		sleep 1
+	done
+	_tt_pass "router booted with procd"
+	configure_router_network
+}
+
+# --- stage: install ----------------------------------------------------------------
+
+st_install() {
+	stage install || return
+	echo "== running install.sh"
+	docker exec -e TT_REPO_URL="http://$IP_REPO:8080" "$ROUTER_CID" \
+		sh /src/install.sh > "$SCRATCH/install.out" 2>&1
+	_rc=$?
+	if [ "$_rc" -eq 0 ]; then
+		_tt_pass "install.sh exits 0"
+	else
+		_tt_fail "install.sh exits 0 (got $_rc)"
+	fi
+	if grep -q "== Done" "$SCRATCH/install.out"; then
+		_tt_pass "the closing banner is printed"
+	else
+		_tt_fail "the closing banner is missing from the install output"
+	fi
+}
+
+# --- stage: install-side assertions ------------------------------------------------
+
+assert_packages_installed() {
+	if [ "$TT_PM" = "apk" ]; then
+		if docker exec "$ROUTER_CID" \
+				apk info -e luci-app-trusttunnel luci-i18n-trusttunnel-ru trusttunnel-client \
+				>/dev/null 2>&1; then
+			_tt_pass "apk reports luci-app, i18n and client installed"
+		else
+			_tt_fail "apk does not report all three packages installed"
+		fi
+	else
+		_got=$(docker exec "$ROUTER_CID" sh -c \
+			'opkg list-installed 2>/dev/null | grep -cE "^(luci-app-trusttunnel|luci-i18n-trusttunnel-ru|trusttunnel-client) "')
+		assert_eq "3" "$_got" "opkg reports luci-app, i18n and client installed"
+	fi
+}
+
+st_asserts() {
+	stage asserts || return
+	echo "== install-side assertions"
+
+	assert_packages_installed
+
+	_ver=$(docker exec "$ROUTER_CID" /opt/trusttunnel_client/trusttunnel_client --version 2>/dev/null) || _ver=""
+	case $_ver in
+		trusttunnel_client*)
+			_tt_pass "the client binary runs ($_ver)"
+			;;
+		*)
+			_tt_fail "the client binary does not run (got: $_ver)"
+			;;
+	esac
+
+	_rp=$(docker exec "$ROUTER_CID" uci -q get trusttunnel.endpoint.routing_profile 2>/dev/null)
+	assert_eq "Default" "$_rp" "the endpoint is assigned the Default profile"
+	_prof=$(docker exec "$ROUTER_CID" uci -q get 'trusttunnel.@routing_profile[0].name' 2>/dev/null)
+	assert_eq "Default" "$_prof" "the seeded routing profile is named Default"
+	_mode=$(docker exec "$ROUTER_CID" uci -q get 'trusttunnel.@routing_profile[0].mode' 2>/dev/null)
+	assert_eq "vpn" "$_mode" "the seeded profile is vpn mode"
+
+	_zone=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep \"name='trusttunnel'\"" 2>/dev/null)
+	assert_contains "$_zone" "name='trusttunnel'" "the trusttunnel firewall zone exists"
+	_dev=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep \"device='tun+'\"" 2>/dev/null)
+	assert_contains "$_dev" "device='tun+'" "the zone is bound to the tun+ wildcard"
+	_fwd=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep \"dest='trusttunnel'\"" 2>/dev/null)
+	assert_contains "$_fwd" "dest='trusttunnel'" "the lan to trusttunnel forwarding exists"
+
+	if docker exec "$ROUTER_CID" /etc/init.d/trusttunnel enabled >/dev/null 2>&1; then
+		_tt_pass "the service is registered for boot"
+	else
+		_tt_fail "the service is not registered for boot"
+	fi
+	_proc=$(docker exec "$ROUTER_CID" sh -c 'ps | grep "[t]rusttunnel_client"' 2>/dev/null)
+	assert_eq "" "$_proc" "a fresh install does not start the client"
+	_tun=$(docker exec "$ROUTER_CID" sh -c 'ls /sys/class/net/ | grep -c tun' 2>/dev/null)
+	assert_eq "0" "$_tun" "a fresh install creates no tun device"
+
+	if [ "$TT_PM" = "apk" ]; then
+		_list=$(docker exec "$ROUTER_CID" cat /etc/apk/repositories.d/trusttunnel.list 2>/dev/null)
+		assert_contains "$_list" "http://$IP_REPO:8080/apk/x86_64/packages.adb" \
+			"the apk repository entry points at the served index"
+		_key=$(docker exec "$ROUTER_CID" cat /etc/apk/keys/trusttunnel.pub 2>/dev/null)
+		assert_contains "$_key" "BEGIN PUBLIC KEY" "the apk signing key is installed"
+	else
+		_feeds=$(docker exec "$ROUTER_CID" cat /etc/opkg/customfeeds.conf 2>/dev/null)
+		assert_contains "$_feeds" "src/gz trusttunnel http://$IP_REPO:8080/opkg" \
+			"the opkg feed entry points at the served repository"
+		_keys=$(docker exec "$ROUTER_CID" sh -c 'ls /etc/opkg/keys' 2>/dev/null)
+		assert_contains "$_keys" "trusttunnel.pub" "the opkg key is installed under the stable name"
+		_fp=$(docker exec "$ROUTER_CID" sh -c 'usign -F -p /etc/opkg/keys/trusttunnel.pub' 2>/dev/null)
+		if [ -n "$_fp" ] && docker exec "$ROUTER_CID" sh -c "test -f /etc/opkg/keys/$_fp" >/dev/null 2>&1; then
+			_tt_pass "the opkg key is installed under its usign fingerprint"
+		else
+			_tt_fail "the fingerprint-named opkg key copy is missing"
+		fi
+	fi
+}
+
+# --- main -------------------------------------------------------------------------
+
+st_preflight
+st_pkgs
+st_repo
+st_serve
+st_router
+st_install
+st_asserts
+
+tt_test_summary
