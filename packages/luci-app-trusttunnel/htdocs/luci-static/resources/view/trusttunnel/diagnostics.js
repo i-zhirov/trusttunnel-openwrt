@@ -250,7 +250,7 @@ var renderDiagnose = function (res) {
 };
 
 var handleDiagnose = function (container) {
-	dom.content(container, E('p', { 'class': 'spinning' }, _('Running checks — this takes a few seconds…')));
+	dom.content(container, E('p', { 'class': 'spinning' }, _('Running checks — this can take up to half a minute…')));
 
 	callDiagnose().then(function (res) {
 		lastDiagnose = res;

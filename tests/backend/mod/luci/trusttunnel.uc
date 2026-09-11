@@ -378,12 +378,14 @@ return {
 		diagnose: {
 			args: { },
 			call: function() {
-				let rec = records();
-				let rs = routing_status();
-				// The routing checks report "absent" only while the config
-				// is applied; without the records file they are skipped.
-				let applied = access(RECORDS) != null;
-				let checks = [];
+			let rec = records();
+			let rs = routing_status();
+			// The routing checks report "absent" as a failure only while
+			// the service is running; when it is stopped or mid-restart
+			// the state is expected to be missing (the routing is torn
+			// down on stop), so the checks are skipped and the Running
+			// check carries the verdict.
+			let checks = [];
 
 				let host = first(rec, 'endpoint.hostname', '');
 				let user = first(rec, 'endpoint.username', '');
@@ -500,25 +502,26 @@ return {
 				if (rs.rule)
 					push(checks, check('kernel', 'Routing rule', 'ok', 'present', ''));
 				else
-					push(checks, check('kernel', 'Routing rule', applied ? 'fail' : 'skip', 'absent', ''));
+					push(checks, check('kernel', 'Routing rule', running ? 'fail' : 'skip', 'absent', ''));
 
 				if (rs.table)
 					push(checks, check('kernel', 'Routing table', 'ok', 'present', ''));
 				else
-					push(checks, check('kernel', 'Routing table', applied ? 'fail' : 'skip', 'absent', ''));
+					push(checks, check('kernel', 'Routing table', running ? 'fail' : 'skip', 'absent', ''));
 
 				if (rs.nft)
 					push(checks, check('kernel', 'nftables table', 'ok', 'present', ''));
 				else
-					push(checks, check('kernel', 'nftables table', applied ? 'fail' : 'skip', 'absent', ''));
+					push(checks, check('kernel', 'nftables table', running ? 'fail' : 'skip', 'absent', ''));
 
 				// The package's own `table inet trusttunnel` always matches
 				// a plain 'trusttunnel' grep, so the check must look for
-				// the fw4 zone's own naming: fw4 builds a
-				// zone_trusttunnel_* chain per zone. Anything else means
-				// the fw4 zone is missing.
+				// the fw4 zone's own naming: fw4 emits an input_, output_
+				// and forward_ chain per zone (srcnat_/dstnat_ only with
+				// the NAT flags). Anything else means the fw4 zone is
+				// missing.
 				let fw = sh_out('nft list ruleset');
-				if (index(fw.out, 'zone_trusttunnel') >= 0)
+				if (index(fw.out, 'forward_trusttunnel') >= 0)
 					push(checks, check('kernel', 'Firewall zone', 'ok', 'loaded in fw4', ''));
 				else
 					push(checks, check('kernel', 'Firewall zone', 'warn', 'not in the live ruleset',

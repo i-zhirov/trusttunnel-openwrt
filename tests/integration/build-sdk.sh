@@ -44,26 +44,6 @@
 # assets). dist/ is gitignored.
 set -u
 
-# retry <tries> <sleep> <cmd...> — run the command up to <tries> times,
-# sleeping <sleep> seconds between attempts; succeed on the first exit 0.
-# The SDK image pull and the in-container feed/source fetches hit public
-# registries and mirrors, where a transient failure must not kill the
-# build (the same policy as the run.sh harness).
-retry() {
-	_r_tries=$1
-	_r_sleep=$2
-	shift 2
-	_r_i=0
-	while [ "$_r_i" -lt "$_r_tries" ]; do
-		_r_i=$((_r_i + 1))
-		if "$@"; then
-			return 0
-		fi
-		[ "$_r_i" -lt "$_r_tries" ] && sleep "$_r_sleep"
-	done
-	return 1
-}
-
 TT_SDK_VERSION="${1:-${TT_SDK_VERSION:-25.12.5 22.03.7}}"
 TT_SDK_NJOBS="${TT_SDK_NJOBS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 2)}"
 TT_SDK_CACHE="${TT_SDK_CACHE:-$HOME/.tt-sdk-cache}"
@@ -79,7 +59,7 @@ for _ver in $TT_SDK_VERSION; do
 	echo "== building with the $_ver SDK"
 	_img="openwrt/sdk:x86-64-$_ver"
 	if ! docker image inspect "$_img" >/dev/null 2>&1; then
-		retry 3 5 docker pull -q "$_img" || exit 1
+		docker pull -q "$_img" || exit 1
 	fi
 	# The caches are mounted per version: the feeds differ between SDK
 	# releases, and the key for CI's actions/cache is the version.
@@ -97,23 +77,6 @@ for _ver in $TT_SDK_VERSION; do
 		"$_img" sh -c '
 			set -e
 			cd /builder
-			# retry <tries> <sleep> <cmd...> — the feed clones and the
-			# client source download hit public mirrors; a transient
-			# fetch failure must not kill the build.
-			retry() {
-				_r_tries=$1
-				_r_sleep=$2
-				shift 2
-				_r_i=0
-				while [ "$_r_i" -lt "$_r_tries" ]; do
-					_r_i=$((_r_i + 1))
-					if "$@"; then
-						return 0
-					fi
-					[ "$_r_i" -lt "$_r_tries" ] && sleep "$_r_sleep"
-				done
-				return 1
-			}
 			# The feeds may be restored from the CI cache, where the
 			# runner user owns the clones; the container runs as root,
 			# and git refuses repositories owned by another user. The
@@ -145,14 +108,14 @@ for _ver in $TT_SDK_VERSION; do
 				git config --global --add safe.directory "${feed%/}"
 			done
 			echo "== feeds update"
-			retry 3 5 ./scripts/feeds update -a
+			./scripts/feeds update -a
 			echo "== defconfig"
 			make defconfig >/dev/null 2>&1
 			for PKG in luci-app-trusttunnel trusttunnel-client; do
 				echo "== install $PKG"
 				./scripts/feeds install -p ttowrt -f "$PKG"
 				echo "== download $PKG"
-				retry 3 5 make "package/$PKG/download" >/dev/null 2>&1
+				make "package/$PKG/download" >/dev/null 2>&1
 				echo "== compile $PKG"
 				make -j"$TT_SDK_NJOBS" "package/$PKG/compile" || {
 					# The parallel build hides the failing command; the
