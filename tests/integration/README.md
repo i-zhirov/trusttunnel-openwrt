@@ -68,12 +68,23 @@ scratch directory and the served public key is what install.sh installs.
 | `TT_SERVER_VERSION` | `v1.1.0` | the endpoint release (tarball is hash-checked) |
 | `TT_LAB_SUBNET` | `44.55.66.0/24` | the lab network (must be a /24, globally-shaped range) |
 | `TT_FILTER` | — | space-separated list of stage names to run; a partial run must include the stages it depends on (e.g. `TT_FILTER="serve router targets"`) |
+| `TT_LOGS_DIR` | — | fixed directory for the failure logs (the CI artifact upload); defaults to `$SCRATCH/logs` |
 | `TT_KEEP` | `0` | keep containers/network/scratch for debugging |
 
 On failure the harness collects the router state (logread, trusttunnel log,
 routing status, kernel state, configs) and the container logs into
-`$SCRATCH/logs/` before tearing anything down, and prints the scratch
-path; `TT_KEEP=1` keeps the containers too.
+`$TT_LOGS_DIR` (or `$SCRATCH/logs`) before tearing anything down, and
+prints the scratch path; `TT_KEEP=1` keeps the containers too.
+
+## CI
+
+`.github/workflows/integration.yml` runs the suite on pull requests, main
+pushes and manual dispatch: a matrix job builds this tree's packages with
+the OpenWrt SDK (apk on 25.12, ipk on 22.03), then one job per package
+manager runs the harness against the built repositories and uploads the
+failure logs as an artifact. The `/dev/net/tun` preflight (with a
+mknod/modprobe fallback) fails loudly instead of letting the harness
+confuse everyone.
 
 ## Why the stages look the way they do
 
