@@ -378,14 +378,14 @@ return {
 		diagnose: {
 			args: { },
 			call: function() {
-			let rec = records();
-			let rs = routing_status();
-			// The routing checks report "absent" as a failure only while
-			// the service is running; when it is stopped or mid-restart
-			// the state is expected to be missing (the routing is torn
-			// down on stop), so the checks are skipped and the Running
-			// check carries the verdict.
-			let checks = [];
+				let rec = records();
+				let rs = routing_status();
+				// The routing checks report "absent" as a failure only while
+				// the service is running; when it is stopped or mid-restart
+				// the state is expected to be missing (the routing is torn
+				// down on stop), so the checks are skipped and the Running
+				// check carries the verdict.
+				let checks = [];
 
 				let host = first(rec, 'endpoint.hostname', '');
 				let user = first(rec, 'endpoint.username', '');
