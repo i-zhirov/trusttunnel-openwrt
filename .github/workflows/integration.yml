@@ -70,6 +70,14 @@ jobs:
           path: ~/.tt-sdk-cache/${{ matrix.version }}
           key: sdk-cache-${{ matrix.version }}
 
+      # release.yml builds with the same restricted feed set through
+      # restricted-feeds.sh (hardcoded pins). This check fails the PR
+      # when those pins drift from the SDK's feeds.conf.default — the
+      # image pulled here is the one the build step uses anyway, so the
+      # check costs nothing extra.
+      - name: Verify the restricted feed pins match the SDK
+        run: sh tests/integration/restricted-feeds.sh --verify ${{ matrix.version }}
+
       # Release SDKs for determinism (the snapshot container pins a
       # moving packages-feed commit; release.yml documents the curl
       # Kconfig failure that causes). One x86-64 build covers the lab

@@ -65,6 +65,16 @@ jobs:
       # EXTRA_FEEDS replaces them. The feed pins are the other half of
       # the SDK pin: when the SDK version is bumped, update them in
       # tests/integration/restricted-feeds.sh together with VERSION_PATH.
+      #
+      # The verification runs first: a stale pin would silently build
+      # against different feed commits than the SDK pins, and the
+      # repository install checks below would not catch it. The pin
+      # check pulls the openwrt/sdk image (the release tarball's
+      # feeds.conf.default is byte-identical); the integration workflow
+      # runs the same check on every PR at no extra cost.
+      - name: Verify the restricted feed pins match the SDK
+        run: sh tests/integration/restricted-feeds.sh --verify ${{ matrix.version }}
+
       - name: Restrict the SDK feeds
         run: |
           feeds="$(sh tests/integration/restricted-feeds.sh ${{ matrix.version }})"
