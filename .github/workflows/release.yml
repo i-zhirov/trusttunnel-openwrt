@@ -11,6 +11,10 @@
 #   - a GitHub release carrying the package files (tag pushes only), and
 #   - the GitHub Pages site that serves the repositories (the URL the
 #     installer writes into the router's package-manager configuration).
+#
+# The repositories are cumulative: the packages of every prior release
+# are merged into the fresh build's repositories, so every released
+# version stays installable — pinning and downgrading keep working.
 
 name: release
 
@@ -522,6 +526,47 @@ jobs:
           path: staging/opkg-pkgs
           merge-multiple: true
 
+      # The GitHub release is a second copy of the repository contents
+      # (see the upload step below): every released tag carries exactly
+      # the packages that were published to the repositories that day.
+      # Pull them all so the repositories keep serving every prior
+      # version, not just the newest. gh queries the API, so no local
+      # tag history is needed (the checkout is shallow).
+      - name: Download the prior release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p staging/prior-apk staging/prior-opkg
+          # The release being built is excluded — its freshly built
+          # packages are staged by the build jobs. On a dispatch run
+          # the ref is a branch name, which matches no release, so
+          # every release is kept.
+          exclude="$GITHUB_REF_NAME"
+          tags="$(gh release list --limit 100 --json tagName,isDraft --jq '.[] | select(.isDraft | not) | .tagName')"
+          for tag in $tags; do
+            [ "$tag" = "$exclude" ] && continue
+            # Only the current package set is merged: the early -lite
+            # releases and the dropped i18n packages must not resurface
+            # in the repositories. The [0-9] anchor keeps the version
+            # directly after the package name (-lite versions start
+            # with a letter instead), and releases with no matching
+            # assets (the first ipk-less release) are skipped, which
+            # gh would otherwise report as an error.
+            names="$(gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+            if printf '%s\n' "$names" | grep -Eq '^(luci-app-trusttunnel|trusttunnel-client)-[0-9].*\.apk$'; then
+              gh release download "$tag" \
+                --pattern 'luci-app-trusttunnel-*.apk' \
+                --pattern 'trusttunnel-client-*.apk' \
+                --dir staging/prior-apk --clobber
+            fi
+            if printf '%s\n' "$names" | grep -Eq '^(luci-app-trusttunnel|trusttunnel-client)_[0-9].*\.ipk$'; then
+              gh release download "$tag" \
+                --pattern 'luci-app-trusttunnel_*.ipk' \
+                --pattern 'trusttunnel-client_*.ipk' \
+                --dir staging/prior-opkg --clobber
+            fi
+          done
+
       - name: Assemble and sign the apk repositories
         env:
           SIGN_KEY: ${{ secrets.TT_APK_SIGN_KEY }}
@@ -530,6 +575,61 @@ jobs:
           cp key-build.pub staging/apk/
           printf '%s\n' "$SIGN_KEY" > key-build.sec
 
+          # Prior releases first, so the freshly built packages win on a
+          # same-name collision (a dispatch run at the latest tag). The
+          # arch comes from the -<arch> marker the build appended to the
+          # asset name. The asset name is
+          # trusttunnel-client-<ver>-r<rev>-<arch>.apk: the vendor
+          # version is dotted digits (no dashes) and the revision is
+          # -r<digits>, so the arch is everything after the second
+          # dash-segment — the final dash segment is NOT enough (archs
+          # like aarch64_cortex-a53 contain dashes themselves). Arch
+          # dirs that the current matrix no longer builds are created,
+          # so a dropped architecture keeps its prior packages.
+          #
+          # Only the client version the current build ships may come
+          # from prior releases: the package managers install the
+          # highest version, so an old client (the vendor's 1.1.5
+          # segfaults on IPv4-only routers; the current build pins
+          # 1.0.49) must never shadow the fresh build. Prior files of
+          # the same version are duplicates the current placement
+          # overwrites anyway — they matter only for dropped arches.
+          # The version-revision tail is the first two dash-segments
+          # (<ver> is dotted digits, <rev> is r<digits>); the final
+          # dash segment is NOT enough, the arch may contain dashes.
+          cur_client="$(find staging/apk-pkgs -maxdepth 1 -name "trusttunnel-client-*.apk" -print -quit)"
+          cur_client="${cur_client##*/}"
+          cur_client="${cur_client#trusttunnel-client-}"
+          cur_ver="${cur_client%%-*}"
+          cur_rev="${cur_client#*-}"
+          cur_rev="${cur_rev%%-*}"
+          cur_client="${cur_ver}-${cur_rev}"
+          for f in staging/prior-apk/trusttunnel-client-[0-9]*.apk; do
+            [ -e "$f" ] || continue
+            rest="${f##*/}"
+            rest="${rest#trusttunnel-client-}"
+            ver="${rest%%-*}"
+            rev="${rest#*-}"
+            rev="${rev%%-*}"
+            verrev="${ver}-${rev}"
+            if [ "$verrev" != "$cur_client" ]; then
+              echo "skipping prior client $verrev (the current build ships $cur_client)"
+              continue
+            fi
+            rest="${rest#*-}"   # drop <ver>
+            arch="${rest#*-}"   # drop -r<rev>
+            arch="${arch%.apk}"
+            case "$arch" in
+              x86_64|aarch64_*|arm_*|mips*)
+                mkdir -p "staging/apk/$arch"
+                # Same rename as the current-run placement below: apk
+                # reconstructs file names from the package metadata, so
+                # the -<arch> suffix is stripped.
+                cp "$f" "staging/apk/$arch/$(basename "$f" "-${arch}.apk").apk" ;;
+              *) echo "warning: skipping prior apk with unexpected name: $(basename "$f")" ;;
+            esac
+          done
+
           # The built architectures are discovered from the ARCH-*
           # markers written by build-client — the matrix lives in the
           # artifacts, not in a second copy in this job.
@@ -537,7 +637,6 @@ jobs:
             [ -e "$m" ] || { echo "::error::no client artifacts for any architecture"; exit 1; }
             arch="${m#staging/apk-pkgs/ARCH-}"
             mkdir -p "staging/apk/$arch"
-            cp staging/luci-apk/*.apk "staging/apk/$arch/"
             client="$(find staging/apk-pkgs -maxdepth 1 -name "trusttunnel-client-*-${arch}.apk" -print -quit)"
             if [ -z "$client" ]; then
               echo "::error::no client apk was built for $arch"
@@ -550,6 +649,17 @@ jobs:
             # release's reuse check diffs it against the current Makefile
             # before skipping a rebuild.
             cp packages/trusttunnel-client/Makefile "staging/apk/$arch/trusttunnel-client.Makefile"
+          done
+
+          # The noarch LuCI app lands in every architecture directory —
+          # current and prior versions alike, so the whole version
+          # history is installable everywhere. Prior first: the fresh
+          # build wins on a same-version collision.
+          for d in staging/apk/*/; do
+            for f in staging/prior-apk/luci-app-trusttunnel-[0-9]*.apk; do
+              [ -e "$f" ] && cp "$f" "$d/"
+            done
+            cp staging/luci-apk/*.apk "$d/"
           done
 
           # The packages are built unsigned; only the index is signed, so
@@ -578,6 +688,31 @@ jobs:
           # One merged feed: opkg ignores packages built for other
           # architectures and picks the build matching the device, so the
           # arch suffix in the file names keeps the builds apart.
+          # Prior releases first, so the freshly built packages win on a
+          # same-name collision (a dispatch run at the latest tag). The
+          # [0-9] anchor keeps the old -lite packages and the dropped
+          # i18n packages out of the feed, and the same version filter
+          # as the apk step keeps an old client (the vendor's 1.1.5
+          # segfaults on IPv4-only routers) from shadowing the fresh
+          # build — opkg installs the highest version.
+          cur_client="$(find staging/opkg-pkgs -maxdepth 1 -name "trusttunnel-client_*.ipk" -print -quit)"
+          cur_client="${cur_client##*/}"
+          cur_client="${cur_client#trusttunnel-client_}"
+          cur_client="${cur_client%%_*}"   # drop the _<arch>.ipk suffix
+          for f in staging/prior-opkg/luci-app-trusttunnel_[0-9]*.ipk; do
+            [ -e "$f" ] && cp "$f" staging/opkg/
+          done
+          for f in staging/prior-opkg/trusttunnel-client_[0-9]*.ipk; do
+            [ -e "$f" ] || continue
+            verrev="${f##*/}"
+            verrev="${verrev#trusttunnel-client_}"
+            verrev="${verrev%%_*}"   # drop the _<arch>.ipk suffix
+            if [ "$verrev" != "$cur_client" ]; then
+              echo "skipping prior client $verrev (the current build ships $cur_client)"
+              continue
+            fi
+            cp "$f" staging/opkg/
+          done
           cp staging/luci-ipk/*.ipk staging/opkg/
           cp staging/opkg-pkgs/*.ipk staging/opkg/
           cp opkg-key.pub staging/opkg/
