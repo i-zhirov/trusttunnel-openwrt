@@ -192,8 +192,11 @@ return view.extend({
 		// Names are read from the loaded config; the endpoint's stored
 		// assignment is appended too when it references a profile that has
 		// been deleted, so that reference keeps saving (legacy fallback).
-		var profiles = data.trusttunnel['routing_profile'] || [];
-		var current = data.trusttunnel.endpoint.routing_profile;
+		// The uci module API is used (not the load() result): on current
+		// LuCI versions uci.load() resolves with the package-name list,
+		// not the configuration object.
+		var profiles = uci.sections('trusttunnel', 'routing_profile') || [];
+		var current = uci.get('trusttunnel', 'endpoint', 'routing_profile');
 		var currentKnown = false;
 
 		for (var i = 0; i < profiles.length; i++) {
@@ -269,7 +272,7 @@ return view.extend({
 			if (!value)
 				return _('Name is required');
 
-			var secs = data.trusttunnel['routing_profile'] || [];
+			var secs = uci.sections('trusttunnel', 'routing_profile') || [];
 
 			for (var i = 0; i < secs.length; i++)
 				if (secs[i]['.name'] !== section_id && secs[i].name === value)
