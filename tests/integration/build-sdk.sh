@@ -57,7 +57,7 @@ for _ver in $TT_SDK_VERSION; do
 			./scripts/feeds update -a
 			echo "== defconfig"
 			make defconfig >/dev/null 2>&1
-			for PKG in luci-app-trusttunnel trusttunnel-client; do
+			for PKG in luci-app-trusttunnel luci-i18n-trusttunnel-ru trusttunnel-client; do
 				echo "== install $PKG"
 				./scripts/feeds install -p ttowrt -f "$PKG"
 				echo "== download $PKG"
