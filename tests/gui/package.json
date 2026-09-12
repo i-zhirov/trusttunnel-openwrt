@@ -1,0 +1,9 @@
+{
+  "name": "trusttunnel-gui-tests",
+  "private": true,
+  "description": "LuCI view interface tests: real luci.js loader + real browser against a stubbed ubus backend (see run.sh)",
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "playwright": "^1.63.0"
+  }
+}

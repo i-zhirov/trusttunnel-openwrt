@@ -3,6 +3,13 @@
 *.apk
 *.tar.gz
 
+# LuCI GUI test harness artifacts (tests/gui/run.sh): the pinned luci-base
+# resources cache and the playwright node_modules are fetched/generated,
+# never committed.
+tests/gui/node_modules/
+tests/gui/.cache/
+tests/gui/.artifacts/
+
 # Local tool settings and agent workspaces: machine-specific settings and
 # intermediate reports that have no place in history.
 .claude/
