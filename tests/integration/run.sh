@@ -6,7 +6,7 @@
 #
 # What it does, end to end:
 #   1. preflight  — docker and /dev/net/tun availability;
-#   2. packages   — the luci-app, i18n and client packages for the chosen
+#   2. packages   — the luci-app and client packages for the chosen
 #      package manager, from TT_REPO_DIR (CI artifact layout) or, by
 #      default, from the project's GitHub release;
 #   3. repo       — assembles and signs a hermetic repository with a FRESH
@@ -91,13 +91,13 @@ case "$TT_PM" in
 		IMG_ROUTER=$IMG_ROUTER_APK
 		# The local (SDK-built) client apk carries no -x86_64 suffix — the
 		# release pipeline adds it only to keep the per-arch uploads apart.
-		PM_GLOBS="luci-app-trusttunnel-*.apk luci-i18n-trusttunnel-*.apk trusttunnel-client-*.apk"
-		PM_RELEASE_GLOBS="luci-app-trusttunnel-*.apk luci-i18n-trusttunnel-*.apk trusttunnel-client-*-x86_64.apk"
+		PM_GLOBS="luci-app-trusttunnel-*.apk trusttunnel-client-*.apk"
+		PM_RELEASE_GLOBS="luci-app-trusttunnel-*.apk trusttunnel-client-*-x86_64.apk"
 		;;
 	opkg)
 		IMG_ROUTER=$IMG_ROUTER_OPKG
 		# ipk file names always carry the architecture.
-		PM_GLOBS="luci-app-trusttunnel_*_all.ipk luci-i18n-trusttunnel-*_all.ipk trusttunnel-client_*_x86_64.ipk"
+		PM_GLOBS="luci-app-trusttunnel_*_all.ipk trusttunnel-client_*_x86_64.ipk"
 		PM_RELEASE_GLOBS="$PM_GLOBS"
 		;;
 	*)
@@ -237,7 +237,7 @@ st_preflight() {
 # --- stage: packages ------------------------------------------------------------
 
 # collect_pkgs <dir> — copies the packages matching the PM globs into the
-# scratch; fails when any of the three expected packages is missing.
+# scratch; fails when any of the expected packages is missing.
 collect_pkgs() {
 	_src=$1
 	for _pat in $PM_GLOBS; do
@@ -353,8 +353,8 @@ assemble_apk_repo() {
 	cp "$SCRATCH/pkgs"/*.apk "$_dir/"
 	# Every package file is renamed to its metadata-derived name (name-
 	# version.apk): apk fetches by that name. The release assets carry a
-	# -x86_64 suffix (keeps the per-arch uploads apart) and the i18n
-	# version's tilde is mangled into a dot by GitHub — both would 404.
+	# -x86_64 suffix (keeps the per-arch uploads apart), which would 404
+	# on the metadata-derived name.
 	if ! docker run --rm -v "$SCRATCH:/w" "$IMG_ALPINE" sh -c '
 			set -e
 			cd /w/repo/apk/x86_64
@@ -817,17 +817,6 @@ st_install() {
 	else
 		_tt_fail "the closing banner is missing from the install output"
 	fi
-	# The release translation's tilde version makes some CI runners
-	# silently no-op the package-manager add inside install.sh (exit 0,
-	# no output, nothing installed — while the same content installs
-	# fine locally). Install it explicitly with visible output so the
-	# install-side assertion works on every runner and a real failure is
-	# never silent.
-	if [ "$TT_PM" = "apk" ]; then
-		docker exec "$ROUTER_CID" sh -c 'apk add luci-i18n-trusttunnel-ru' >> "$SCRATCH/install.out" 2>&1
-	else
-		docker exec "$ROUTER_CID" sh -c 'opkg install luci-i18n-trusttunnel-ru' >> "$SCRATCH/install.out" 2>&1
-	fi
 }
 
 # --- stage: install-side assertions ------------------------------------------------
@@ -835,22 +824,19 @@ st_install() {
 assert_packages_installed() {
 	if [ "$TT_PM" = "apk" ]; then
 		if docker exec "$ROUTER_CID" \
-				apk info -e luci-app-trusttunnel luci-i18n-trusttunnel-ru trusttunnel-client \
+				apk info -e luci-app-trusttunnel trusttunnel-client \
 				>/dev/null 2>&1; then
-			_tt_pass "apk reports luci-app, i18n and client installed"
+			_tt_pass "apk reports luci-app and client installed"
 		else
-			_tt_fail "apk does not report all three packages installed"
-			# The failure diagnosis: which of the three is missing, and
-			# whether the served index even carries the i18n package.
+			_tt_fail "apk does not report both packages installed"
+			# The failure diagnosis: which of the two is missing.
 			docker exec "$ROUTER_CID" \
-				sh -c 'for p in luci-app-trusttunnel luci-i18n-trusttunnel-ru trusttunnel-client; do apk info -e "$p" >/dev/null 2>&1 && echo "$p: installed" || echo "$p: MISSING"; done' 2>/dev/null
-			docker exec "$ROUTER_CID" \
-				sh -c 'apk search luci-i18n-trusttunnel-ru 2>/dev/null | head -2' 2>/dev/null
+				sh -c 'for p in luci-app-trusttunnel trusttunnel-client; do apk info -e "$p" >/dev/null 2>&1 && echo "$p: installed" || echo "$p: MISSING"; done' 2>/dev/null
 		fi
 	else
 		_got=$(docker exec "$ROUTER_CID" sh -c \
-			'opkg list-installed 2>/dev/null | grep -cE "^(luci-app-trusttunnel|luci-i18n-trusttunnel-ru|trusttunnel-client) "')
-		assert_eq "3" "$_got" "opkg reports luci-app, i18n and client installed"
+			'opkg list-installed 2>/dev/null | grep -cE "^(luci-app-trusttunnel|trusttunnel-client) "')
+		assert_eq "2" "$_got" "opkg reports luci-app and client installed"
 	fi
 }
 

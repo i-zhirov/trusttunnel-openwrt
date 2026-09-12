@@ -43,7 +43,7 @@ for _ver in $TT_SDK_VERSION; do
 		-v "$PWD/dist:/artifacts" \
 		-v "$HOME/.tt-sdk-dl:/builder/dl" \
 		-e FEEDNAME=ttowrt \
-		-e PACKAGES="luci-app-trusttunnel luci-i18n-trusttunnel-ru trusttunnel-client" \
+		-e PACKAGES="luci-app-trusttunnel trusttunnel-client" \
 		-e TT_SDK_NJOBS="$TT_SDK_NJOBS" \
 		"$_img" sh -c '
 			set -e
@@ -57,35 +57,18 @@ for _ver in $TT_SDK_VERSION; do
 			./scripts/feeds update -a
 			echo "== defconfig"
 			make defconfig >/dev/null 2>&1
-			for PKG in luci-app-trusttunnel luci-i18n-trusttunnel-ru trusttunnel-client; do
+			for PKG in luci-app-trusttunnel trusttunnel-client; do
 				echo "== install $PKG"
 				./scripts/feeds install -p ttowrt -f "$PKG"
-				# The translation package has no source of its own, so its
-				# download target does not exist; the packages WITH sources
-				# fail the compile below anyway, so a missing download is
-				# tolerated here.
-				make "package/$PKG/download" >/dev/null 2>&1 || true
+				echo "== download $PKG"
+				make "package/$PKG/download" >/dev/null 2>&1
 				echo "== compile $PKG"
-				# The i18n sub-package is a side product of the app compile
-				# and its own target may not exist (its generation depends
-				# on the .config selection, which differs between
-				# environments); the CI workflow supplies the translation
-				# from the published release instead, so a failure here is
-				# tolerated. The app and the client are strict.
-				case "$PKG" in
-					luci-i18n-*)
-						make -j"$TT_SDK_NJOBS" "package/$PKG/compile" >/dev/null 2>&1 || true
-						;;
-					*)
-						make -j"$TT_SDK_NJOBS" "package/$PKG/compile" || {
-							# The parallel build hides the failing command;
-							# the verbose retry is what the OpenWrt docs
-							# prescribe.
-							echo "== retrying $PKG verbosely"
-							make -j1 V=s "package/$PKG/compile" || exit 1
-						}
-						;;
-				esac
+				make -j"$TT_SDK_NJOBS" "package/$PKG/compile" || {
+					# The parallel build hides the failing command; the
+					# verbose retry is what the OpenWrt docs prescribe.
+					echo "== retrying $PKG verbosely"
+					make -j1 V=s "package/$PKG/compile" || exit 1
+				}
 			done
 			# Collect only the feed packages (the SDK bin tree also holds
 			# base toolchain packages); the feed directory is

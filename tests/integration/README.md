@@ -28,7 +28,7 @@ The harness prefers, in order:
 
 1. `TT_REPO_DIR` — a flat dir of built packages (the CI artifact layout);
 2. `dist/` — the output of `tests/integration/build-sdk.sh`, which builds
-   `luci-app-trusttunnel`, the i18n package and `trusttunnel-client` from
+   `luci-app-trusttunnel` and `trusttunnel-client` from
    **this tree** with the OpenWrt SDK (the same recipe the release
    pipeline's SDK action uses);
 3. the latest GitHub release (`TT_RELEASE_TAG` pins a specific one).
@@ -46,7 +46,7 @@ scratch directory and the served public key is what install.sh installs.
 | Stage | What it verifies |
 |---|---|
 | `preflight` | docker, `/dev/net/tun` |
-| `pkgs` | the three packages for the PM, from TT_REPO_DIR / dist/ / release |
+| `pkgs` | the two packages for the PM (luci-app + client), from TT_REPO_DIR / dist/ / release |
 | `repo` | hermetic repo assembly + signing (apk: mkndx+adbsign; opkg: ipkg-make-index+usign) |
 | `serve` | repo server on the lab network (44.55.66.0/24), polled until it answers |
 | `router` | openwrt/rootfs booted with `/sbin/init`, network configured via `uci import` + `/etc/init.d/network restart`, firewall settled |
@@ -86,14 +86,10 @@ against the built repositories and uploads the failure logs as an
 artifact. The `/dev/net/tun` preflight (with a mknod/modprobe fallback)
 fails loudly instead of letting the harness confuse everyone.
 
-Two environment quirks are handled:
-- the i18n sub-package's build target does not exist in CI (its
-  generation is driven by the generated .config selection, which differs
-  from every local build), so the workflow takes the translation from
-  the latest release while the app and the client come from this tree;
-- the release translation's tilde version makes some CI runners silently
-  no-op the package-manager add inside install.sh, so the harness
-  installs the i18n explicitly with visible output.
+Note: `main` dropped the localisation (PRs #17/#19), so the suite's
+contract is the two packages — `luci-app-trusttunnel` and
+`trusttunnel-client` — and the harness has no translation-specific
+steps.
 
 ## Why the stages look the way they do
 
@@ -133,8 +129,8 @@ Two environment quirks are handled:
   the tunnel needs up to a minute to establish — the harness polls for
   all three instead of sleeping.
 - **apk fetches packages by their metadata-derived names.** The release
-  assets carry a `-x86_64` suffix (per-arch uploads) and the i18n
-  version's tilde is mangled into a dot by GitHub — both would 404, so
+  assets carry a `-x86_64` suffix (per-arch uploads), which would 404 on
+  the metadata-derived name, so
   every package file is renamed to `name-version.apk` (read via
   `apk adbdump`) before the index is created.
 - **The install retries once on a package-manager mirror flake.** The

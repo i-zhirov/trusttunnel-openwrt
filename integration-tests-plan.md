@@ -184,8 +184,8 @@ Why this exact shape:
                       (fetched from the repo server, exactly as the README
                        documents for real devices)
 8  install asserts    exit 0; apk info -e / opkg list-installed for
-                      luci-app-trusttunnel, luci-i18n-trusttunnel-ru,
-                      trusttunnel-client; /opt/trusttunnel_client binary
+                      luci-app-trusttunnel and trusttunnel-client;
+                      /opt/trusttunnel_client binary
                       runs (--version); /etc/config/trusttunnel seeded:
                       Default routing profile, firewall trusttunnel zone +
                       lan→trusttunnel forwarding, rc.d link enabled
@@ -235,7 +235,7 @@ Protocol: `http2` (default) in phase 1.
 | # | Assertion | Level |
 |---|---|---|
 | A1 | install.sh exits 0 and prints the closing banner | install |
-| A2 | package managers report the three packages installed (incl. i18n) | install |
+| A2 | package managers report the luci-app and client packages installed | install |
 | A3 | `/opt/trusttunnel_client/trusttunnel_client --version` prints the pinned version | install |
 | A4 | `/etc/config/trusttunnel` seeded: Default profile, `endpoint.routing_profile=Default` | install |
 | A5 | firewall zone `trusttunnel` (bound to `tun+`) and `lan → trusttunnel` forwarding exist; `/etc/init.d/firewall reload` runs clean | install |
@@ -298,7 +298,7 @@ jobs:
                FEEDNAME: ttowrt, FEED_DIR: ${{ github.workspace }},
                ARTIFACTS_DIR: ${{ github.workspace }}/out,
                PACKAGES: luci-app-trusttunnel }
-      - collect dist/ (luci-app, luci-i18n, trusttunnel-client) + ARCH marker
+      - collect dist/ (luci-app, trusttunnel-client) + ARCH marker
       - upload artifact repo-${{ matrix.version }}
 
   integration:
@@ -379,7 +379,7 @@ EDIT AGENTS.md / README.md                    document the suite and how to run 
 | 2 | Endpoint + target containers; full connect + traffic flow; assertions A7–A12 | **DONE** — BOTH variants are fully green end to end: apk 49 assertions, opkg 50 assertions, with SDK-built packages from this tree (`tests/integration/build-sdk.sh`, the gh-action-sdk recipe as a script). Endpoint container (pinned release v1.1.0, hash-checked, self-signed cert with SAN), whoami targets, uci-configured endpoint with the PINNED certificate (skip_verification stays off — a live tunnel proves the Phase 0 fix), through-tunnel traffic arrives with the endpoint's source address, private traffic stays direct. Three harness traps fixed during bring-up: the docker default bridge injects a second default route that makes the client dial the endpoint via the wrong gateway (the direct target moved to a custom private network), the direct-net connect can race netifd's static default installation (the lab default is enforced and asserted), and busybox `ip route show default` ignores the default filter (the check counts `^default` lines) |
 | 2 | Endpoint + target containers; full connect + traffic flow; assertions A7–A12 | harness green end to end (apk variant, http2) |
 | 3 | Killswitch/lifecycle/idempotence assertions A13–A16; opkg variant; `TT_FILTER`/`TT_KEEP`; failure log dumps | **DONE** — new `lifecycle` stage, both variants green: apk 77 assertions, opkg 78. A13 is kernel-level and deterministic (`ip route get … mark 0x9527` via tun0; with the device down the lookup fails into the blackhole — `ip route get` answers EINVAL for a blackhole match); A14 stop/start tears everything down and restores it; A15 covers the install.sh / uci-defaults / reload idempotence — the apk path consumes the uci-defaults script during the install (apk runs and removes them; install.sh's immediate run is the opkg-path fallback), so the rerun is conditional and the no-duplicate state is asserted on both paths; A16 asserts the endpoint's CONNECT log (endpoint now runs with `-l debug`). `TT_FILTER` accepts a space-separated list of stages; on failure the harness collects the router state and container logs into `$SCRATCH/logs/` before tearing down. The install stage retries once on a package-manager mirror flake (busybox wget does not retry; install.sh is idempotent, which A15 proves) |
-| 4 | `integration.yml`; /dev/net/tun preflight; artifact upload of logs on failure; PR run passes | **DONE — VERIFIED GREEN IN CI** (PR #20): the `build-repo` matrix (22.03.7/ipk + 25.12.5/apk, one x86-64 SDK build each via `tests/integration/build-sdk.sh`) and the per-PM `integration` matrix both pass; the harness reports the same counts as locally (apk 77, opkg 78, 0 failed), including the tunnel traffic and the lifecycle, in ~13 minutes total. The first CI runs exposed two environment-specific quirks: the i18n sub-package's build target does not exist in CI (its generation is driven by the .config selection, which differs from every local build — the workflow takes the translation from the latest release instead), and the release translation's tilde version makes some CI runners silently no-op the package-manager add inside install.sh (the harness installs it explicitly with visible output). Both fixes keep the local runs identical in behavior |
+| 4 | `integration.yml`; /dev/net/tun preflight; artifact upload of logs on failure; PR run passes | **DONE — VERIFIED GREEN IN CI** (PR #20): the `build-repo` matrix (22.03.7/ipk + 25.12.5/apk, one x86-64 SDK build each via `tests/integration/build-sdk.sh`) and the per-PM `integration` matrix both pass; the harness reports the same counts as locally (apk 77, opkg 78, 0 failed), including the tunnel traffic and the lifecycle, in ~13 minutes total. Note: `main` dropped the localisation after the suite was built (PRs #17/#19), so the contract is the two packages (luci-app + client); the i18n-specific CI quirks encountered during bring-up (the sub-package's missing build target, the tilde-version silent install) are therefore moot and the related workflow steps were removed |
 | 5 | Phase-2 matrix (§7.2): http3, extra opkg images, profile scenarios, uninstaller round trip | optional, incremental |
 | 6 | Docs: AGENTS.md/README section; shellcheck wiring | docs match the suite |
 

@@ -57,32 +57,12 @@ jobs:
       - name: Build the packages with the SDK
         run: sh tests/integration/build-sdk.sh ${{ matrix.version }}
 
-      # The i18n sub-package is generated as a side product of the app's
-      # compile, driven by the .config selection — which differs between
-      # environments (in CI its build target does not even exist), while
-      # the published release always carries it. The translation is
-      # therefore taken from the latest release; the app and the client
-      # come from THIS tree.
-      - name: Add the i18n package from the latest release
-        run: |
-          json=$(curl -fsSL https://api.github.com/repos/i-zhirov/trusttunnel-openwrt/releases/latest)
-          tag=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')
-          pat="luci-i18n-trusttunnel-ru*.${{ matrix.ext }}"
-          name=$(printf '%s' "$json" | python3 -c 'import json,sys,fnmatch; r=json.load(sys.stdin); print(next((a["name"] for a in r["assets"] if fnmatch.fnmatch(a["name"], sys.argv[1])), ""))' "$pat")
-          if [ -z "$name" ]; then
-            echo "::error::no i18n ${{ matrix.ext }} package in release $tag"
-            exit 1
-          fi
-          curl -fsSL -o "dist/$name" \
-            "https://github.com/i-zhirov/trusttunnel-openwrt/releases/download/$tag/$name"
-          echo "i18n from $tag: $name"
-
       # The recipe collects the packages into dist/ already; only the
       # presence is asserted here so a missing package fails the job
       # loudly instead of surfacing as a confusing harness failure.
       - name: Assert the built packages
         run: |
-          for p in luci-app-trusttunnel luci-i18n-trusttunnel- trusttunnel-client; do
+          for p in luci-app-trusttunnel trusttunnel-client; do
             if [ -z "$(find dist -name "$p*.${{ matrix.ext }}" -print -quit)" ]; then
               echo "::error::no $p package was built"
               exit 1
