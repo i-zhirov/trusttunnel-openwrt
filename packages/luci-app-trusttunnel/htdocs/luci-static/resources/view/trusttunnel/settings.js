@@ -34,6 +34,12 @@ var callPing = rpc.declare({
 	params: [ 'target' ]
 });
 
+var callCheckDomain = rpc.declare({
+	object: 'luci.trusttunnel',
+	method: 'check_domain',
+	params: [ 'domain' ]
+});
+
 // Read-only one-liner for the General tab; the full verdict banner with
 // Start/Stop lives on the Status page.
 function statusSummary(st) {
@@ -55,6 +61,35 @@ function statusSummary(st) {
 		return _('%s — profile %s').format(head, st.routing_profile);
 
 	return head;
+}
+
+// Header and rows for the rule preview table, mirroring the Check a
+// domain tool: the rule itself, a verdict badge and the backend's reason.
+function verdictHead() {
+	return E('tr', { 'class': 'cbi-section-table-row' },
+		E('th', { 'class': 'cbi-section-table-cell' }, _('Rule')),
+		E('th', { 'class': 'cbi-section-table-cell' }, _('Verdict')),
+		E('th', { 'class': 'cbi-section-table-cell' }, _('Why')));
+}
+
+function verdictRow(rule, res) {
+	var cell;
+
+	if (res.error) {
+		cell = E('td', { 'class': 'cbi-section-table-cell' }, _('not checked'));
+	}
+	else {
+		var tunnel = res.verdict && res.verdict.indexOf('tunnel') === 0;
+
+		cell = E('td', { 'class': 'cbi-section-table-cell' },
+			E('span', { 'style': 'font-weight:bold; color:' + (tunnel ? '#2e7d32' : '#c62828') + ';' },
+				tunnel ? _('through the tunnel') : _('direct')));
+	}
+
+	return E('tr', { 'class': 'cbi-section-table-row' },
+		E('td', { 'class': 'cbi-section-table-cell' }, E('code', rule)),
+		cell,
+		E('td', { 'class': 'cbi-section-table-cell' }, res.error || res.reason || ''));
 }
 
 return view.extend({
@@ -175,6 +210,91 @@ return view.extend({
 		});
 	},
 
+	handlePreview: function(ev, section_id) {
+		var profile = null;
+		var secs = this._profiles || [];
+
+		for (var i = 0; i < secs.length; i++)
+			if (secs[i]['.name'] === section_id) {
+				profile = secs[i];
+				break;
+			}
+
+		if (!profile)
+			return;
+
+		var name = profile.name || '';
+		var mode = profile.mode === 'bypass' ? 'bypass' : 'vpn';
+		var modeLabel = (mode === 'bypass') ? _('Bypass mode') : _('VPN mode');
+		var close = E('div', { 'class': 'right' }, [
+			E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Close'))
+		]);
+
+		// check_domain answers against the effective profile, so verdicts
+		// for any other profile would be misleading — it takes no effect
+		// until assigned on the General tab.
+		if (name !== this._activeProfile) {
+			ui.showModal(_('Rule preview'), [
+				E('p', {}, _('Profile "%s" is not assigned, so its rules take no effect. Assign it on the General tab — only the assigned profile decides what goes through the tunnel.').format(name)),
+				close
+			]);
+			return;
+		}
+
+		var box = E('div', E('p', { 'class': 'spinning' }, _('Checking…')));
+
+		ui.showModal(_('Rule preview — %s').format(name), [
+			E('p', {}, _('How each rule of this profile is treated in %s. The verdicts are computed from the saved settings — press Save & Apply first to preview pending changes.').format(modeLabel)),
+			box,
+			close
+		]);
+
+		// In vpn mode the bypass rules are the exclusions, in bypass mode
+		// the VPN rules are the tunneled set; the other list is inert.
+		var effective = (mode === 'bypass') ? (profile.vpn_rules || []) : (profile.bypass_rules || []);
+		var inert = (mode === 'bypass') ? (profile.bypass_rules || []) : (profile.vpn_rules || []);
+
+		// The checks run one after another, never in parallel.
+		var rows = [];
+		var chain = Promise.resolve();
+
+		effective.forEach(function(rule) {
+			chain = chain.then(function() {
+				return callCheckDomain(rule).then(function(res) {
+					rows.push(verdictRow(rule, res));
+				}).catch(function(e) {
+					rows.push(verdictRow(rule, { error: e.message || String(e) }));
+				});
+			});
+		});
+
+		chain.then(function() {
+			var nodes = [];
+
+			if (effective.length) {
+				nodes.push(E('h4', (mode === 'bypass') ? _('Tunneled by this profile') : _('Bypassed by this profile')));
+				nodes.push(E('table', { 'class': 'cbi-section-table' }, [ verdictHead() ].concat(rows)));
+			}
+
+			if (inert.length) {
+				nodes.push(E('h4', _('No effect in %s').format(modeLabel)));
+				nodes.push(E('table', { 'class': 'cbi-section-table' }, [ verdictHead() ].concat(inert.map(function(rule) {
+					return E('tr', { 'class': 'cbi-section-table-row' },
+						E('td', { 'class': 'cbi-section-table-cell' }, E('code', rule)),
+						E('td', { 'class': 'cbi-section-table-cell' }, _('no effect')),
+						E('td', { 'class': 'cbi-section-table-cell' }, _('this list is ignored in %s').format(modeLabel)));
+				}))));
+			}
+
+			if (!effective.length && !inert.length)
+				nodes.push(E('p', {}, _('This profile has no rules yet.')));
+
+			dom.content(box, nodes);
+		}).catch(function(e) {
+			dom.content(box, E('p', e.message || String(e)));
+		});
+	},
+
 	render: function(data) {
 		var st = data[2];
 
@@ -223,6 +343,10 @@ return view.extend({
 
 		if (current && !currentKnown)
 			o.value(current, current);
+
+		// Stash for the per-profile rule preview on the Routing profiles tab.
+		this._profiles = profiles;
+		this._activeProfile = current || '';
 
 		// Tab 2 — Server: the connection to the server.
 		s = m.section(form.NamedSection, 'endpoint', 'endpoint', _('Server'));
@@ -396,6 +520,12 @@ return view.extend({
 			_('Always sent out directly: in VPN mode these are the only destinations that bypass the tunnel; in bypass mode the list has no effect.'));
 		o.placeholder = 'bank.example';
 		o.validate = validateRule;
+
+		o = s.option(form.Button, '_preview', _('Rule preview'),
+			_('Shows how each rule of this profile is treated, using the same logic as the Check a domain tool. Only the assigned profile takes effect, and the verdicts come from the saved settings.'));
+		o.inputtitle = _('Preview rules');
+		o.inputstyle = 'action';
+		o.onclick = ui.createHandlerFn(this, 'handlePreview');
 
 		// Tab 5 — Advanced: networking internals and the client's own DNS.
 		s = m.section(form.NamedSection, 'network', 'network', _('Advanced'));
