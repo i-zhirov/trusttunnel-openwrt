@@ -57,6 +57,15 @@ for _ver in $TT_SDK_VERSION; do
 			./scripts/feeds update -a
 			echo "== defconfig"
 			make defconfig >/dev/null 2>&1
+			# The translation package default selection
+			# (LUCI_LANG_ru||(ALL&&m)) has come out unset on CI — the
+			# explicit compile below fails for an unselected package, so
+			# the selection is forced into the config first.
+			if ! grep -q "^CONFIG_PACKAGE_luci-i18n-trusttunnel-ru=" .config; then
+				printf "%s\n" "CONFIG_PACKAGE_luci-i18n-trusttunnel-ru=m" >> .config
+				make defconfig >/dev/null 2>&1
+			fi
+			grep -E "^CONFIG_ALL=|^CONFIG_PACKAGE_luci-i18n-trusttunnel-ru=" .config || true
 			for PKG in luci-app-trusttunnel luci-i18n-trusttunnel-ru trusttunnel-client; do
 				echo "== install $PKG"
 				./scripts/feeds install -p ttowrt -f "$PKG"
@@ -66,7 +75,12 @@ for _ver in $TT_SDK_VERSION; do
 				# tolerated here.
 				make "package/$PKG/download" >/dev/null 2>&1 || true
 				echo "== compile $PKG"
-				make -j"$TT_SDK_NJOBS" "package/$PKG/compile"
+				make -j"$TT_SDK_NJOBS" "package/$PKG/compile" || {
+					# The parallel build hides the failing command; the
+					# verbose retry is what the OpenWrt docs prescribe.
+					echo "== retrying $PKG verbosely"
+					make -j1 V=s "package/$PKG/compile" || exit 1
+				}
 			done
 			# Collect only the feed packages (the SDK bin tree also holds
 			# base toolchain packages); the feed directory is
