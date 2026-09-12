@@ -135,11 +135,9 @@ if [ -z "$_has_profile" ]; then
 	logger -t trusttunnel "created the default routing profile; the old direct list moved into its bypass rules"
 fi
 
-# Finalize: drop the stale release cache, register the rc.d link so the
-# service starts on boot (the enabled flag is only consulted inside
-# start_service) and clear the LuCI caches.
-mkdir -p /var/cache/trusttunnel
-rm -f /var/cache/trusttunnel/release.json
+# Finalize: register the rc.d link so the service starts on boot (the
+# enabled flag is only consulted inside start_service) and clear the LuCI
+# caches.
 /etc/init.d/trusttunnel enable >/dev/null 2>&1
 rm -f /tmp/luci-indexcache /tmp/luci-modulecache/* 2>/dev/null
 exit 0

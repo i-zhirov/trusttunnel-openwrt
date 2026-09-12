@@ -318,7 +318,7 @@ return view.extend({
 		o.default = '1';
 
 		o = s.option(form.Flag, 'include_router_traffic', _('Route the router\'s own traffic too'),
-			_('By default only forwarded LAN traffic is routed. Enabling this also routes traffic originated by the router itself, including the update check.'));
+			_('By default only forwarded LAN traffic is routed. Enabling this also routes traffic originated by the router itself.'));
 
 		o = s.option(form.Value, 'fwmark', _('Firewall mark'),
 			_('Decimal or 0x-prefixed hexadecimal. Change only on a conflict with mwan3, SQM or another package that marks packets.'));
