@@ -17,7 +17,7 @@ PKG_NAME:=luci-app-trusttunnel
 # only when no tag is reachable (local builds, manual re-deploys, a feed
 # without .git). Keep the fallback equal to the last released version;
 # release.yml fails a tag build whose artifact does not carry the tag.
-PKG_VERSION:=$(strip $(shell v="$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')"; [ -n "$$v" ] && printf '%s' "$$v" || printf '%s' 1.0.17))
+PKG_VERSION:=$(strip $(shell v="$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')"; [ -n "$$v" ] && printf '%s' "$$v" || printf '%s' 1.0.18))
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=TrustTunnelOpenWrt contributors
