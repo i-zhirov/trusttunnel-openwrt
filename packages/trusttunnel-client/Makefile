@@ -21,7 +21,18 @@ PKG_NAME:=trusttunnel-client
 # The version is the VENDOR release, tracked here explicitly. On a vendor
 # release, bump it together with the per-family PKG_HASH values below (the
 # release API publishes the digests of every asset).
-PKG_VERSION:=1.1.5
+#
+# Pinned to 1.0.49 on purpose: 1.1.5 (2026-09-02) regressed the IPv6 DNS
+# failure handling on IPv4-only routers — the client segfaults (SIGSEGV,
+# invalid read at 0x24e000) ~90 ms after vpn_listen when its built-in
+# IPv6 AdGuard upstreams (2a10:50c0::1:ff) are used for the endpoint
+# resolution on a host without an IPv6 route. Reproduced on OpenWrt
+# 25.12.5 (ramips/mt7621, mipsel_24kc): 5 of 6 supervised starts crashed
+# with 1.1.5; 1.0.49 connects with the identical configuration
+# (VPN_SS_CONNECTED, verified 2026-09-12). 1.0.49 was also the vendor's
+# own install.sh default until the 1.1.5 release commit. Re-bump only
+# after the upstream fix is verified on a real IPv4-only router.
+PKG_VERSION:=1.0.49
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=TrustTunnelOpenWrt contributors
@@ -61,11 +72,11 @@ PKG_SOURCE_URL := https://github.com/TrustTunnel/TrustTunnelClient/releases/down
 # and verified locally against the downloaded files. Nested ifs (not
 # if-chains with trailing continuations): a trailing space in PKG_HASH
 # makes download.pl reject the checksum as unrecognized.
-PKG_HASH := $(if $(filter x86_64,$(VENDOR_ARCH)),759557812e7a280183f720e373b374f3fccb95758532cf8a94bea903dec2ca96, \
-	$(if $(filter aarch64,$(VENDOR_ARCH)),db17e4e2f9712de269b8e3196491324487fe9077c223e50b602668d888b5e81f, \
-	$(if $(filter armv7,$(VENDOR_ARCH)),c361557e88b9d9edbd5bf280c85c7e3cc3038928ed5559225cc59a010730cc8d, \
-	$(if $(filter mips,$(VENDOR_ARCH)),49988f84687f73a88bef5c1732ac953f961414c0427fd30353a918c4990da1d2, \
-	$(if $(filter mipsel,$(VENDOR_ARCH)),9d78643ab330d8ea5450fc25f38921b637f7f3701419528fc08d07eee074ba93,)))))
+PKG_HASH := $(if $(filter x86_64,$(VENDOR_ARCH)),01f9f8c46cd673215c3a4052ef790166e874c59295e35daf6b13103e6366f4e5, \
+	$(if $(filter aarch64,$(VENDOR_ARCH)),a0189fd182c478679fae89e3747e79c5edab56c8fcc34e1f80783a96f56b95d6, \
+	$(if $(filter armv7,$(VENDOR_ARCH)),223b90beca6b1425b5e1e3b293a4434240cee18ed504bf3fff91e7b8ac8e0249, \
+	$(if $(filter mips,$(VENDOR_ARCH)),367f2bd2532c1df7e0ec2804d77e20b58885619347bfbf0cfd789ba75fc8b7bc, \
+	$(if $(filter mipsel,$(VENDOR_ARCH)),e02735f8db8bf2506094149894f1ca386fcc2cd6a5c0074fb94930f0ec8ce40a,)))))
 
 # The archive's single top-level directory is named after the SOURCE
 # (trusttunnel_client-v$(PKG_VERSION)-linux-$(VENDOR_ARCH)), not after the
