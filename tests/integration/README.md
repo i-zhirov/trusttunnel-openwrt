@@ -79,12 +79,21 @@ prints the scratch path; `TT_KEEP=1` keeps the containers too.
 ## CI
 
 `.github/workflows/integration.yml` runs the suite on pull requests, main
-pushes and manual dispatch: a matrix job builds this tree's packages with
-the OpenWrt SDK (apk on 25.12, ipk on 22.03), then one job per package
-manager runs the harness against the built repositories and uploads the
-failure logs as an artifact. The `/dev/net/tun` preflight (with a
-mknod/modprobe fallback) fails loudly instead of letting the harness
-confuse everyone.
+pushes and manual dispatch and is verified green end to end (PR #20):
+a matrix job builds this tree's packages with the OpenWrt SDK (apk on
+25.12, ipk on 22.03), then one job per package manager runs the harness
+against the built repositories and uploads the failure logs as an
+artifact. The `/dev/net/tun` preflight (with a mknod/modprobe fallback)
+fails loudly instead of letting the harness confuse everyone.
+
+Two environment quirks are handled:
+- the i18n sub-package's build target does not exist in CI (its
+  generation is driven by the generated .config selection, which differs
+  from every local build), so the workflow takes the translation from
+  the latest release while the app and the client come from this tree;
+- the release translation's tilde version makes some CI runners silently
+  no-op the package-manager add inside install.sh, so the harness
+  installs the i18n explicitly with visible output.
 
 ## Why the stages look the way they do
 
