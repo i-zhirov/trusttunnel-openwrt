@@ -41,8 +41,17 @@ docker info >/dev/null 2>&1 || { echo "  SKIP: docker daemon not running"; exit 
 command -v node >/dev/null 2>&1 || { echo "  SKIP: node not available (needed for npm ci and the stub)"; exit 77; }
 command -v npm >/dev/null 2>&1 || { echo "  SKIP: npm not available"; exit 77; }
 command -v curl >/dev/null 2>&1 || { echo "  SKIP: curl not available"; exit 77; }
-docker image inspect "$PLAYWRIGHT_IMAGE" >/dev/null 2>&1 ||
-	{ echo "  SKIP: $PLAYWRIGHT_IMAGE not pulled (docker pull mcr.microsoft.com/playwright:v1.63.0-noble)"; exit 77; }
+
+# The pinned Playwright image carries the browsers and their system
+# dependencies; pull it when missing so the suite runs on a fresh runner
+# (and locally on first use). Only an unreachable registry skips.
+if ! docker image inspect "$PLAYWRIGHT_IMAGE" >/dev/null 2>&1; then
+	echo "  pulling $PLAYWRIGHT_IMAGE ..."
+	if ! docker pull "$PLAYWRIGHT_IMAGE" >/dev/null 2>&1; then
+		echo "  SKIP: could not pull $PLAYWRIGHT_IMAGE"
+		exit 77
+	fi
+fi
 
 # --- pinned luci-base resources ----------------------------------------------
 
