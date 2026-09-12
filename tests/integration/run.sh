@@ -829,6 +829,12 @@ assert_packages_installed() {
 			_tt_pass "apk reports luci-app, i18n and client installed"
 		else
 			_tt_fail "apk does not report all three packages installed"
+			# The failure diagnosis: which of the three is missing, and
+			# whether the served index even carries the i18n package.
+			docker exec "$ROUTER_CID" \
+				sh -c 'for p in luci-app-trusttunnel luci-i18n-trusttunnel-ru trusttunnel-client; do apk info -e "$p" >/dev/null 2>&1 && echo "$p: installed" || echo "$p: MISSING"; done' 2>/dev/null
+			docker exec "$ROUTER_CID" \
+				sh -c 'apk search luci-i18n-trusttunnel-ru 2>/dev/null | head -2' 2>/dev/null
 		fi
 	else
 		_got=$(docker exec "$ROUTER_CID" sh -c \
