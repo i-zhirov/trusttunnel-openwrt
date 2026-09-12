@@ -136,6 +136,33 @@ test('import applies the parsed fields to the pending save', async ({ page }) =>
 	expect(endpoint.dns_upstream).toEqual([ '94.140.14.14' ]);
 });
 
+test('import shows a spinner on the button while the backend answers', async ({ page }) => {
+	// Delay the import_config reply (stub state.delays) so the pending
+	// state is observable: the Import button must be disabled and spinning
+	// until the answer lands, not sitting there looking dead.
+	await stubSet(page, { delays: { import_config: 800 } });
+	await openView(page, 'settings');
+
+	await button(page, 'Import…').click();
+	const modal = page.locator('#modal_overlay .modal');
+	await expect(modal).toBeVisible();
+	await modal.locator('textarea').fill(IMPORT_TEXT);
+	const importBtn = modal.locator('button', { hasText: 'Import' });
+	await importBtn.click();
+
+	// The handler flips the button synchronously on click; the reply is
+	// held back 800 ms, so the pending state is observable.
+	await expect(importBtn).toBeDisabled();
+	await expect(importBtn).toContainText('Importing…');
+	await expect(importBtn.locator('span.spinning')).toHaveCount(1);
+	await expect(modal.locator('textarea')).toBeVisible();
+
+	// Once the delayed answer arrives, the normal success flow runs.
+	await waitForFrames(page, 'uci', 'set', 1);
+	await expect(page.locator('#maincontent .alert-message')).toContainText(
+		'Imported. Review the fields and press Save & Apply.');
+});
+
 test('import failure shows a danger notification', async ({ page }) => {
 	await stubSet(page, { importResult: { error: 'could not parse the config' } });
 	await openView(page, 'settings');

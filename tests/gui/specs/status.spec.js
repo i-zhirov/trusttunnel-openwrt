@@ -190,3 +190,22 @@ test('the 10 s polls refresh the verdict and fetch the client log', async ({ pag
 
 	await expect(page.locator('#view pre')).toContainText('client started');
 });
+
+test('the client log shows a loading indicator until the first fetch', async ({ page }) => {
+	await page.clock.install();
+	await openView(page, 'status', { clock: true });
+
+	// The first log fetch only fires at poll tick 10, so right after the
+	// initial render the log section shows a spinner, not the log box.
+	await expect(page.locator('#view .spinning')).toContainText('Loading');
+	await expect(page.locator('#view pre')).toHaveCount(0);
+
+	// Tick past 10 s: the first fetch replaces the spinner with the box
+	// and later polls only refresh the text.
+	await page.waitForTimeout(300);
+	await page.clock.runFor(11500);
+	await waitForFrames(page, 'luci.trusttunnel', 'log', 1);
+
+	await expect(page.locator('#view .spinning')).toHaveCount(0);
+	await expect(page.locator('#view pre')).toContainText('client started');
+});

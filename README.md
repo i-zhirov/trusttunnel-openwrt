@@ -29,6 +29,10 @@ The package is built around **named routing profiles**:
 - the routing chain fwmark → table `880` → the client's tun device, backed by
   a blackhole killswitch.
 
+**Everything on the router that this package does NOT touch:** dnsmasq, its
+config and cache, `https-dns-proxy`, cron, and nothing else on the router is
+affected.
+
 ## Requirements
 
 - **OpenWrt 22.03 or newer**: `apk`-based systems need 25.12+, `opkg`-based
@@ -51,8 +55,9 @@ The package is built around **named routing profiles**:
 
 ## Testing and feedback
 
-The package is actively tested on **x86_64** virtual machines and **mipsel** routers. The remaining
-vendor-supported families (`aarch64`, `armv7l`/`armv8l`, `mips`) are
+The package is actively tested on **x86_64** (mini-PCs, virtual machines,
+x86 gateways) and **mips** (ath79/ramips boards) routers. The remaining
+vendor-supported families (`aarch64`, `armv7l`/`armv8l`, `mipsel`) are
 covered by the release pipeline's per-architecture builds, but have seen
 less hands-on verification on real devices — reports from those platforms
 are especially valuable.
@@ -459,6 +464,14 @@ uci commit firewall
 /etc/init.d/firewall restart
 ```
 
+## Localisation
+
+The LuCI interface is English-only for now: no translation package is
+built or installed. The views keep LuCI's `_('...')` wrappers around every
+user-visible string, and the Russian translations are parked in the
+separate `trustunnel-openwrt-translations` repository for later
+reintroduction — see its README for the steps.
+
 ## Notes and caveats
 
 - **Firewall zone.** Because the zone binds the `tun+` wildcard, tun
@@ -476,15 +489,15 @@ uci commit firewall
 
 ## Acknowledgements
 
-- [`TrustTunnel/TrustTunnel`](https://github.com/TrustTunnel/TrustTunnel)
-  — the server component (Apache-2.0)
-- [`TrustTunnel/TrustTunnelClient`](https://github.com/TrustTunnel/TrustTunnelClient)
-  — the client binary (Apache-2.0)
 - [`NooBiToo/TrustTunnelOpenWrt`](https://github.com/NooBiToo/TrustTunnelOpenWrt)
   — the upstream LuCI package that inspired this implementation
 - [`iamvladdy/trusttunnel-openwrt`](https://github.com/iamvladdy/trusttunnel-openwrt)
   — an independent netifd-based implementation that pairs the client with
   [podkop](https://podkop.net) for selective routing
+- [`TrustTunnel/TrustTunnel`](https://github.com/TrustTunnel/TrustTunnel)
+  — the server component (Apache-2.0)
+- [`TrustTunnel/TrustTunnelClient`](https://github.com/TrustTunnel/TrustTunnelClient)
+  — the client binary (Apache-2.0)
 
 ## License
 

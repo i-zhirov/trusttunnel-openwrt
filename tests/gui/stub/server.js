@@ -118,6 +118,9 @@ let state = {
 	status: null, diagnose: null, ping: null, probe: null,
 	log: null, service: null, checkDomain: null, importResult: null,
 	versions: null,
+	// Method name -> response delay in ms, so specs can observe loading
+	// states that an instantaneous reply would skip.
+	delays: {},
 	uci: JSON.parse(JSON.stringify(defaultUci)),
 	goldenUci: true
 };
@@ -254,8 +257,23 @@ function handleRpc(req, res, body) {
 	const single = !Array.isArray(frames);
 	const out = single ? handleFrame(frames) : frames.map(handleFrame);
 
-	res.writeHead(200, { 'Content-Type': 'application/json' });
-	res.end(JSON.stringify(out));
+	// The reply of a method listed in state.delays is held back for the
+	// configured time, so a spec can assert the UI's pending state while
+	// the request is in flight. The frame itself is already recorded.
+	let delay = 0;
+	for (const f of single ? [ frames ] : frames)
+		if (f.method === 'call' && Array.isArray(f.params) && f.params.length >= 4)
+			delay = Math.max(delay, (state.delays || {})[f.params[2]] || 0);
+
+	const respond = () => {
+		res.writeHead(200, { 'Content-Type': 'application/json' });
+		res.end(JSON.stringify(out));
+	};
+
+	if (delay > 0)
+		setTimeout(respond, delay);
+	else
+		respond();
 }
 
 // ---------------------------------------------------------------------------
@@ -282,7 +300,8 @@ function handleControl(req, res, body) {
 	if (cmd.reset)
 		state = { frames: [], status: null, diagnose: null,
 			ping: null, probe: null, log: null, service: null, checkDomain: null,
-			importResult: null, versions: null, uci: JSON.parse(JSON.stringify(defaultUci)), goldenUci: true };
+			importResult: null, versions: null, delays: {},
+			uci: JSON.parse(JSON.stringify(defaultUci)), goldenUci: true };
 	else if (cmd.clearFrames)
 		state.frames = [];
 	else if (cmd.set)
