@@ -150,3 +150,22 @@ steps.
   only the blackhole, and the same lookup fails (`ip route get` answers
   EINVAL for a blackhole match) — no client process is involved, so the
   check is deterministic.
+
+## Possible extensions
+
+Cheap, incremental additions that were designed for but not implemented:
+
+- an `upstream_protocol = http3` scenario (the endpoint already listens
+  on UDP 8443);
+- the opkg variant on `openwrt/rootfs:x86-64-23.05.6` and
+  `x86-64-24.10.8` (same opkg branch, extra images);
+- routing-profile scenarios: a Bypass profile whose `vpn_rules` contain
+  the lab target (assert `vpn_mode = "selective"` and the generated
+  `exclusions`) and a VPN profile with `bypass_rules` (assert
+  `vpn_mode = "general"`);
+- the uninstaller round trip (`uninstall.sh -y`): packages gone,
+  feed/keys gone, kernel leftovers reported;
+- a snapshot test of the endpoint-down behavior with the client alive:
+  the generated config sets `killswitch_enabled = false` and the
+  client's recovery behavior was observed to vary, so the intended
+  semantics should be decided first (possibly with an upstream issue).
