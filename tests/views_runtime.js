@@ -177,6 +177,19 @@ form.Map.prototype.section = function (cls, ...args) {
         this.options.push(o);
         return o;
     };
+    // Section-level tabs: options added via taboption() carry the tab
+    // name; plain option() is only valid for sections without tabs.
+    s.tabs = [];
+    s.tab = function (name, title) {
+        this.tabs.push({ name: name, title: title });
+    };
+    s.taboption = function (tabName, optCls, name) {
+        const o = makeOption();
+        o.name = name;
+        o.tab = tabName;
+        this.options.push(o);
+        return o;
+    };
     this.sections.push(s);
     return s;
 };
@@ -376,8 +389,20 @@ async function main() {
         if (s.type === 'routing_profile')
             profileSecs.push(s);
     ok(profileSecs.length === 1, 'settings: a routing_profile section is created');
-    const serverSec = form_lastMap.sections.find(s => s.type === 'endpoint');
-    const rpOpt = serverSec && serverSec.options.find(o => o.name === 'routing_profile');
+    // The endpoint section is split into inner tabs: map-level tabs key
+    // their panes by the UCI section type, so two sections of the same
+    // type would collide; section-level tabs use their own names. The
+    // routing profile picker lives on the General (main) tab.
+    const endpointSec = form_lastMap.sections.find(s => s.type === 'endpoint');
+    ok(endpointSec && endpointSec.tabs.length === 2 &&
+        endpointSec.tabs[0].name === 'connection' && endpointSec.tabs[1].name === 'security',
+        'settings: the endpoint section splits into Connection and Security tabs');
+    ok(endpointSec && endpointSec.options.length > 0 &&
+        endpointSec.options.every(o => o.tab === 'connection' || o.tab === 'security'),
+        'settings: every endpoint option lives on an inner tab');
+    const rpSec = form_lastMap.sections.find(s =>
+        s.options.some(o => o.name === 'routing_profile'));
+    const rpOpt = rpSec && rpSec.options.find(o => o.name === 'routing_profile');
     ok(rpOpt && rpOpt.values.indexOf('Default') !== -1 && rpOpt.values.indexOf('Test') !== -1,
         'settings: the routing profile select lists Default and Test');
 
