@@ -29,6 +29,10 @@ The package is built around **named routing profiles**:
 - the routing chain fwmark → table `880` → the client's tun device, backed by
   a blackhole killswitch.
 
+**Everything on the router that this package does NOT touch:** dnsmasq, its
+config and cache, `https-dns-proxy`, cron, and nothing else on the router is
+affected.
+
 ## Requirements
 
 - **OpenWrt 22.03 or newer**: `apk`-based systems need 25.12+, `opkg`-based
@@ -51,8 +55,9 @@ The package is built around **named routing profiles**:
 
 ## Testing and feedback
 
-The package is actively tested on **x86_64** virtual machines and **mipsel** routers. The remaining
-vendor-supported families (`aarch64`, `armv7l`/`armv8l`, `mips`) are
+The package is actively tested on **x86_64** (mini-PCs, virtual machines,
+x86 gateways) and **mips** (ath79/ramips boards) routers. The remaining
+vendor-supported families (`aarch64`, `armv7l`/`armv8l`, `mipsel`) are
 covered by the release pipeline's per-architecture builds, but have seen
 less hands-on verification on real devices — reports from those platforms
 are especially valuable.
@@ -78,13 +83,20 @@ The script then:
 1. Checks the environment — OpenWrt 22.03+, the CPU family, the package
    manager. The architecture gate runs before anything is changed.
 2. Points the package manager at the signed repositories served from the
-   GitHub Pages site of this project (`apk/` for 25.12+, `opkg/` for
-   22.03–24.10): the apk branch writes
-   `/etc/apk/repositories.d/trusttunnel.list` and
-   `/etc/apk/keys/trusttunnel.pub`; the opkg branch appends a
-   `src/gz trusttunnel <url>/opkg` line to `/etc/opkg/customfeeds.conf` and
-   copies the feed key into `/etc/opkg/keys/` (under the stable name and
-   the usign fingerprint).
+   GitHub Pages site of this project, in the official OpenWrt layout
+   `releases/<version>/packages/<arch>/<feed>/` — one release tree per
+   package-manager era (the apk packages live under `releases/25.12.5/`,
+   the opkg packages under `releases/22.03.7/`, named after the OpenWrt
+   release they were built against), each with a `trusttunnel` feed
+   directory per device architecture (the arch is the device's own
+   package architecture, `DISTRIB_ARCH` in `/etc/openwrt_release` or
+   `/etc/apk/arch` on 25.12+): the apk branch writes
+   `/etc/apk/repositories.d/trusttunnel.list` (the
+   `releases/25.12.5/packages/<arch>/trusttunnel/packages.adb` index
+   URL) and `/etc/apk/keys/trusttunnel.pub`; the opkg branch appends a
+   `src/gz trusttunnel <url>/releases/22.03.7/packages/<arch>/trusttunnel`
+   line to `/etc/opkg/customfeeds.conf` and copies the feed key into
+   `/etc/opkg/keys/` (under the stable name and the usign fingerprint).
 3. Installs the required packages `kmod-tun ip-full nftables curl
    ca-bundle`.
 4. Installs `luci-app-trusttunnel`; `trusttunnel-client` comes along as a
@@ -103,7 +115,7 @@ refresh the signing keys; `/etc/config/trusttunnel` is left alone.
 
 ## Configuration
 
-Open **Services → TrustTunnel → Settings** in LuCI. The page has five
+Open **Services → TrustTunnel → Settings** in LuCI. The page has four
 tabs:
 
 - **General**: a read-only service line, the service switch ("start on
@@ -132,12 +144,6 @@ tabs:
   blackhole switch, router-traffic routing, the client's own DNS
   upstreams, and the internal routing parameters (firewall mark,
   routing table).
-- **Versions**: what is installed — the app package and the client
-  package versions exactly as the package manager reports them, plus
-  the client binary's own version. Read-only: updates are delivered
-  through the package repository (`apk update && apk upgrade` on
-  OpenWrt 25.12, `opkg update && opkg upgrade` before it, or
-  System → Software in LuCI).
 
 The same configuration headless, over UCI:
 
@@ -459,16 +465,29 @@ uci commit firewall
 /etc/init.d/firewall restart
 ```
 
+## Localisation
+
+The LuCI interface is English-only for now: no translation package is
+built or installed. The views keep LuCI's `_('...')` wrappers around every
+user-visible string, and the Russian translations are parked in the
+separate `trustunnel-openwrt-translations` repository for later
+reintroduction — see its README for the steps.
+
 ## Notes and caveats
 
 - **Firewall zone.** Because the zone binds the `tun+` wildcard, tun
   devices created by other software fall under it too.
-- **Repositories and signing.** Both repositories are served from the
+- **Repositories and signing.** The repositories are served from the
   GitHub Pages site of this project
-  (`https://i-zhirov.github.io/trusttunnel-openwrt`); the release
-  workflow publishes the site straight from CI, and no branch ever holds
-  the packages. Signing: `adbsign` (EC key) for the apk index, `usign`
-  for the opkg feed.
+  (`https://i-zhirov.github.io/trusttunnel-openwrt`), in the official
+  OpenWrt layout `releases/<version>/packages/<arch>/trusttunnel/`: the
+  `releases/25.12.5/` tree holds the apk feeds (index `packages.adb`,
+  25.12+), the `releases/22.03.7/` tree the opkg feeds (`Packages.gz` /
+  `Packages.sig`, 22.03–24.10) — one signed feed directory per device
+  architecture next to the packages. The release workflow publishes the
+  site straight from CI, and no branch ever holds the packages.
+  Signing: `adbsign` (EC key) for the apk index, `usign` for the opkg
+  feeds.
 - **Manual downloads.** A `.apk` or `.ipk` fetched from the release assets
   must be checked against the SHA-256 sums in the release notes.
 - **Key rotation.** The signing keys rotate; run the installer once more to
@@ -476,15 +495,15 @@ uci commit firewall
 
 ## Acknowledgements
 
-- [`TrustTunnel/TrustTunnel`](https://github.com/TrustTunnel/TrustTunnel)
-  — the server component (Apache-2.0)
-- [`TrustTunnel/TrustTunnelClient`](https://github.com/TrustTunnel/TrustTunnelClient)
-  — the client binary (Apache-2.0)
 - [`NooBiToo/TrustTunnelOpenWrt`](https://github.com/NooBiToo/TrustTunnelOpenWrt)
   — the upstream LuCI package that inspired this implementation
 - [`iamvladdy/trusttunnel-openwrt`](https://github.com/iamvladdy/trusttunnel-openwrt)
   — an independent netifd-based implementation that pairs the client with
   [podkop](https://podkop.net) for selective routing
+- [`TrustTunnel/TrustTunnel`](https://github.com/TrustTunnel/TrustTunnel)
+  — the server component (Apache-2.0)
+- [`TrustTunnel/TrustTunnelClient`](https://github.com/TrustTunnel/TrustTunnelClient)
+  — the client binary (Apache-2.0)
 
 ## License
 

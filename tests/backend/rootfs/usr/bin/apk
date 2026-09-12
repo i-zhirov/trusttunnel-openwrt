@@ -1,8 +1,7 @@
 #!/bin/sh
-# Lab stub: apk list -I <pkg>. Only luci-app-trusttunnel is answered via
-# apk in the lab; trusttunnel-client exercises the opkg fallback path.
+# Lab stub: apk list -I luci-app-trusttunnel
 if [ "$1" = "list" ]; then
-	[ "$3" = "luci-app-trusttunnel" ] && echo "luci-app-trusttunnel-1.0.15-r1 architecture: all"
+	echo "luci-app-trusttunnel-1.0.15-r1 architecture: all"
 	exit 0
 fi
 exit 0

@@ -4,17 +4,18 @@ This site hosts the package repositories that
 [install.sh](https://raw.githubusercontent.com/i-zhirov/trusttunnel-openwrt/main/install.sh)
 configures on the router:
 
-- [apk/](apk/) — the apk repositories for OpenWrt 25.12+ (apk): one signed
-  directory per device architecture, each holding the noarch LuCI packages
-  and the architecture's TrustTunnel client build, plus `key-build.pub`.
-  Repository URL for the router (the arch is the device's own
-  `apk --print-arch`):
-  `https://i-zhirov.github.io/trusttunnel-openwrt/apk/<arch>/packages.adb`
-- [opkg/](opkg/) — the opkg repository for OpenWrt 22.03–24.10 (opkg):
-  one merged feed with every architecture's `.ipk` packages, the signed
-  index `Packages` / `Packages.gz` / `Packages.sig` and `opkg-key.pub`.
-  Feed URL for the router:
-  `https://i-zhirov.github.io/trusttunnel-openwrt/opkg`
+- [releases/](releases/) — the signed package feeds in the official
+  OpenWrt layout (`releases/<version>/packages/<arch>/<feed>/`): one
+  release tree per package-manager era, named after the OpenWrt release
+  the packages were built against — `25.12.5` for the apk feeds of
+  OpenWrt 25.12+, `22.03.7` for the opkg feeds of 22.03–24.10. Each tree
+  holds per-architecture `trusttunnel` feed directories with the signed
+  index, the public signing key and every released version of the
+  packages. Repository URLs for the router (the arch is the device's own
+  package architecture):
+  `https://i-zhirov.github.io/trusttunnel-openwrt/releases/25.12.5/packages/<arch>/trusttunnel/packages.adb`
+  and
+  `https://i-zhirov.github.io/trusttunnel-openwrt/releases/22.03.7/packages/<arch>/trusttunnel`
 
 The repositories are cumulative: they serve every released version of
 the LuCI app — the `__TAG__` release on top of all earlier releases — so

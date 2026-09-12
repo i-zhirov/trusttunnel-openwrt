@@ -26,6 +26,15 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 # and the index URLs are derived from it.
 TT_REPO_URL="${TT_REPO_URL:-https://i-zhirov.github.io/trusttunnel-openwrt}"
 
+# The release tree segment mirrors the official OpenWrt layout: the
+# repositories live under releases/<version>/, where <version> is the
+# OpenWrt release the packages were built against (the SDK pins in
+# release.yml) — 25.12.5 for the apk packages, 22.03.7 for the opkg
+# packages. Bump these together with the SDK pins; overridable for
+# mirrors and testing like TT_REPO_URL.
+TT_REPO_APK_RELEASE="${TT_REPO_APK_RELEASE:-25.12.5}"
+TT_REPO_OPKG_RELEASE="${TT_REPO_OPKG_RELEASE:-22.03.7}"
+
 # --- Package manager ----------------------------------------------------------
 # apk (25.12+) takes precedence, opkg (22.03-24.10) is the fallback. The
 # version floor is the OpenWrt release major (the first component of
@@ -66,11 +75,19 @@ case "$_arch" in
 esac
 
 # --- Repository setup ---------------------------------------------------------
+# The repositories are served in the official OpenWrt layout,
+# releases/<version>/packages/<arch>/<feed>/, where <version> is the
+# OpenWrt release the packages were built against (25.12.5 for apk,
+# 22.03.7 for opkg), <arch> is the device's own package architecture
+# (the same value that names the directories on downloads.openwrt.org,
+# e.g. mipsel_24kc) and <feed> is the project's feed name. Each release
+# tree serves one package manager: apk fetches
+# <url>/releases/25.12.5/packages/<arch>/trusttunnel/packages.adb, opkg
+# appends /Packages.gz to
+# <url>/releases/22.03.7/packages/<arch>/trusttunnel.
 if [ "$PM" = "apk" ]; then
 	say "== Configuring the apk repository"
 	mkdir -p /etc/apk/keys /etc/apk/repositories.d
-	# The signing key goes in first: apk refuses an index it cannot verify.
-	wget -O /etc/apk/keys/trusttunnel.pub "$TT_REPO_URL/apk/key-build.pub"
 	# The repository directories are named after the device's package
 	# architecture, which /etc/apk/arch holds (e.g. mipsel_24kc).
 	# `apk --print-arch` reports apk-tools' own compiled arch (e.g. plain
@@ -84,15 +101,23 @@ if [ "$PM" = "apk" ]; then
 		_arch_dir=$(apk --print-arch) || die "could not determine the architecture (apk --print-arch failed)"
 	fi
 	[ -n "$_arch_dir" ] || die "could not determine the architecture (apk --print-arch returned nothing)"
-	printf '%s\n' "$TT_REPO_URL/apk/$_arch_dir/packages.adb" > /etc/apk/repositories.d/trusttunnel.list
+	# The signing key goes in first: apk refuses an index it cannot verify.
+	wget -O /etc/apk/keys/trusttunnel.pub "$TT_REPO_URL/releases/$TT_REPO_APK_RELEASE/packages/$_arch_dir/trusttunnel/key-build.pub"
+	printf '%s\n' "$TT_REPO_URL/releases/$TT_REPO_APK_RELEASE/packages/$_arch_dir/trusttunnel/packages.adb" > /etc/apk/repositories.d/trusttunnel.list
 else
 	say "== Configuring the opkg repository"
 	mkdir -p /etc/opkg/keys
+	# The feed directories are named after the device's package
+	# architecture; /etc/openwrt_release (already sourced above) carries
+	# it as DISTRIB_ARCH — the same value that names the feed directories
+	# on downloads.openwrt.org.
+	_arch_dir="${DISTRIB_ARCH:-}"
+	[ -n "$_arch_dir" ] || die "could not determine the architecture (DISTRIB_ARCH is empty in /etc/openwrt_release)"
 	# Idempotent feed line: a reinstall must not duplicate it.
 	if ! grep -q '^src/gz trusttunnel ' /etc/opkg/customfeeds.conf 2>/dev/null; then
-		printf '%s\n' "src/gz trusttunnel $TT_REPO_URL/opkg" >> /etc/opkg/customfeeds.conf
+		printf '%s\n' "src/gz trusttunnel $TT_REPO_URL/releases/$TT_REPO_OPKG_RELEASE/packages/$_arch_dir/trusttunnel" >> /etc/opkg/customfeeds.conf
 	fi
-	wget -O /etc/opkg/keys/trusttunnel.pub "$TT_REPO_URL/opkg/opkg-key.pub"
+	wget -O /etc/opkg/keys/trusttunnel.pub "$TT_REPO_URL/releases/$TT_REPO_OPKG_RELEASE/packages/$_arch_dir/trusttunnel/opkg-key.pub"
 	# opkg-key matches keys named by their usign fingerprint; the stable
 	# name is uninstall.sh's removal handle — both copies are kept.
 	_fp=$(usign -F -p /etc/opkg/keys/trusttunnel.pub) || die "could not compute the usign fingerprint of the feed key"

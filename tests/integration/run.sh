@@ -385,7 +385,9 @@ for a in r.get("assets", []):
 # --- stage: repo -----------------------------------------------------------------
 
 assemble_apk_repo() {
-	_dir="$SCRATCH/repo/apk/x86_64"
+	# The hermetic repository mirrors the official layout the release
+	# pipeline serves: releases/25.12.5/packages/x86_64/trusttunnel/.
+	_dir="$SCRATCH/repo/releases/25.12.5/packages/x86_64/trusttunnel"
 	mkdir -p "$_dir"
 	# EC P-256 — the same key type as the project's committed key-build.pub.
 	if ! openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
@@ -394,7 +396,7 @@ assemble_apk_repo() {
 		return 1
 	fi
 	if ! openssl pkey -in "$SCRATCH/sign/apk.sec" -pubout \
-			-out "$SCRATCH/repo/apk/key-build.pub" 2>/dev/null; then
+			-out "$_dir/key-build.pub" 2>/dev/null; then
 		_tt_fail "apk public key export failed"
 		return 1
 	fi
@@ -405,7 +407,7 @@ assemble_apk_repo() {
 	# on the metadata-derived name.
 	if ! docker run --rm -v "$SCRATCH:/w" "$IMG_ALPINE" sh -c '
 			set -e
-			cd /w/repo/apk/x86_64
+			cd /w/repo/releases/25.12.5/packages/x86_64/trusttunnel
 			for f in *.apk; do
 				meta=$(apk adbdump "$f" 2>/dev/null) || exit 1
 				name=$(printf "%s\n" "$meta" | awk "/^  name: / { print \$2; exit }")
@@ -421,7 +423,7 @@ assemble_apk_repo() {
 	# Index and sign in the pinned alpine image, exactly like release.yml.
 	if ! docker run --rm -v "$SCRATCH:/w" "$IMG_ALPINE" sh -c '
 			set -e
-			cd /w/repo/apk/x86_64
+			cd /w/repo/releases/25.12.5/packages/x86_64/trusttunnel
 			apk mkndx --allow-untrusted --output packages.adb --arch x86_64 *.apk
 			apk adbsign --allow-untrusted --sign-key /w/sign/apk.sec packages.adb
 		' >/dev/null 2>&1; then
@@ -432,15 +434,18 @@ assemble_apk_repo() {
 }
 
 assemble_opkg_repo() {
-	mkdir -p "$SCRATCH/repo/opkg"
-	cp "$SCRATCH/pkgs"/*.ipk "$SCRATCH/repo/opkg/"
+	# The feed directory mirrors the official layout the release pipeline
+	# serves: releases/22.03.7/packages/x86_64/trusttunnel/.
+	_dir="$SCRATCH/repo/releases/22.03.7/packages/x86_64/trusttunnel"
+	mkdir -p "$_dir"
+	cp "$SCRATCH/pkgs"/*.ipk "$_dir/"
 	# usign keypair: usign lives in the opkg router image.
 	if ! docker run --rm -v "$SCRATCH/sign:/s" "$IMG_ROUTER_OPKG" \
 			sh -c 'cd /s && usign -G -s opkg.sec -p opkg.pub' >/dev/null 2>&1; then
 		_tt_fail "usign key generation failed"
 		return 1
 	fi
-	cp "$SCRATCH/sign/opkg.pub" "$SCRATCH/repo/opkg/opkg-key.pub"
+	cp "$SCRATCH/sign/opkg.pub" "$_dir/opkg-key.pub"
 	# The canonical index generator, fetched at run time — the same source
 	# release.yml uses. The fetch is outside the hermetic net (raw.
 	# githubusercontent.com), so it gets the download retry.
@@ -460,7 +465,7 @@ EOF
 	if ! docker run --rm -v "$SCRATCH:/w" "$IMG_ALPINE" sh -c '
 			set -e
 			apk add -q bash >/dev/null 2>&1
-			cd /w/repo/opkg
+			cd /w/repo/releases/22.03.7/packages/x86_64/trusttunnel
 			MKHASH=/w/mkhash.sh bash /w/ipkg-make-index.sh . > Packages.manifest 2>/dev/null
 			grep -vE "^(Maintainer|LicenseFiles|Source|SourceName|Require|SourceDateEpoch)" Packages.manifest > Packages
 			rm -f Packages.manifest
@@ -471,12 +476,12 @@ EOF
 	# usign cannot sign SHA-512 messages of two specific sizes (the same
 	# workaround the release pipeline applies); padding the index by two
 	# empty lines shifts it past the affected sizes.
-	_size=$(wc -c < "$SCRATCH/repo/opkg/Packages")
+	_size=$(wc -c < "$_dir/Packages")
 	if [ $(( (64 + _size) % 128 )) -eq 110 ] || [ $(( (64 + _size) % 128 )) -eq 111 ]; then
-		printf '\n\n' >> "$SCRATCH/repo/opkg/Packages"
+		printf '\n\n' >> "$_dir/Packages"
 	fi
-	gzip -9nc "$SCRATCH/repo/opkg/Packages" > "$SCRATCH/repo/opkg/Packages.gz"
-	if ! docker run --rm -v "$SCRATCH/repo/opkg:/repo" \
+	gzip -9nc "$_dir/Packages" > "$_dir/Packages.gz"
+	if ! docker run --rm -v "$_dir:/repo" \
 			-v "$SCRATCH/sign/opkg.sec:/opkg.sec:ro" "$IMG_ROUTER_OPKG" \
 			sh -c 'cd /repo && usign -S -s /opkg.sec -m Packages -x Packages.sig' >/dev/null 2>&1; then
 		_tt_fail "opkg index signing failed"
@@ -490,11 +495,11 @@ st_repo() {
 	echo "== assembling the $TT_PM repository"
 	if [ "$TT_PM" = "apk" ]; then
 		if assemble_apk_repo; then
-			_tt_pass "apk repository assembled and signed (key-build.pub, x86_64/packages.adb)"
+			_tt_pass "apk repository assembled and signed (key-build.pub, releases/25.12.5/packages/x86_64/trusttunnel/packages.adb)"
 		fi
 	else
 		if assemble_opkg_repo; then
-			_tt_pass "opkg repository assembled and signed (opkg-key.pub, Packages, Packages.sig)"
+			_tt_pass "opkg repository assembled and signed (opkg-key.pub, releases/22.03.7/packages/x86_64/trusttunnel/Packages, Packages.sig)"
 		fi
 	fi
 }
@@ -514,8 +519,8 @@ st_serve() {
 		_tt_fail "could not start the repository server"
 		return
 	fi
-	_probe=apk/key-build.pub
-	[ "$TT_PM" = "opkg" ] && _probe=opkg/opkg-key.pub
+	_probe=releases/25.12.5/packages/x86_64/trusttunnel/key-build.pub
+	[ "$TT_PM" = "opkg" ] && _probe=releases/22.03.7/packages/x86_64/trusttunnel/opkg-key.pub
 	# The python server takes a couple of seconds to bind its socket on a
 	# cold start; a connect into that window fails with busybox wget's
 	# "Operation not permitted", so the health check polls instead of
@@ -931,14 +936,14 @@ st_asserts() {
 
 	if [ "$TT_PM" = "apk" ]; then
 		_list=$(docker exec "$ROUTER_CID" cat /etc/apk/repositories.d/trusttunnel.list 2>/dev/null)
-		assert_contains "$_list" "http://$IP_REPO:8080/apk/x86_64/packages.adb" \
-			"the apk repository entry points at the served index"
+		assert_contains "$_list" "http://$IP_REPO:8080/releases/25.12.5/packages/x86_64/trusttunnel/packages.adb" \
+			"the apk repository entry points at the served feed index"
 		_key=$(docker exec "$ROUTER_CID" cat /etc/apk/keys/trusttunnel.pub 2>/dev/null)
 		assert_contains "$_key" "BEGIN PUBLIC KEY" "the apk signing key is installed"
 	else
 		_feeds=$(docker exec "$ROUTER_CID" cat /etc/opkg/customfeeds.conf 2>/dev/null)
-		assert_contains "$_feeds" "src/gz trusttunnel http://$IP_REPO:8080/opkg" \
-			"the opkg feed entry points at the served repository"
+		assert_contains "$_feeds" "src/gz trusttunnel http://$IP_REPO:8080/releases/22.03.7/packages/x86_64/trusttunnel" \
+			"the opkg feed entry points at the served feed directory"
 		_keys=$(docker exec "$ROUTER_CID" sh -c 'ls /etc/opkg/keys' 2>/dev/null)
 		assert_contains "$_keys" "trusttunnel.pub" "the opkg key is installed under the stable name"
 		_fp=$(docker exec "$ROUTER_CID" sh -c 'usign -F -p /etc/opkg/keys/trusttunnel.pub' 2>/dev/null)

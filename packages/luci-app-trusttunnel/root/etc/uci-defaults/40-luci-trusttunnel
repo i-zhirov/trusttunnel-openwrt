@@ -41,13 +41,6 @@ _count_profiles() {
 	_has_profile=1
 }
 
-# Mark the presence of the UI-only about section; the Versions tab
-# creation only fires when the callback never runs.
-# shellcheck disable=SC2329
-_count_about() {
-	_has_about=1
-}
-
 _zone_sec=""
 _fwd_sec=""
 _removed=""
@@ -125,19 +118,6 @@ if [ -z "$_has_profile" ]; then
 	uci set trusttunnel.endpoint.routing_profile='Default'
 	uci commit trusttunnel
 	logger -t trusttunnel "created the default routing profile; the old direct list moved into its bypass rules"
-fi
-
-# The Versions tab on the Settings page renders a form section of type
-# 'about'; map-level tabs are keyed by the UCI section type, so the tab
-# needs the section to exist even though it carries no options. Create it
-# on installs that predate it; fresh installs get it from the shipped
-# config, so the block is a no-op there.
-_has_about=""
-config_foreach _count_about about
-if [ -z "$_has_about" ]; then
-	uci set trusttunnel.about='about'
-	uci commit trusttunnel
-	logger -t trusttunnel "created the about section for the Versions tab"
 fi
 
 # Finalize: register the rc.d link so the service starts on boot (the
