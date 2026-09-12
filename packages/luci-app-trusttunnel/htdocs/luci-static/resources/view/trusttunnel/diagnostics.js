@@ -141,13 +141,11 @@ var renderChecks = function (checks) {
 				return;
 
 			present = true;
-			// Children as an ARRAY: current LuCI's E() (DOM.create) reads
-			// only arguments[2], so variadic children are silently dropped.
-			rows.push(E('tr', { 'class': 'cbi-section-table-row' }, [
+			rows.push(E('tr', { 'class': 'cbi-section-table-row' },
 				markCell(check.status),
 				E('td', { 'class': 'cbi-section-table-cell' }, dtr(check.label)),
 				E('td', { 'class': 'cbi-section-table-cell' }, dtr(check.detail))
-			]));
+			));
 
 			if (check.hint)
 				rows.push(E('tr', { 'class': 'cbi-section-table-row' },
@@ -169,11 +167,11 @@ var renderChecks = function (checks) {
 var verdictBanner = function (res) {
 	var counts = res.counts || {};
 
-	return E('div', { 'class': 'alert-message ' + (alertClass[res.verdict] || 'info') }, [
+	return E('div', { 'class': 'alert-message ' + (alertClass[res.verdict] || 'info') },
 		E('strong', verdictWord(res.verdict)),
 		E('br'),
 		_('checks passed: %d, remarks: %d, problems: %d, skipped: %d').format(counts.ok || 0, counts.warn || 0, counts.fail || 0, counts.skip || 0)
-	]);
+	);
 };
 
 var renderDiagnose = function (res) {
@@ -236,7 +234,7 @@ var handleCheckDomain = function (input, container) {
 
 		var tunnel = res.verdict && res.verdict.indexOf('tunnel') === 0;
 
-		dom.content(container, E('table', { 'class': 'cbi-section-table' }, [
+		dom.content(container, E('table', { 'class': 'cbi-section-table' },
 			E('tr', { 'class': 'cbi-section-table-row' },
 				E('td', { 'class': 'cbi-section-table-cell' }, _('Normalized')),
 				E('td', { 'class': 'cbi-section-table-cell' }, E('code', res.normalized))
@@ -253,7 +251,7 @@ var handleCheckDomain = function (input, container) {
 				E('td', { 'class': 'cbi-section-table-cell' }, _('Why')),
 				E('td', { 'class': 'cbi-section-table-cell' }, res.reason)
 			)
-		]));
+		));
 	}).catch(function (err) {
 		dom.content(container, E('p', err.message || String(err)));
 	});
@@ -268,20 +266,20 @@ var handlePing = function (container) {
 			return;
 		}
 
-		var rows = [ E('tr', { 'class': 'cbi-section-table-row' }, [
+		var rows = [ E('tr', { 'class': 'cbi-section-table-row' },
 			E('th', { 'class': 'cbi-section-table-cell' }, _('Host')),
 			E('th', { 'class': 'cbi-section-table-cell' }, _('Loss')),
 			E('th', { 'class': 'cbi-section-table-cell' }, _('min / avg / max'))
-		]) ];
+		) ];
 
 		(res.results || []).forEach(function (r) {
-			rows.push(E('tr', { 'class': 'cbi-section-table-row' }, [
+			rows.push(E('tr', { 'class': 'cbi-section-table-row' },
 				E('td', { 'class': 'cbi-section-table-cell' }, r.host),
 				E('td', { 'class': 'cbi-section-table-cell' }, r.loss + '%'),
 				E('td', { 'class': 'cbi-section-table-cell' },
 					r.avg === null ? '—' : r.min + ' / ' + r.avg + ' / ' + r.max + ' ms'
 				)
-			]));
+			));
 		});
 
 		dom.content(container, E('table', { 'class': 'cbi-section-table' }, rows));
@@ -302,7 +300,7 @@ var handleProbe = function (container) {
 				(entry && entry.error) ? entry.error : '');
 		};
 
-		dom.content(container, E('table', { 'class': 'cbi-section-table' }, [
+		dom.content(container, E('table', { 'class': 'cbi-section-table' },
 			E('tr', { 'class': 'cbi-section-table-row' },
 				E('td', { 'class': 'cbi-section-table-cell' }, _('Through the tunnel')),
 				E('td', { 'class': 'cbi-section-table-cell' }, cell(res.tunnel))
@@ -311,7 +309,7 @@ var handleProbe = function (container) {
 				E('td', { 'class': 'cbi-section-table-cell' }, _('Directly')),
 				E('td', { 'class': 'cbi-section-table-cell' }, cell(res.direct))
 			)
-		]));
+		));
 	}).catch(function (err) {
 		dom.content(container, E('p', err.message || String(err)));
 	});
@@ -344,13 +342,10 @@ return view.extend({
 
 		handleDiagnose(diagnoseBox);
 
-		// Children as an ARRAY: current LuCI's E() (DOM.create) reads only
-		// arguments[2], so variadic children are silently dropped — this
-		// used to render nothing but the page title.
-		return E('div', { 'class': 'cbi-map' }, [
+		return E('div', { 'class': 'cbi-map' },
 			E('h2', _('Diagnostics')),
 
-			E('div', { 'class': 'cbi-section' }, [
+			E('div', { 'class': 'cbi-section' },
 				E('div', { 'class': 'cbi-section-descr' },
 					_('Checks the whole chain — configuration, prerequisites, service, kernel state and network — and says what to do about anything it finds.')
 				),
@@ -361,9 +356,9 @@ return view.extend({
 					})
 				}, _('Check again')),
 				diagnoseBox
-			]),
+			),
 
-			E('div', { 'class': 'cbi-section' }, [
+			E('div', { 'class': 'cbi-section' },
 				E('h3', _('Check a domain')),
 				E('div', { 'class': 'cbi-section-descr' },
 					_('The tool to reach for when a particular site does not work: it says whether that domain goes through the tunnel, and why.')
@@ -376,9 +371,9 @@ return view.extend({
 					})
 				}, _('Check')),
 				domainBox
-			]),
+			),
 
-			E('div', { 'class': 'cbi-section' }, [
+			E('div', { 'class': 'cbi-section' },
 				E('h3', _('Ping the server')),
 				E('div', { 'class': 'cbi-section-descr' },
 					_('Loss and round-trip time for every configured address.')
@@ -390,9 +385,9 @@ return view.extend({
 					})
 				}, _('Ping')),
 				pingBox
-			]),
+			),
 
-			E('div', { 'class': 'cbi-section' }, [
+			E('div', { 'class': 'cbi-section' },
 				E('h3', _('Compare the external address')),
 				E('div', { 'class': 'cbi-section-descr' },
 					_('Shows the address seen through the tunnel next to the one seen directly. The same address in both means traffic is not using the tunnel.')
@@ -404,7 +399,7 @@ return view.extend({
 					})
 				}, _('Compare')),
 				probeBox
-			])
-		]);
+			)
+		);
 	}
 });
