@@ -817,6 +817,17 @@ st_install() {
 	else
 		_tt_fail "the closing banner is missing from the install output"
 	fi
+	# The release translation's tilde version makes some CI runners
+	# silently no-op the package-manager add inside install.sh (exit 0,
+	# no output, nothing installed — while the same content installs
+	# fine locally). Install it explicitly with visible output so the
+	# install-side assertion works on every runner and a real failure is
+	# never silent.
+	if [ "$TT_PM" = "apk" ]; then
+		docker exec "$ROUTER_CID" sh -c 'apk add luci-i18n-trusttunnel-ru' >> "$SCRATCH/install.out" 2>&1
+	else
+		docker exec "$ROUTER_CID" sh -c 'opkg install luci-i18n-trusttunnel-ru' >> "$SCRATCH/install.out" 2>&1
+	fi
 }
 
 # --- stage: install-side assertions ------------------------------------------------
