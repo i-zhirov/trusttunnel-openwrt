@@ -43,7 +43,7 @@ for _ver in $TT_SDK_VERSION; do
 		-v "$PWD/dist:/artifacts" \
 		-v "$HOME/.tt-sdk-dl:/builder/dl" \
 		-e FEEDNAME=ttowrt \
-		-e PACKAGES="luci-app-trusttunnel trusttunnel-client" \
+		-e PACKAGES="luci-app-trusttunnel luci-i18n-trusttunnel-ru trusttunnel-client" \
 		-e TT_SDK_NJOBS="$TT_SDK_NJOBS" \
 		"$_img" sh -c '
 			set -e
