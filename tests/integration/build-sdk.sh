@@ -60,8 +60,11 @@ for _ver in $TT_SDK_VERSION; do
 			for PKG in luci-app-trusttunnel luci-i18n-trusttunnel-ru trusttunnel-client; do
 				echo "== install $PKG"
 				./scripts/feeds install -p ttowrt -f "$PKG"
-				echo "== download $PKG"
-				make "package/$PKG/download" >/dev/null 2>&1
+				# The translation package has no source of its own, so its
+				# download target does not exist; the packages WITH sources
+				# fail the compile below anyway, so a missing download is
+				# tolerated here.
+				make "package/$PKG/download" >/dev/null 2>&1 || true
 				echo "== compile $PKG"
 				make -j"$TT_SDK_NJOBS" "package/$PKG/compile"
 			done
