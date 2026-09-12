@@ -232,7 +232,11 @@ return view.extend({
 		o.value('1.1.1.1:53', 'Cloudflare — ' + _('plain DNS'));
 		o.value('9.9.9.9:53', 'Quad9 — ' + _('plain DNS'));
 
-		s = m.section(form.Section, 'routing_profile', _('Routing profiles'));
+		// Current LuCI's form module exports TypedSection (type-bound
+		// anonymous sections) but no plain `Section` class — the old name
+		// made the whole view crash with "Class must be a descendant of
+		// CBIAbstractSection".
+		s = m.section(form.TypedSection, 'routing_profile', _('Routing profiles'));
 		s.addremove = true;
 		s.anonymous = true;
 		s.sortable = true;
