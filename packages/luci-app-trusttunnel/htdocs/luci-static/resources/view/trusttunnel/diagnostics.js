@@ -237,22 +237,22 @@ var handleCheckDomain = function (input, container) {
 		var tunnel = res.verdict && res.verdict.indexOf('tunnel') === 0;
 
 		dom.content(container, E('table', { 'class': 'cbi-section-table' }, [
-			E('tr', { 'class': 'cbi-section-table-row' },
+			E('tr', { 'class': 'cbi-section-table-row' }, [
 				E('td', { 'class': 'cbi-section-table-cell' }, _('Normalized')),
 				E('td', { 'class': 'cbi-section-table-cell' }, E('code', res.normalized))
-			),
-			E('tr', { 'class': 'cbi-section-table-row' },
+			]),
+			E('tr', { 'class': 'cbi-section-table-row' }, [
 				E('td', { 'class': 'cbi-section-table-cell' }, _('Verdict')),
 				E('td', { 'class': 'cbi-section-table-cell' },
 					E('span', { 'style': 'font-weight:bold; color:' + (tunnel ? '#2e7d32' : '#c62828') + ';' },
 						tunnel ? _('through the tunnel') : _('direct')
 					)
 				)
-			),
-			E('tr', { 'class': 'cbi-section-table-row' },
+			]),
+			E('tr', { 'class': 'cbi-section-table-row' }, [
 				E('td', { 'class': 'cbi-section-table-cell' }, _('Why')),
 				E('td', { 'class': 'cbi-section-table-cell' }, res.reason)
-			)
+			])
 		]));
 	}).catch(function (err) {
 		dom.content(container, E('p', err.message || String(err)));
@@ -303,14 +303,14 @@ var handleProbe = function (container) {
 		};
 
 		dom.content(container, E('table', { 'class': 'cbi-section-table' }, [
-			E('tr', { 'class': 'cbi-section-table-row' },
+			E('tr', { 'class': 'cbi-section-table-row' }, [
 				E('td', { 'class': 'cbi-section-table-cell' }, _('Through the tunnel')),
 				E('td', { 'class': 'cbi-section-table-cell' }, cell(res.tunnel))
-			),
-			E('tr', { 'class': 'cbi-section-table-row' },
+			]),
+			E('tr', { 'class': 'cbi-section-table-row' }, [
 				E('td', { 'class': 'cbi-section-table-cell' }, _('Directly')),
 				E('td', { 'class': 'cbi-section-table-cell' }, cell(res.direct))
-			)
+			])
 		]));
 	}).catch(function (err) {
 		dom.content(container, E('p', err.message || String(err)));
