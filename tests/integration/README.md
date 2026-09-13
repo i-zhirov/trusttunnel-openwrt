@@ -143,6 +143,15 @@ artifacts are consumed directly.
   retry; install.sh is safe to rerun (its repository setup is
   idempotent, which the lifecycle stage asserts), so one retry absorbs
   the transient download failures.
+- **Every other network request is retried too.** The lab net is
+  hermetic but not lossless: an fw4 reload can drop a single inbound
+  reply, which busybox wget reports as "Operation not permitted" and
+  curl as an empty body. The `retry`/`retry_out` helpers wrap the
+  lifecycle reinstall, the traffic probes (whose response body IS the
+  assertion value — `retry_out` prints the last attempt's body when all
+  attempts fail, so the assert still reports what was actually seen),
+  and the external downloads (GitHub release assets, the endpoint
+  binary, ipkg-make-index.sh).
 - **On the apk path the uci-defaults script is consumed by the package
   manager.** apk runs `/etc/uci-defaults/*` right after placing them and
   removes them; install.sh's immediate run is the fallback that only

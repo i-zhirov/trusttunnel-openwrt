@@ -154,6 +154,52 @@ stage() {
 	esac
 }
 
+# retry <tries> <sleep> <cmd...> — run the command up to <tries> times,
+# sleeping <sleep> seconds between attempts, and succeed on the first
+# exit 0. The harness's network requests can fail transiently: busybox
+# wget does not retry, the router's fw4 can drop a single inbound reply
+# right after a reload (the known busybox "Operation not permitted"),
+# and the public GitHub/mirror fetches are outside the hermetic net —
+# so every such request is wrapped in a retry instead of failing the
+# run on one dropped packet.
+retry() {
+	_r_tries=$1
+	_r_sleep=$2
+	shift 2
+	_r_i=0
+	while [ "$_r_i" -lt "$_r_tries" ]; do
+		_r_i=$((_r_i + 1))
+		if "$@"; then
+			return 0
+		fi
+		[ "$_r_i" -lt "$_r_tries" ] && sleep "$_r_sleep"
+	done
+	return 1
+}
+
+# retry_out <tries> <sleep> <cmd...> — like retry, but the stdout of the
+# LAST attempt is printed: the traffic probes' response body IS the
+# assertion value, so the assert still reports what was actually seen
+# when every attempt failed (an empty body means the request never got a
+# reply, not that the probe silently succeeded).
+retry_out() {
+	_r_tries=$1
+	_r_sleep=$2
+	shift 2
+	_r_file="$SCRATCH/retry.out"
+	_r_i=0
+	while [ "$_r_i" -lt "$_r_tries" ]; do
+		_r_i=$((_r_i + 1))
+		if "$@" > "$_r_file" 2>/dev/null; then
+			cat "$_r_file"
+			return 0
+		fi
+		[ "$_r_i" -lt "$_r_tries" ] && sleep "$_r_sleep"
+	done
+	cat "$_r_file"
+	return 1
+}
+
 teardown() {
 	[ -n "${ROUTER_CID:-}" ] && docker rm -f "$ROUTER_CID" >/dev/null 2>&1
 	[ -n "${REPO_CID:-}" ] && docker rm -f "$REPO_CID" >/dev/null 2>&1
@@ -304,7 +350,7 @@ st_pkgs() {
 		_api="https://api.github.com/repos/i-zhirov/trusttunnel-openwrt/releases/latest"
 		[ "$TT_RELEASE_TAG" = "latest" ] || \
 			_api="https://api.github.com/repos/i-zhirov/trusttunnel-openwrt/releases/tags/$TT_RELEASE_TAG"
-		_json=$(curl -fsSL "$_api" 2>/dev/null) || _json=""
+		_json=$(retry_out 3 5 curl -fsSL "$_api" 2>/dev/null) || _json=""
 		if [ -z "$_json" ]; then
 			_tt_fail "could not fetch the release info from $_api"
 			return
@@ -319,9 +365,11 @@ for a in r.get("assets", []):
 ' "$PM_RELEASE_GLOBS") || _names=""
 		_missing=0
 		for _name in $_names; do
-			curl -fsSL -o "$SCRATCH/pkgs/$_name" \
-				"https://github.com/i-zhirov/trusttunnel-openwrt/releases/download/$_tag/$_name" \
-				>/dev/null 2>&1 || _missing=$((_missing + 1))
+			if ! retry 3 5 curl -fsSL -o "$SCRATCH/pkgs/$_name" \
+					"https://github.com/i-zhirov/trusttunnel-openwrt/releases/download/$_tag/$_name" \
+					>/dev/null 2>&1; then
+				_missing=$((_missing + 1))
+			fi
 		done
 		if [ "$_missing" -eq 0 ] && verify_pkgs; then
 			_tt_pass "release $_tag: packages downloaded"
@@ -394,8 +442,9 @@ assemble_opkg_repo() {
 	fi
 	cp "$SCRATCH/sign/opkg.pub" "$SCRATCH/repo/opkg/opkg-key.pub"
 	# The canonical index generator, fetched at run time — the same source
-	# release.yml uses.
-	if ! curl -fsSL -o "$SCRATCH/ipkg-make-index.sh" \
+	# release.yml uses. The fetch is outside the hermetic net (raw.
+	# githubusercontent.com), so it gets the download retry.
+	if ! retry 3 5 curl -fsSL -o "$SCRATCH/ipkg-make-index.sh" \
 			https://raw.githubusercontent.com/openwrt/openwrt/openwrt-22.03/scripts/ipkg-make-index.sh; then
 		_tt_fail "could not fetch ipkg-make-index.sh"
 		return 1
@@ -621,7 +670,7 @@ st_endpoint() {
 	mkdir -p "$_srv"
 	_tb="trusttunnel-v${TT_SERVER_VERSION#v}-linux-x86_64.tar.gz"
 	if [ ! -f "$_srv/endpoint.bin" ]; then
-		if ! curl -fsSL -o "$_srv/$_tb" \
+		if ! retry 3 5 curl -fsSL -o "$_srv/$_tb" \
 				"https://github.com/TrustTunnel/TrustTunnel/releases/download/$TT_SERVER_VERSION/$_tb"; then
 			_tt_fail "could not download the endpoint release $TT_SERVER_VERSION"
 			return
@@ -1020,7 +1069,7 @@ st_traffic() {
 
 	# A11: traffic to the lab target flows through the tunnel — the target
 	# observes the ENDPOINT's address as the source.
-	_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" \
 		"traffic to the lab target arrives with the endpoint's source address"
 
@@ -1028,7 +1077,7 @@ st_traffic() {
 	# the ROUTER's own address (the source the main table picks for it).
 	_src=$(docker exec "$ROUTER_CID" \
 		sh -c "ip route get $DIRECT_IP 2>/dev/null | grep -o 'src [0-9.]*' | awk '{print \$2}' | head -1" 2>/dev/null)
-	_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$DIRECT_IP:8080/" 2>/dev/null)
+	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$DIRECT_IP:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$_src" "$_got" \
 		"traffic to the private target stays direct (source: the router itself)"
 }
@@ -1092,12 +1141,12 @@ st_lifecycle() {
 	# Nothing is marked after a clean stop: both targets observe the
 	# router's own address (no tunnel, no blackhole, no leak into the
 	# tunnel path).
-	_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$IP_ROUTER" "$_got" \
 		"a stopped service sends the lab target direct"
 	_src=$(docker exec "$ROUTER_CID" \
 		sh -c "ip route get $DIRECT_IP 2>/dev/null | grep -o 'src [0-9.]*' | awk '{print \$2}' | head -1" 2>/dev/null)
-	_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$DIRECT_IP:8080/" 2>/dev/null)
+	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$DIRECT_IP:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$_src" "$_got" "a stopped service keeps the private path direct"
 	if docker exec "$ROUTER_CID" /etc/init.d/trusttunnel start >/dev/null 2>&1; then
 		_tt_pass "the service starts again"
@@ -1105,7 +1154,7 @@ st_lifecycle() {
 		_tt_fail "the service does not start again"
 	fi
 	wait_tunnel "the restart brings the tunnel back"
-	_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" "the restored tunnel carries traffic again"
 
 	# --- A15: idempotence ----------------------------------------------------
@@ -1132,10 +1181,13 @@ st_lifecycle() {
 	assert_eq "1" "$_n" "the Default routing profile is not duplicated"
 	# install.sh rerun: exit 0 and no duplicated repository entry (the
 	# reinstalled service brings the tunnel back — install.sh restarts a
-	# running service on purpose).
-	docker exec -e TT_REPO_URL="http://$IP_REPO:8080" "$ROUTER_CID" \
-		sh /src/install.sh > "$SCRATCH/reinstall.out" 2>&1
-	assert_eq "0" "$?" "install.sh rerun exits 0"
+	# running service on purpose). The rerun downloads from the same
+	# served repository, so it gets the same transient-failure retry as
+	# the first install.
+	_rc=0
+	retry 2 5 docker exec -e TT_REPO_URL="http://$IP_REPO:8080" "$ROUTER_CID" \
+		sh /src/install.sh > "$SCRATCH/reinstall.out" 2>&1 || _rc=$?
+	assert_eq "0" "$_rc" "install.sh rerun exits 0"
 	if [ "$TT_PM" = "apk" ]; then
 		_n=$(docker exec "$ROUTER_CID" sh -c 'grep -c . /etc/apk/repositories.d/trusttunnel.list 2>/dev/null' 2>/dev/null)
 		assert_eq "1" "$_n" "the apk repository entry is not duplicated"
@@ -1159,7 +1211,7 @@ st_lifecycle() {
 	docker exec "$ROUTER_CID" /etc/init.d/trusttunnel reload >/dev/null 2>&1
 	_log=$(docker exec "$ROUTER_CID" sh -c 'logread | grep "nothing to do" | tail -1' 2>/dev/null)
 	assert_contains "$_log" "nothing to do" "an unchanged reload is a noop"
-	_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" "the tunnel survives the noop reload"
 
 	# --- A16: the endpoint saw the tunneled CONNECTs --------------------------
