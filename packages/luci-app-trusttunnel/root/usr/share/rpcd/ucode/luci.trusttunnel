@@ -220,6 +220,54 @@ return {
 			}
 		},
 
+		// What is installed, for the Versions tab on the Settings page.
+		// The package versions come from the package manager (apk on
+		// 25.12+, opkg on 22.03-24.10; the other command does not exist
+		// there), the client binary version from the binary itself. A
+		// package that is not installed (or a missing binary) reports
+		// null, never an error. Nothing here touches the network.
+		versions: {
+			args: { },
+			call: function() {
+				let res = { package: null, client_package: null, client: null };
+
+				let apk = sh_out('apk list -I luci-app-trusttunnel');
+				if (apk.code == 0) {
+					let m = match(apk.out, /luci-app-trusttunnel-([^ \t\n]+)/);
+					if (m)
+						res.package = m[1];
+				}
+				if (res.package == null) {
+					let opkg = sh_out('opkg info luci-app-trusttunnel');
+					let m = match(opkg.out, /Version: ([^ \t\n]+)/);
+					if (m)
+						res.package = m[1];
+				}
+
+				apk = sh_out('apk list -I trusttunnel-client');
+				if (apk.code == 0) {
+					let m = match(apk.out, /trusttunnel-client-([^ \t\n]+)/);
+					if (m)
+						res.client_package = m[1];
+				}
+				if (res.client_package == null) {
+					let opkg = sh_out('opkg info trusttunnel-client');
+					let m = match(opkg.out, /Version: ([^ \t\n]+)/);
+					if (m)
+						res.client_package = m[1];
+				}
+
+				let cv = sh_out(CLIENT + ' --version');
+				if (cv.code == 0) {
+					let m = match(cv.out, /[0-9]+\.[0-9]+\.[0-9]+[^ \t\n]*/);
+					if (m)
+						res.client = m[0];
+				}
+
+				return res;
+			}
+		},
+
 		service: {
 			args: { action: 'restart' },
 			call: function(req) {
@@ -380,9 +428,11 @@ return {
 			call: function() {
 				let rec = records();
 				let rs = routing_status();
-				// The routing checks report "absent" only while the config
-				// is applied; without the records file they are skipped.
-				let applied = access(RECORDS) != null;
+				// The routing checks report "absent" as a failure only while
+				// the service is running; when it is stopped or mid-restart
+				// the state is expected to be missing (the routing is torn
+				// down on stop), so the checks are skipped and the Running
+				// check carries the verdict.
 				let checks = [];
 
 				let host = first(rec, 'endpoint.hostname', '');
@@ -500,25 +550,26 @@ return {
 				if (rs.rule)
 					push(checks, check('kernel', 'Routing rule', 'ok', 'present', ''));
 				else
-					push(checks, check('kernel', 'Routing rule', applied ? 'fail' : 'skip', 'absent', ''));
+					push(checks, check('kernel', 'Routing rule', running ? 'fail' : 'skip', 'absent', ''));
 
 				if (rs.table)
 					push(checks, check('kernel', 'Routing table', 'ok', 'present', ''));
 				else
-					push(checks, check('kernel', 'Routing table', applied ? 'fail' : 'skip', 'absent', ''));
+					push(checks, check('kernel', 'Routing table', running ? 'fail' : 'skip', 'absent', ''));
 
 				if (rs.nft)
 					push(checks, check('kernel', 'nftables table', 'ok', 'present', ''));
 				else
-					push(checks, check('kernel', 'nftables table', applied ? 'fail' : 'skip', 'absent', ''));
+					push(checks, check('kernel', 'nftables table', running ? 'fail' : 'skip', 'absent', ''));
 
 				// The package's own `table inet trusttunnel` always matches
 				// a plain 'trusttunnel' grep, so the check must look for
-				// the fw4 zone's own naming: fw4 builds a
-				// zone_trusttunnel_* chain per zone. Anything else means
-				// the fw4 zone is missing.
+				// the fw4 zone's own naming: fw4 emits an input_, output_
+				// and forward_ chain per zone (srcnat_/dstnat_ only with
+				// the NAT flags). Anything else means the fw4 zone is
+				// missing.
 				let fw = sh_out('nft list ruleset');
-				if (index(fw.out, 'zone_trusttunnel') >= 0)
+				if (index(fw.out, 'forward_trusttunnel') >= 0)
 					push(checks, check('kernel', 'Firewall zone', 'ok', 'loaded in fw4', ''));
 				else
 					push(checks, check('kernel', 'Firewall zone', 'warn', 'not in the live ruleset',
