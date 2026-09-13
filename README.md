@@ -53,6 +53,23 @@ affected.
   `powerpc` — is refused before a single file is changed.
 - **Internet access from the router**: needed once at install time.
 
+## Testing and feedback
+
+The package is actively tested on **x86_64** (mini-PCs, virtual machines,
+x86 gateways) and **mips** (ath79/ramips boards) routers. The remaining
+vendor-supported families (`aarch64`, `armv7l`/`armv8l`, `mipsel`) are
+covered by the release pipeline's per-architecture builds, but have seen
+less hands-on verification on real devices — reports from those platforms
+are especially valuable.
+
+Usage reports, bug reports and pull requests are welcome: open an
+[issue](https://github.com/i-zhirov/trusttunnel-openwrt/issues) for
+anything that does not behave, and
+[pull requests](https://github.com/i-zhirov/trusttunnel-openwrt/pulls)
+for fixes and improvements. When reporting a problem on a platform other
+than x86_64/mips, mention the router model and the OpenWrt release —
+device-specific quirks usually reproduce only with that context.
+
 ## Installation
 
 Run the installer:
@@ -94,25 +111,31 @@ refresh the signing keys; `/etc/config/trusttunnel` is left alone.
 Open **Services → TrustTunnel → Settings** in LuCI. The page has four
 tabs:
 
-- **Server**: the endpoint the client dials. The **Import…** button takes
-  what your server produces — the text of a config file, or a `tt://` link —
-  and populates each endpoint field the server is able to fill: addresses,
+- **General**: a read-only service line, the service switch ("start on
+  boot") — the service runs only while it is on — the log level, and the
+  routing-profile selector that assigns the profile to the server. After
+  Save & Apply, start the service with the Start button on the Status
+  page.
+- **Server**: the endpoint the client dials, split into **Connection**
+  and **Security** inner tabs. The **Import…** button takes what your
+  server produces — the text of a config file, or a `tt://` link — and
+  populates each endpoint field the server is able to fill: addresses,
   the TLS host name, credentials, the transport, `custom_sni`,
   `client_random`, plus anti-DPI, IPv6 and certificate-verification
-  switches, and the DNS upstreams. Everything can also be typed by hand.
+  switches. Everything can also be typed by hand, and a **Test
+  connection** button pings every configured address.
 - **Routing profiles**: the Default profile (VPN mode) is already seeded
-  here. Every profile gets a mode — **VPN** (everything is tunneled except
-  the bypass-list entries) or **Bypass** (only the VPN-list entries are
-  tunneled) — and two rule lists whose entries accept a domain, a `*.domain`
-  wildcard, an IP address, an `IP:port` pair or a CIDR range. The profile is
-  assigned to the server with the routing-profile selector on the Server
-  tab.
-- **General**: the service switch ("start on boot") — the service runs
-  only while it is on — and the log level. After Save & Apply, start the
-  service with the Start button on the Status page.
-- **Network**: rarely needed — the MTU and the internal routing parameters
-  (firewall mark, routing table, LAN interfaces, the blackhole switch,
-  router-traffic routing).
+  here. Every profile gets a mode — **VPN** (everything is tunneled
+  except the bypass-list entries) or **Bypass** (only the VPN-list
+  entries are tunneled) — and two rule lists whose entries accept a
+  domain, a `*.domain` wildcard, an IP address, an `IP:port` pair or a
+  CIDR range. A **Rule preview** button shows how each entry of the
+  profile is treated; the profile is assigned to the server with the
+  selector on the General tab.
+- **Advanced**: rarely needed — the MTU, the LAN interfaces, the
+  blackhole switch, router-traffic routing, the client's own DNS
+  upstreams, and the internal routing parameters (firewall mark,
+  routing table).
 
 The same configuration headless, over UCI:
 
@@ -442,9 +465,6 @@ reintroduction — see its README for the steps.
 
 ## Notes and caveats
 
-- **Update check.** How the Status page's version check works is
-  described under [Diagnostics](#diagnostics). The same releases also
-  host the installable files.
 - **Firewall zone.** Because the zone binds the `tun+` wildcard, tun
   devices created by other software fall under it too.
 - **Repositories and signing.** Both repositories are served from the
@@ -462,6 +482,9 @@ reintroduction — see its README for the steps.
 
 - [`NooBiToo/TrustTunnelOpenWrt`](https://github.com/NooBiToo/TrustTunnelOpenWrt)
   — the upstream LuCI package that inspired this implementation
+- [`iamvladdy/trusttunnel-openwrt`](https://github.com/iamvladdy/trusttunnel-openwrt)
+  — an independent netifd-based implementation that pairs the client with
+  [podkop](https://podkop.net) for selective routing
 - [`TrustTunnel/TrustTunnel`](https://github.com/TrustTunnel/TrustTunnel)
   — the server component (Apache-2.0)
 - [`TrustTunnel/TrustTunnelClient`](https://github.com/TrustTunnel/TrustTunnelClient)
