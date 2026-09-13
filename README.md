@@ -1,4 +1,4 @@
-# trusttunnel-openwrt
+# TrustTunnel distribution for OpenWrt
 
 TrustTunnel client daemon for OpenWrt routers: it runs the tunnel, exposes
 a LuCI control page and delivers the tunnel to the LAN. It targets OpenWrt
