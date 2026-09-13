@@ -321,7 +321,13 @@ absent, so the plain suite runs anywhere.
   and traffic contracts (through-tunnel traffic arrives with the
   endpoint's source address, private traffic stays direct, the blackhole
   killswitch swallows marked traffic, install/uci-defaults/reload are
-  idempotent). Knobs: `TT_PM=apk|opkg`, `TT_REPO_DIR`, `TT_FILTER`,
+  idempotent). An early pure-shell `archparse` stage pins the ipk
+  arch/version derivation (`tests/integration/ipk-arch.sh`, shared with
+  release.yml's opkg assembly) against every matrix arch-name shape — a
+  last-underscore split once clipped `mipsel_24kc` to `24kc`, and the
+  harness's opkg repo assembly derives its feed directory from the real
+  artifact, so the regression fails the install assertions too. Knobs:
+  `TT_PM=apk|opkg`, `TT_REPO_DIR`, `TT_FILTER`,
   `TT_LOGS_DIR`, `TT_RELEASE_TAG` — see `tests/integration/README.md`.
   Docker-gated (skip 77), deliberately NOT picked up by `tests/run.sh`;
   `integration.yml` runs it on PRs/main/dispatch, and the release
@@ -472,7 +478,11 @@ Triggered by `v*` tag pushes (also builds a GitHub release) and
     `usign -S` with `secrets.TT_OPKG_SIGN_KEY`; the signature covers the
     UNCOMPRESSED `Packages`). The two-empty-line padding works around
     usign's SHA-512 size bug — keep it. The feeds index the prior ipks
-    too (same client version filter).
+    too (same client version filter). The arch/version derivation from
+    the ipk file names is shared with the integration harness
+    (`tests/integration/ipk-arch.sh`, sourced by both) and pinned by the
+    harness's `archparse` stage — the arch names contain underscores, and
+    a last-underscore split once clipped `mipsel_24kc` to `24kc`.
   - verification: installs the built repos into fresh rootfs containers
     exactly as `install.sh` sets them up (25.12.0 apk; 23.05.6 and 24.10.8
     opkg) and runs the client `--version`.

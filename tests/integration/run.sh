@@ -6,36 +6,40 @@
 #
 # What it does, end to end:
 #   1. preflight  — docker and /dev/net/tun availability;
-#   2. packages   — the luci-app and client packages for the chosen
+#   2. archparse  — regression: the ipk arch/version derivation shared
+#      with release.yml (ipk-arch.sh) must return every matrix arch-name
+#      shape intact (a last-underscore split once clipped mipsel_24kc to
+#      "24kc");
+#   3. packages   — the luci-app and client packages for the chosen
 #      package manager, from TT_REPO_DIR (CI artifact layout) or, by
 #      default, from the project's GitHub release;
-#   3. repo       — assembles and signs a hermetic repository with a FRESH
+#   4. repo       — assembles and signs a hermetic repository with a FRESH
 #      keypair per run (apk: EC P-256 + mkndx/adbsign in the pinned alpine
 #      image; opkg: usign + ipkg-make-index.sh, exactly the release.yml
 #      recipe), then serves it from a python http.server container on the
 #      lab network;
-#   4. router     — boots an openwrt/rootfs container with /sbin/init and
+#   5. router     — boots an openwrt/rootfs container with /sbin/init and
 #      configures its network with the router's own tools (uci import +
 #      /etc/init.d/network restart);
-#   5. endpoint   — runs the pinned TrustTunnel endpoint release (static
+#   6. endpoint   — runs the pinned TrustTunnel endpoint release (static
 #      binary, self-signed certificate for tt.test) in a sibling container
 #      on the lab network;
-#   6. targets    — two REMOTE_ADDR oracle servers: one on the lab network
+#   7. targets    — two REMOTE_ADDR oracle servers: one on the lab network
 #      (reached through the tunnel), one on the docker default bridge
 #      (private range, always direct);
-#   7. install    — runs the repository's install.sh with TT_REPO_URL
+#   8. install    — runs the repository's install.sh with TT_REPO_URL
 #      pointing at the served repo;
-#   8. asserts    — the install-side contract: exit 0, packages installed,
+#   9. asserts    — the install-side contract: exit 0, packages installed,
 #      client binary runs, config seeded, firewall zone created, service
 #      registered but not started, repository entry configured;
-#   9. connect    — configures the endpoint via uci (hostname, address,
+#  10. connect    — configures the endpoint via uci (hostname, address,
 #      credentials, the PINNED certificate), enables and starts the
 #      service, waits for the tunnel;
-#  10. traffic    — the tunnel contract: service running, tun device and
+#  11. traffic    — the tunnel contract: service running, tun device and
 #      routing state up, client log connected, client.toml carries the
 #      pin, traffic to the lab target arrives with the ENDPOINT's source
 #      address, traffic to the private target stays direct;
-#  11. lifecycle  — killswitch and lifecycle contract: the blackhole
+#  12. lifecycle  — killswitch and lifecycle contract: the blackhole
 #      swallows marked traffic when the attached route is gone, a clean
 #      stop tears the routing down and a start restores it, install.sh /
 #      uci-defaults / reload are idempotent, and the endpoint log shows
@@ -124,6 +128,15 @@ mkdir -p "$TT_TEST_TMP" "$SCRATCH/pkgs" "$SCRATCH/sign" "$SCRATCH/repo"
 
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../lib.sh"
+
+# The ipk arch/version derivation is shared with release.yml's opkg
+# repository assembly (the st_archparse stage pins it as a regression
+# test, so the pipeline and its test cannot drift apart). The loader
+# marker is required: zsh sets $0 to the sourced file's own name, which
+# would otherwise trigger ipk-arch.sh's CLI inside this harness.
+TT_IPK_ARCH_SOURCED=1
+# shellcheck disable=SC1091
+. "$(dirname "$0")/ipk-arch.sh"
 
 NET="ttit-$TT_PM-$SUFFIX"
 REPO_CID="ttit-repo-$SUFFIX"
@@ -280,6 +293,60 @@ st_preflight() {
 	fi
 }
 
+# --- stage: archparse -------------------------------------------------------------
+
+# Regression test for the release pipeline's per-arch opkg repository
+# assembly: the arch (and the <ver>-<rel> filter key) are derived from
+# the trusttunnel-client ipk file names
+# (trusttunnel-client_<ver>-<rel>_<arch>.ipk) by the shared
+# ipk-arch.sh. A first implementation split at the LAST underscore,
+# clipping arch names that contain underscores themselves — mipsel_24kc
+# became "24kc", x86_64 became "64", and the pipeline silently produced
+# feed directories no device would ever fetch (the release-time install
+# verification caught it; the harness's own repo assembly uses fixed
+# paths and could not). The cases below cover every arch-name shape the
+# build matrix ships: no underscore, one underscore, and nested
+# underscores — the shapes the last-underscore split destroyed.
+st_archparse() {
+	stage archparse || return
+	echo "== ipk arch derivation regression"
+	# file-name|expected-arch|expected-verrev, one case per line. The
+	# <ver>-<rel> must never carry an arch fragment either: the version
+	# filter would then skip same-version prior packages of other archs.
+	_cases="trusttunnel-client_1.0.49-1_x86_64.ipk|x86_64|1.0.49-1
+trusttunnel-client_1.0.49-1_aarch64_generic.ipk|aarch64_generic|1.0.49-1
+trusttunnel-client_1.0.49-1_aarch64_cortex-a53.ipk|aarch64_cortex-a53|1.0.49-1
+trusttunnel-client_1.0.49-1_aarch64_cortex-a72.ipk|aarch64_cortex-a72|1.0.49-1
+trusttunnel-client_1.0.49-1_arm_cortex-a5_vfpv4.ipk|arm_cortex-a5_vfpv4|1.0.49-1
+trusttunnel-client_1.0.49-1_arm_cortex-a7_neon-vfpv4.ipk|arm_cortex-a7_neon-vfpv4|1.0.49-1
+trusttunnel-client_1.0.49-1_arm_cortex-a9.ipk|arm_cortex-a9|1.0.49-1
+trusttunnel-client_1.0.49-1_arm_cortex-a15_neon-vfpv4.ipk|arm_cortex-a15_neon-vfpv4|1.0.49-1
+trusttunnel-client_1.0.49-1_mips_24kc.ipk|mips_24kc|1.0.49-1
+trusttunnel-client_1.0.49-1_mips_mips32.ipk|mips_mips32|1.0.49-1
+trusttunnel-client_1.0.49-1_mipsel_24kc.ipk|mipsel_24kc|1.0.49-1
+trusttunnel-client_1.0.49-1_mipsel_24kc_24kf.ipk|mipsel_24kc_24kf|1.0.49-1
+trusttunnel-client_1.0.49-1_mipsel_74kc.ipk|mipsel_74kc|1.0.49-1
+trusttunnel-client_1.0.49-1_mipsel_mips32.ipk|mipsel_mips32|1.0.49-1"
+	for _case in $_cases; do
+		_file="${_case%%|*}"
+		_rest="${_case#*|}"
+		_arch_expect="${_rest%%|*}"
+		_verrev_expect="${_rest#*|}"
+		_got_arch=$(tt_ipk_arch "$_file")
+		_got_verrev=$(tt_ipk_verrev "$_file")
+		if [ "$_got_arch" = "$_arch_expect" ]; then
+			_tt_pass "$_file -> arch $_got_arch"
+		else
+			_tt_fail "$_file -> arch $_got_arch (expected $_arch_expect)"
+		fi
+		if [ "$_got_verrev" = "$_verrev_expect" ]; then
+			_tt_pass "$_file -> verrev $_got_verrev"
+		else
+			_tt_fail "$_file -> verrev $_got_verrev (expected $_verrev_expect)"
+		fi
+	done
+}
+
 # --- stage: packages ------------------------------------------------------------
 
 # collect_pkgs <dir> — copies the packages matching the PM globs into the
@@ -434,9 +501,19 @@ assemble_apk_repo() {
 }
 
 assemble_opkg_repo() {
-	# The feed directory mirrors the official layout the release pipeline
-	# serves: releases/22.03.7/packages/x86_64/trusttunnel/.
-	_dir="$SCRATCH/repo/releases/22.03.7/packages/x86_64/trusttunnel"
+	# The client ipk is placed into its arch's feed directory, deriving
+	# the arch from the file name exactly like release.yml does (the
+	# shared ipk-arch.sh; the archparse stage pins the derivation) — the
+	# assembly below exercises that code on the run's actual artifact,
+	# so a regression lands the client in a wrong-arch directory and the
+	# install assertions fail. The noarch LuCI app shares the directory.
+	_client="$(find "$SCRATCH/pkgs" -maxdepth 1 -name "trusttunnel-client_*.ipk" -print -quit)"
+	if [ -z "$_client" ]; then
+		_tt_fail "no trusttunnel-client ipk to assemble"
+		return 1
+	fi
+	_arch=$(tt_ipk_arch "$_client")
+	_dir="$SCRATCH/repo/releases/22.03.7/packages/$_arch/trusttunnel"
 	mkdir -p "$_dir"
 	cp "$SCRATCH/pkgs"/*.ipk "$_dir/"
 	# usign keypair: usign lives in the opkg router image.
@@ -461,15 +538,17 @@ EOF
 	chmod +x "$SCRATCH/mkhash.sh"
 	# The generator needs bash and GNU stat/sha256sum, so it runs inside
 	# the pinned alpine image (bash added there) — the macOS host bash and
-	# BSD stat cannot run it.
+	# BSD stat cannot run it. The scratch is mounted at /w, so the feed
+	# dir's in-container path is $_dir with the scratch prefix replaced.
+	_wdir="/w/${_dir#"$SCRATCH/"}"
 	if ! docker run --rm -v "$SCRATCH:/w" "$IMG_ALPINE" sh -c '
 			set -e
 			apk add -q bash >/dev/null 2>&1
-			cd /w/repo/releases/22.03.7/packages/x86_64/trusttunnel
+			cd "$1"
 			MKHASH=/w/mkhash.sh bash /w/ipkg-make-index.sh . > Packages.manifest 2>/dev/null
 			grep -vE "^(Maintainer|LicenseFiles|Source|SourceName|Require|SourceDateEpoch)" Packages.manifest > Packages
 			rm -f Packages.manifest
-		'; then
+		' sh "$_wdir"; then
 		_tt_fail "opkg index generation failed"
 		return 1
 	fi
@@ -1240,6 +1319,7 @@ st_lifecycle() {
 # --- main -------------------------------------------------------------------------
 
 st_preflight
+st_archparse
 st_pkgs
 st_repo
 st_serve

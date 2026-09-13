@@ -756,42 +756,37 @@ jobs:
         env:
           SIGN_KEY: ${{ secrets.TT_OPKG_SIGN_KEY }}
         run: |
+          # The arch/version derivation from the ipk file names lives in
+          # tests/integration/ipk-arch.sh, shared with the integration
+          # harness's regression stage — the pipeline and its test cannot
+          # drift apart. (The arch names contain underscores: splitting
+          # at the wrong one clipped mipsel_24kc to "24kc" once and
+          # silently produced feed directories no device would fetch.)
+          # The loader marker is required: zsh sets $0 to the sourced
+          # file's own name, which would otherwise trigger the script's
+          # CLI (and its exit) inside this step.
+          TT_IPK_ARCH_SOURCED=1
+          # shellcheck disable=SC1091
+          . tests/integration/ipk-arch.sh
           mkdir -p staging/releases/22.03.7/packages
-          cur_client="$(find staging/opkg-pkgs -maxdepth 1 -name "trusttunnel-client_*.ipk" -print -quit)"
-          cur_client="${cur_client##*/}"
-          cur_client="${cur_client#trusttunnel-client_}"
-          cur_client="${cur_client%%_*}"   # drop the _<arch>.ipk suffix
+          cur_client="$(tt_ipk_verrev "$(find staging/opkg-pkgs -maxdepth 1 -name "trusttunnel-client_*.ipk" -print -quit)")"
 
-          # The arch is everything after the <ver>-<rel>_ head of the
-          # file name (trusttunnel-client_<ver>-<rel>_<arch>.ipk): <ver>
-          # is dotted digits and <rel> is digits, so the first underscore
-          # after the package prefix splits the version from the arch —
-          # and the arch itself MUST keep its underscores (mipsel_24kc,
-          # aarch64_cortex-a53, arm_cortex-a7_neon-vfpv4, ...). A dir the
-          # current matrix no longer builds is created, so a dropped
-          # architecture keeps its prior packages.
+          # A dir the current matrix no longer builds is created, so a
+          # dropped architecture keeps its prior packages.
           for f in staging/prior-opkg/trusttunnel-client_[0-9]*.ipk; do
             [ -e "$f" ] || continue
-            verrev="${f##*/}"
-            verrev="${verrev#trusttunnel-client_}"
-            verrev="${verrev%%_*}"   # drop the _<arch>.ipk suffix
+            verrev="$(tt_ipk_verrev "$f")"
             if [ "$verrev" != "$cur_client" ]; then
               echo "skipping prior client $verrev (the current build ships $cur_client)"
               continue
             fi
-            arch="${f##*/}"
-            arch="${arch#trusttunnel-client_}"
-            arch="${arch#*_}"       # drop the <ver>-<rel> head
-            arch="${arch%.ipk}"
+            arch="$(tt_ipk_arch "$f")"
             mkdir -p "staging/releases/22.03.7/packages/$arch/trusttunnel"
             cp "$f" "staging/releases/22.03.7/packages/$arch/trusttunnel/"
           done
           for f in staging/opkg-pkgs/trusttunnel-client_*.ipk; do
             [ -e "$f" ] || continue
-            arch="${f##*/}"
-            arch="${arch#trusttunnel-client_}"
-            arch="${arch#*_}"       # drop the <ver>-<rel> head
-            arch="${arch%.ipk}"
+            arch="$(tt_ipk_arch "$f")"
             mkdir -p "staging/releases/22.03.7/packages/$arch/trusttunnel"
             cp "$f" "staging/releases/22.03.7/packages/$arch/trusttunnel/"
           done
