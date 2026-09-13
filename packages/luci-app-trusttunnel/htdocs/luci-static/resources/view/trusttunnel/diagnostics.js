@@ -179,6 +179,42 @@ var verdictBanner = function (res) {
 	]);
 };
 
+// The last diagnose result, kept so the report button can serialize it
+// without re-running the (slow) chain walk.
+var lastDiagnose = null;
+
+// Plain-text rendering of a diagnose result for pasting into a bug
+// report. Uses the translated labels, so the report reads like the page.
+var serializeDiagnose = function (res) {
+	var counts = res.counts || {};
+	var lines = [
+		_('Verdict: %s').format(verdictWord(res.verdict)),
+		_('checks passed: %d, remarks: %d, problems: %d, skipped: %d').format(counts.ok || 0, counts.warn || 0, counts.fail || 0, counts.skip || 0)
+	];
+	var order = [ 'config', 'prereq', 'service', 'kernel', 'network' ];
+
+	order.forEach(function (group) {
+		var groupLines = [];
+
+		(res.checks || []).forEach(function (check) {
+			if (check.group !== group)
+				return;
+
+			groupLines.push('[' + check.status + '] ' + dtr(check.label) +
+				(check.detail ? ' — ' + dtr(check.detail) : '') +
+				(check.hint ? ' — ' + dtr(check.hint) : ''));
+		});
+
+		if (groupLines.length) {
+			lines.push('');
+			lines.push(groupTitle[group] || group);
+			lines = lines.concat(groupLines);
+		}
+	});
+
+	return lines.join('\n');
+};
+
 var renderDiagnose = function (res) {
 	var problems = [];
 	var rest = [];
@@ -217,10 +253,31 @@ var handleDiagnose = function (container) {
 	dom.content(container, E('p', { 'class': 'spinning' }, _('Running checks — this takes a few seconds…')));
 
 	callDiagnose().then(function (res) {
+		lastDiagnose = res;
 		dom.content(container, renderDiagnose(res));
 	}).catch(function (err) {
 		dom.content(container, E('div', { 'class': 'alert-message danger' }, err.message || String(err)));
 	});
+};
+
+var handleCopyReport = function () {
+	if (!lastDiagnose)
+		return;
+
+	var ta = E('textarea', {
+		'readonly': 'readonly',
+		'rows': 16,
+		'style': 'width:100%',
+		'value': serializeDiagnose(lastDiagnose)
+	});
+
+	ui.showModal(_('Diagnostics report'), [
+		E('p', {}, _('Copy this text and attach it when reporting a problem.')),
+		ta,
+		E('div', { 'class': 'right' }, [
+			E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Close'))
+		])
+	]);
 };
 
 var handleCheckDomain = function (input, container) {
@@ -363,6 +420,13 @@ return view.extend({
 						handleDiagnose(diagnoseBox);
 					})
 				}, _('Check again')),
+				' ',
+				E('button', {
+					'class': 'cbi-button cbi-button-neutral',
+					'click': ui.createHandlerFn(this, function () {
+						handleCopyReport();
+					})
+				}, _('Copy report')),
 				diagnoseBox
 			]),
 
