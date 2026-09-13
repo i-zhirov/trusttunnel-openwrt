@@ -323,7 +323,11 @@ absent, so the plain suite runs anywhere.
   `TT_LOGS_DIR`, `TT_RELEASE_TAG` — see `tests/integration/README.md`.
   Docker-gated (skip 77), deliberately NOT picked up by `tests/run.sh`;
   `integration.yml` runs it on PRs/main/dispatch, and the release
-  pipeline reuses it against the release's own artifacts.
+  pipeline reuses it against the release's own artifacts. Every network
+  request in the docker harnesses is retried (transient registry/mirror/
+  lab-net failures must not fail a run): the `retry`/`retry_out` helpers
+  in `run.sh`, and the same shape in `build-sdk.sh`, `restricted-feeds.sh`,
+  `gui/run.sh` and `test_backend_contract.sh`.
 - `tests/integration/restricted-feeds.sh` — the SDK feed pins: prints the
   `EXTRA_FEEDS` value (base/packages/luci only — the routing/telephony/
   video clones are dead weight; the client build uses base only) and
@@ -486,14 +490,8 @@ package managers rely on. No branch ever holds packages.
   (CRLF in a script breaks `/bin/sh\r` on the router).
 - **Commits**: lowercase `area: description` style
   (`docs:`, `release:`, `fix:`, `cleanup:`, `backend:`, `service:`,
-  `tests:`, `makefile:`, `gen-config:`, …). The subject is a single
-  line, short (under 72 chars), imperative and without a trailing
-  period. One concern per commit — a subject that joins several
-  concerns (for example with a semicolon) signals a commit that must
-  be split. A body is optional; when present, wrap it at 72 chars,
-  explain what changed and why, and do not prefix paragraphs with
-  file names. Merged to `main` via PRs; feature work happens on
-  branches.
+  `tests:`, `makefile:`, `gen-config:`, …), one concern per commit,
+  merged to `main` via PRs. Feature work happens on branches.
 - **i18n**: the interface is English-only — no translation package is
   built or installed. New user-visible strings in views still use `_()`,
   and backend strings shown in the Diagnostics view go through the

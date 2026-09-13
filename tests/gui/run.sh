@@ -42,12 +42,46 @@ command -v node >/dev/null 2>&1 || { echo "  SKIP: node not available (needed fo
 command -v npm >/dev/null 2>&1 || { echo "  SKIP: npm not available"; exit 77; }
 command -v curl >/dev/null 2>&1 || { echo "  SKIP: curl not available"; exit 77; }
 
+# retry <tries> <sleep> <cmd...> — run the command up to <tries> times,
+# sleeping <sleep> seconds between attempts; succeed on the first exit 0.
+# The image pull, the luci-base fetch and npm ci all hit public
+# registries, where a transient failure must not skip or fail the gate
+# (the same policy as the integration harness).
+retry() {
+	_r_tries=$1
+	_r_sleep=$2
+	shift 2
+	_r_i=0
+	while [ "$_r_i" -lt "$_r_tries" ]; do
+		_r_i=$((_r_i + 1))
+		if "$@"; then
+			return 0
+		fi
+		[ "$_r_i" -lt "$_r_tries" ] && sleep "$_r_sleep"
+	done
+	return 1
+}
+
+# fetch_luci — one attempt at the pinned luci-base tarball: download to a
+# temp file first, then extract. A pipe would hide a mid-stream curl
+# failure inside tar's exit status.
+fetch_luci() {
+	curl -fsSL -o "$CACHE/luci.tar.gz" "$LUCI_URL" \
+		&& tar -xz -C "$CACHE" --strip-components=1 \
+			-f "$CACHE/luci.tar.gz" "luci-$LUCI_REF/modules/luci-base/htdocs"
+}
+
+# npm_ci — one npm ci attempt inside the gui directory.
+npm_ci() {
+	( cd "$HERE" && npm ci --no-audit --no-fund )
+}
+
 # The pinned Playwright image carries the browsers and their system
 # dependencies; pull it when missing so the suite runs on a fresh runner
 # (and locally on first use). Only an unreachable registry skips.
 if ! docker image inspect "$PLAYWRIGHT_IMAGE" >/dev/null 2>&1; then
 	echo "  pulling $PLAYWRIGHT_IMAGE ..."
-	if ! docker pull "$PLAYWRIGHT_IMAGE" >/dev/null 2>&1; then
+	if ! retry 3 5 docker pull "$PLAYWRIGHT_IMAGE" >/dev/null 2>&1; then
 		echo "  SKIP: could not pull $PLAYWRIGHT_IMAGE"
 		exit 77
 	fi
@@ -59,11 +93,11 @@ mkdir -p "$CACHE"
 if [ ! -f "$CACHE/.ref" ] || [ "$(cat "$CACHE/.ref")" != "$LUCI_REF" ]; then
 	echo "  fetching luci-base @ $LUCI_REF ..."
 	rm -rf "$CACHE/modules"
-	curl -fsSL "$LUCI_URL" | tar -xz -C "$CACHE" --strip-components=1 \
-		"luci-$LUCI_REF/modules/luci-base/htdocs" || {
+	if ! retry 3 5 fetch_luci; then
 		echo "  SKIP: could not fetch the pinned luci-base tarball"
 		exit 77
-	}
+	fi
+	rm -f "$CACHE/luci.tar.gz"
 	echo "$LUCI_REF" > "$CACHE/.ref"
 fi
 [ -f "$LUCI_HTDOCS/luci-static/resources/luci.js" ] ||
@@ -73,10 +107,10 @@ fi
 
 if [ ! -d "$HERE/node_modules" ]; then
 	echo "  installing playwright npm dependencies ..."
-	( cd "$HERE" && npm ci --no-audit --no-fund ) || {
+	if ! retry 3 5 npm_ci; then
 		echo "  FAIL: npm ci failed"
 		exit 1
-	}
+	fi
 fi
 
 # --- run ----------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# # TrustTunnel OpenWrt package repositories
+# trusttunnel-openwrt — package repositories
 
 This site hosts the package repositories that
 [install.sh](https://raw.githubusercontent.com/i-zhirov/trusttunnel-openwrt/main/install.sh)
