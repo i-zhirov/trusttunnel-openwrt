@@ -922,12 +922,15 @@ jobs:
 
       # The site is the workflow's direct output: nothing is committed to
       # any branch. The index pages exist because Pages serves no
-      # directory listings — the bare releases/, releases/<version>/,
-      # releases/<version>/packages/, releases/<version>/packages/<arch>/
-      # and the feed URLs would 404 in a browser without them, while the
-      # package managers never fetch those URLs (apk fetches
-      # <url>/releases/25.12.5/packages/<arch>/trusttunnel/packages.adb,
-      # opkg appends /Packages.gz to the feed URL).
+      # directory listings — the bare URLs would 404 in a browser without
+      # them, while the package managers never fetch those URLs (apk
+      # fetches <url>/releases/25.12.5/packages/<arch>/trusttunnel/
+      # packages.adb, opkg appends /Packages.gz to the feed URL). The
+      # levels with content carry it directly: the tree page lists the
+      # architectures (linking straight to their feed pages), the feed
+      # pages list their files. The two structural levels in between
+      # (packages/ and packages/<arch>/) hold only a one-line redirect
+      # stub, so browsing stays at three clicks without any URL 404ing.
       - name: Assemble the Pages site
         run: |
           mkdir -p site/releases
@@ -939,9 +942,9 @@ jobs:
           # this page" link at the real homepage template.
           cp repo-site/favicon.ico site/favicon.ico
           cp repo-site/_config.yml site/_config.yml
-          # The layout all the index templates reference via their front
+          # The layouts all the index templates reference via their front
           # matter — the theme's default minus the "Improve this page"
-          # footer.
+          # footer, plus the redirect layout for the structural stubs.
           cp -r repo-site/_layouts site/_layouts
 
           cp repo-site/README.md site/README.md
@@ -966,61 +969,61 @@ jobs:
           rm -f "$release_list"
 
           arch_list="$(mktemp)"
-          feeds="$(mktemp)"
           files="$(mktemp)"
           for t in site/releases/*/; do
             tree="$(basename "$t")"
-            sed "s/__TREE__/$tree/g" repo-site/release-index.md > "$t/index.md"
 
-            # The tree's packages index lists the assembled architecture
-            # directories — generated from the directories themselves, so
-            # there is no second copy of the build-client matrix to keep
-            # in sync.
+            # The tree page lists the assembled architecture directories,
+            # each linking STRAIGHT to its feed page (the arch level only
+            # holds a redirect stub) — generated from the directories
+            # themselves, so there is no second copy of the build-client
+            # matrix to keep in sync.
             : > "$arch_list"
             for d in "$t/packages/"*/; do
-              printf '%s\n' "- [$(basename "$d")]($(basename "$d")/)" >> "$arch_list"
+              arch="$(basename "$d")"
+              printf '%s\n' "- [$arch](packages/$arch/trusttunnel/)" >> "$arch_list"
             done
             sed -e "s/__TREE__/$tree/g" -e "/__ARCH_LIST__/{
               r $arch_list
               d
-            }" repo-site/packages-index.md > "$t/packages/index.md"
+            }" repo-site/release-index.md > "$t/index.md"
 
-            # One index per architecture listing its feeds, and one per
-            # feed listing what that directory actually holds: the signed
-            # index, the public key and every package, each as a link to
-            # the file itself (a bare name would be dead text — Pages
-            # serves no directory listings). Generated from the
-            # directories themselves, so a released version shows up here
-            # without touching a template.
+            # The structural levels with no content of their own get a
+            # one-line redirect: packages/ lands on the tree page (the
+            # arch list), packages/<arch>/ on the arch's feed page. A
+            # directly visited URL still works, without adding a click to
+            # the normal path.
+            printf '%s\n' '---' 'layout: redirect' "redirect_to: ../" '---' > "$t/packages/index.md"
+            for d in "$t/packages/"*/; do
+              printf '%s\n' '---' 'layout: redirect' "redirect_to: trusttunnel/" '---' > "$d/index.md"
+            done
+
+            # One index per feed, listing what that directory actually
+            # holds: the signed index, the public key and every package,
+            # each as a link to the file itself (a bare name would be
+            # dead text — Pages serves no directory listings). Generated
+            # from the directories themselves, so a released version
+            # shows up here without touching a template.
             for d in "$t/packages/"*/; do
               arch="$(basename "$d")"
-              : > "$feeds"
-              for f in "$d"*/; do
-                printf '%s\n' "- [$(basename "$f")]($(basename "$f")/)" >> "$feeds"
-              done
-              # The r command consumes the rest of its line as the file
-              # name: a "; d" after it would be swallowed and the brace
-              # would never close. The file read and the delete must sit
-              # on separate lines inside the braces.
-              sed -e "s/__TREE__/$tree/g" -e "s/__ARCH__/$arch/g" -e "/__FEED_LIST__/{
-                r $feeds
-                d
-              }" repo-site/packages-arch-index.md > "$d/index.md"
-
               for f in "$d"*/; do
                 : > "$files"
                 for p in "$f"*; do
                   [ -f "$p" ] || continue
                   printf '%s\n' "- [$(basename "$p")]($(basename "$p"))" >> "$files"
                 done
-                sed -e "s/__ARCH__/$arch/g" -e "/__FILES__/{
+                # The r command consumes the rest of its line as the file
+                # name: a "; d" after it would be swallowed and the brace
+                # would never close. The file read and the delete must sit
+                # on separate lines inside the braces.
+                sed -e "s/__TREE__/$tree/g" -e "s/__ARCH__/$arch/g" -e "/__FILES__/{
                   r $files
                   d
                 }" repo-site/packages-feed-index.md > "$f/index.md"
               done
             done
           done
-          rm -f "$arch_list" "$feeds" "$files"
+          rm -f "$arch_list" "$files"
 
       - name: Render the site with Jekyll
         uses: actions/jekyll-build-pages@v1

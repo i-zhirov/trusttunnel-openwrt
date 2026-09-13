@@ -1,0 +1,25 @@
+---
+---
+{% comment %}
+One-line redirect pages for structural URL levels that carry no content
+of their own (releases/<ver>/packages/ and releases/<ver>/packages/<arch>/):
+the browser is sent on immediately, so the click path to the feed pages
+stays short while no directory URL 404s (Pages serves no directory
+listings). The generated pages set the redirect_to front-matter value;
+the meta refresh and the visible link both use it, and the relative
+target resolves against the page's own URL.
+
+The front matter must stay the FIRST thing in the file: Jekyll only
+strips the `---` delimiters when they open the file.
+{% endcomment %}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="refresh" content="0; url={{ page.redirect_to }}">
+    <title>{{ page.title | default: "redirect" }}</title>
+  </head>
+  <body>
+    <p>Redirecting to <a href="{{ page.redirect_to }}">{{ page.redirect_to }}</a>…</p>
+  </body>
+</html>

@@ -490,11 +490,15 @@ Triggered by `v*` tag pushes (also builds a GitHub release) and
     opkg) and runs the client `--version`.
   - GitHub release upload (tag pushes only, single writer).
   - GitHub Pages site assembly: `repo-site/` templates + generated index
-    pages — the releases index, the per-tree pages, the packages index,
-    the per-arch pages and the per-feed pages list what their
-    directories actually hold (`sed r` substitutions must keep file-read
-    and delete on separate lines), rendered with Jekyll, deployed via
-    Pages (`permissions: contents, pages, id-token`).
+    pages — the releases index and the per-tree pages (each tree page
+    lists its architectures, linking straight to the feed pages), the
+    per-feed pages list what their directories actually hold, and the
+    two structural levels in between (`packages/`,
+    `packages/<arch>/`) are one-line redirect stubs (`_layouts/
+    redirect.html`), so browsing takes three clicks with no URL 404ing
+    (`sed r` substitutions must keep file-read and delete on separate
+    lines), rendered with Jekyll, deployed via Pages (`permissions:
+    contents, pages, id-token`).
 
 Repositories are served from the Pages site, not from release assets:
 release assets are per-tag snapshots, while the repositories accumulate
