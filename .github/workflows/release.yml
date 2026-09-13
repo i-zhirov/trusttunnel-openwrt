@@ -762,11 +762,14 @@ jobs:
           cur_client="${cur_client#trusttunnel-client_}"
           cur_client="${cur_client%%_*}"   # drop the _<arch>.ipk suffix
 
-          # The arch is the last underscore-segment of the file name
-          # (trusttunnel-client_<ver>-<rel>_<arch>.ipk); architecture
-          # names contain no underscores. A dir the current matrix no
-          # longer builds is created, so a dropped architecture keeps its
-          # prior packages.
+          # The arch is everything after the <ver>-<rel>_ head of the
+          # file name (trusttunnel-client_<ver>-<rel>_<arch>.ipk): <ver>
+          # is dotted digits and <rel> is digits, so the first underscore
+          # after the package prefix splits the version from the arch —
+          # and the arch itself MUST keep its underscores (mipsel_24kc,
+          # aarch64_cortex-a53, arm_cortex-a7_neon-vfpv4, ...). A dir the
+          # current matrix no longer builds is created, so a dropped
+          # architecture keeps its prior packages.
           for f in staging/prior-opkg/trusttunnel-client_[0-9]*.ipk; do
             [ -e "$f" ] || continue
             verrev="${f##*/}"
@@ -777,7 +780,8 @@ jobs:
               continue
             fi
             arch="${f##*/}"
-            arch="${arch##*_}"
+            arch="${arch#trusttunnel-client_}"
+            arch="${arch#*_}"       # drop the <ver>-<rel> head
             arch="${arch%.ipk}"
             mkdir -p "staging/releases/22.03.7/packages/$arch/trusttunnel"
             cp "$f" "staging/releases/22.03.7/packages/$arch/trusttunnel/"
@@ -785,7 +789,8 @@ jobs:
           for f in staging/opkg-pkgs/trusttunnel-client_*.ipk; do
             [ -e "$f" ] || continue
             arch="${f##*/}"
-            arch="${arch##*_}"
+            arch="${arch#trusttunnel-client_}"
+            arch="${arch#*_}"       # drop the <ver>-<rel> head
             arch="${arch%.ipk}"
             mkdir -p "staging/releases/22.03.7/packages/$arch/trusttunnel"
             cp "$f" "staging/releases/22.03.7/packages/$arch/trusttunnel/"
