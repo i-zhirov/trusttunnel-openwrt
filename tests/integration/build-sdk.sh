@@ -28,8 +28,10 @@
 #    second run the clones already exist and `feeds update` becomes an
 #    incremental fetch instead of a fresh clone. CI restores this
 #    directory with actions/cache; locally it persists across runs. The
-#    old $HOME/.tt-sdk-dl layout is superseded by the dl/ subdirectory
-#    here.
+#    restored clones are owned by the host user, so the container
+#    whitelists the known feed directories in git's safe.directory
+#    before touching them. The old $HOME/.tt-sdk-dl layout is
+#    superseded by the dl/ subdirectory here.
 #
 # Usage:
 #   sh tests/integration/build-sdk.sh              # 25.12.5 (apk) and 22.03.7 (ipk)
@@ -75,6 +77,17 @@ for _ver in $TT_SDK_VERSION; do
 		"$_img" sh -c '
 			set -e
 			cd /builder
+			# The feeds may be restored from the CI cache, where the
+			# runner user owns the clones; the container runs as root,
+			# and git refuses repositories owned by another user. The
+			# restricted feed set is known, so the safe.directory
+			# exceptions are explicit. The 22.03 SDK ships git 2.30,
+			# which predates GIT_CONFIG_COUNT/GIT_CONFIG_GLOBAL, so the
+			# global config file is written the classic way (HOME is
+			# /root under --user root).
+			git config --global --add safe.directory /builder/feeds/base
+			git config --global --add safe.directory /builder/feeds/packages
+			git config --global --add safe.directory /builder/feeds/luci
 			sed -e "s,https://git.openwrt.org/feed/,https://github.com/openwrt/," \
 				-e "s,https://git.openwrt.org/openwrt/,https://github.com/openwrt/," \
 				-e "s,https://git.openwrt.org/project/,https://github.com/openwrt/," \
