@@ -145,6 +145,18 @@ apply_settings
 assert_contains "$(calls)" "restart keep_routing=1" \
 	"a routing profile change restarts the client without tearing down routing"
 
+# A pure REORDER of a list is a change too: the multiset of key/value
+# pairs is identical, but the client measures the endpoint addresses in
+# order, so keeping the old config would silently diverge from what the
+# settings page shows.
+setup
+printf 'endpoint.address\t1.2.3.4:443\nendpoint.address\t[2001:db8::1]:443\n' >> "$RECORDS"
+printf 'endpoint.address\t[2001:db8::1]:443\nendpoint.address\t1.2.3.4:443\n' >> "$TT_NEXT"
+apply_settings
+
+assert_contains "$(calls)" "restart keep_routing=1" \
+	"reordering the endpoint addresses restarts the client without tearing down routing"
+
 # --- Restart with a full teardown ---------------------------------------------
 
 # The table number and the mark are the only values that tear routing down.

@@ -34,21 +34,6 @@ _dedup_forwarding() {
 	fi
 }
 
-# Re-bind every zone after the first one to the tun+ wildcard. Runs only
-# after a dedup removed duplicate zones: the dedup pass is followed by a
-# repair pass over the remaining zones.
-# shellcheck disable=SC2329,SC2154
-_rebind_zone() {
-	_rz_sec=$1
-	if [ -z "$_first_zone_sec" ]; then
-		_first_zone_sec=$_rz_sec
-		return 0
-	fi
-	uci -q delete "firewall.$_rz_sec.device"
-	uci add_list "firewall.$_rz_sec.device"='tun+'
-	_migrated=1
-}
-
 # Mark the presence of a routing profile; the seed block only fires when
 # the callback never runs.
 # shellcheck disable=SC2329
@@ -102,13 +87,13 @@ if [ -n "$_zone_sec" ]; then
 			_migrated=1
 			;;
 	esac
-	if [ -n "$_removed" ]; then
-		# Reload the config so the repair pass walks the post-dedup
-		# sections, then re-bind every zone after the first one.
-		config_load firewall
-		_first_zone_sec=""
-		config_foreach _rebind_zone zone
-	fi
+	# After a dedup there is nothing left to repair here: the pass kept
+	# the first trusttunnel zone and deleted the rest, so the surviving
+	# zone is exactly the one the migration block above just bound to
+	# tun+. There is deliberately no rebind pass over all remaining
+	# zones — one that ran without a name check used to rewrite the
+	# device list of every unrelated zone after the first one in file
+	# order (a stock wan zone lost its binding and gained tun+).
 fi
 if [ -n "$_migrated" ]; then
 	uci commit firewall

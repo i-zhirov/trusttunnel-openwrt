@@ -160,10 +160,15 @@ resolve_host() {
 # absent), then the ruleset in a single nft transaction. The endpoint
 # addresses are resolved into a temporary file BEFORE the ruleset lands,
 # because marked traffic would otherwise blackhole the router's own DNS.
+# A disabled blackhole is not just skipped: a stale one from an earlier
+# config is removed, so the 1->0 transition takes effect on a reload.
 up() {
     if [ "$TT_BLACKHOLE" = true ]; then
         "$TT_IP" route replace blackhole default table "$TT_TABLE" metric 1000
         "$TT_IP" -6 route replace blackhole default table "$TT_TABLE" metric 1000
+    else
+        "$TT_IP" route del blackhole default table "$TT_TABLE" metric 1000 2>/dev/null || true
+        "$TT_IP" -6 route del blackhole default table "$TT_TABLE" metric 1000 2>/dev/null || true
     fi
 
     # The anchor around the table number keeps a foreign table with the

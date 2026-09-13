@@ -227,18 +227,33 @@ attach_client_device() {
 	"$LIBDIR/routing" attach "$RECORDS" "$OUTDIR" "$_new"
 }
 
-# Keys whose multiset of values differs between two records files. List
-# options repeat their key, so the comparison must count occurrences of every
-# key/value pair — a second list entry under an existing key is a change, and
-# so is a scalar value swap. Keys are the text before the first tab; the
-# output is sorted and deduplicated.
+# Keys whose multiset of values differs between two records files — or
+# whose list values were REORDERED. List options repeat their key, so the
+# comparison must count occurrences of every key/value pair: a second list
+# entry under an existing key is a change, and so is a scalar value swap.
+# Order matters too: uci-export emits list options in UCI order (the
+# endpoint address list is ordered by design), and a pure permutation
+# leaves the multiset identical while the client keeps the old config, so
+# a key whose value sequence differs is reported as well. Keys are the
+# text before the first tab; the output is sorted and deduplicated.
 changed_keys() {
 	awk -F '\t' '
-		NR == FNR { n[$1 FS $2]++; next }
-		{ m[$1 FS $2]++ }
+		NR == FNR {
+			n[$1 FS $2]++
+			seq1[$1, ++cnt1[$1]] = $2
+			next
+		}
+		{
+			m[$1 FS $2]++
+			seq2[$1, ++cnt2[$1]] = $2
+		}
 		END {
 			for (p in n) if (!(p in m) || m[p] != n[p]) { split(p, a, FS); print a[1] }
 			for (p in m) if (!(p in n)) { split(p, a, FS); print a[1] }
+			for (k in cnt1) if (k in cnt2 && cnt1[k] == cnt2[k]) {
+				for (i = 1; i <= cnt1[k]; i++)
+					if (seq1[k, i] != seq2[k, i]) { print k; break }
+			}
 		}
 	' "$1" "$2" | sort -u
 }

@@ -156,6 +156,8 @@ assert_eq "1" "$order_ok" "down tears the nft table down before the routes"
 : > "$TT_CMD_LOG"
 sh "$R" up "$TT_TEST_TMP/nobh.tsv" "$TT_TEST_TMP"
 nobh_log=$(cat "$TT_CMD_LOG")
-assert_eq "0" "$(line_count 'blackhole' "$nobh_log")" "no blackhole route when the killswitch is disabled"
+assert_eq "0" "$(line_count 'route replace blackhole' "$nobh_log")" "no blackhole route is installed when the killswitch is disabled"
+assert_contains "$nobh_log" 'ip route del blackhole default table 880 metric 1000' "a stale IPv4 blackhole is removed when the killswitch is disabled"
+assert_contains "$nobh_log" 'ip -6 route del blackhole default table 880 metric 1000' "a stale IPv6 blackhole is removed when the killswitch is disabled"
 
 tt_test_summary
