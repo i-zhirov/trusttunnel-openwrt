@@ -151,12 +151,7 @@ artifacts are consumed directly.
   assertion value — `retry_out` prints the last attempt's body when all
   attempts fail, so the assert still reports what was actually seen),
   and the external downloads (GitHub release assets, the endpoint
-  binary, ipkg-make-index.sh). The sibling harnesses share the same
-  shape: `build-sdk.sh` retries the SDK image pull, the feed clones and
-  the client source download, `restricted-feeds.sh` retries the verify
-  image pull, `gui/run.sh` retries the Playwright image pull, the
-  luci-base fetch and `npm ci`, and the backend contract test retries
-  its healthy-phase `apt-get install`.
+  binary, ipkg-make-index.sh).
 - **On the apk path the uci-defaults script is consumed by the package
   manager.** apk runs `/etc/uci-defaults/*` right after placing them and
   removes them; install.sh's immediate run is the fallback that only

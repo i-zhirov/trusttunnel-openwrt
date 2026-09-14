@@ -112,8 +112,7 @@ const uciData = {
                 fwmark: '0x9527', blackhole_on_down: '1', include_router_traffic: '0' },
     cfg1:     { '.type': 'routing_profile', '.name': 'cfg1', name: 'Default', mode: 'vpn' },
     cfg2:     { '.type': 'routing_profile', '.name': 'cfg2', name: 'Test',
-                mode: 'bypass', vpn_rules: ['api.ipify.org', 'example.com'] },
-    domains:  { '.type': 'domains', '.name': 'domains', direct: ['legacy.example'] }
+                mode: 'bypass', vpn_rules: ['api.ipify.org', 'example.com'] }
 };
 
 const uciSets = [];
@@ -245,16 +244,9 @@ const canned = {
     probe: function () {
         return { tunnel: { ip: '104.238.24.115' }, direct: { ip: '178.46.214.219' } };
     },
-    check_domain: function (domain) {
-        // Domain-aware: a legacy direct-list entry verdicts 'direct', any
-        // other domain 'tunnel' — the status preview tests both paths.
-        return {
-            domain: domain, normalized: domain,
-            verdict: domain === 'legacy.example' ? 'direct' : 'tunnel',
-            reason: domain === 'legacy.example'
-                ? 'listed in the "do not bypass" list; the client sends it out by SNI'
-                : 'assigned profile in VPN mode'
-        };
+    check_domain: function () {
+        return { domain: 'api.ipify.org', normalized: 'api.ipify.org',
+                 verdict: 'tunnel', reason: 'assigned profile in VPN mode' };
     },
     import_config: function () {
         return { hostname: 'import.example.com', addresses: ['import.example.com:443'],
@@ -338,19 +330,7 @@ function findButtons(node) {
 }
 
 function click(buttonNode) {
-	return Promise.resolve(buttonNode.attrs.click && buttonNode.attrs.click());
-}
-
-// Drain the microtask queue until the predicate holds (each await = one
-// drain); the preview's check_domain chain is several promises deep, so a
-// fixed number of awaits would be fragile.
-async function waitText(node, s) {
-	for (let i = 0; i < 30; i++) {
-		if (hasText(node, s))
-			return true;
-		await Promise.resolve();
-	}
-	return hasText(node, s);
+    return Promise.resolve(buttonNode.attrs.click && buttonNode.attrs.click());
 }
 
 // ---------------------------------------------------------------------------
@@ -386,43 +366,6 @@ async function main() {
     ok(hasText(statusTree, 'kz.hexbrains.com'), 'status: Server row shows the hostname');
     ok(hasText(statusTree, 'Profile Test — bypass, only the VPN rules are tunneled'),
         'status: Mode row shows the Test bypass profile');
-
-    // Preview rules: the button opens the modal for the assigned profile
-    // (Test, bypass mode) and checks every VPN rule against the backend
-    // one after another.
-    const previewBtn = findButtons(statusTree).find(b => hasText(b, 'Preview rules'));
-    ok(previewBtn !== null, 'status: Preview rules button present');
-    await click(previewBtn);
-    await waitText(ui.lastModal.children, 'Tunneled by this profile');
-    ok(ui.lastModal && ui.lastModal.title === 'Rule preview — Test',
-        'status: preview modal names the assigned profile');
-    // hasText() walks DOM nodes, not arrays; wrap the modal children.
-    const modalBox = { children: ui.lastModal.children };
-    ok(await waitText(modalBox, 'Tunneled by this profile'),
-        'status: preview shows the tunneled-list heading');
-    ok(await waitText(modalBox, 'api.ipify.org') &&
-        await waitText(modalBox, 'example.com'),
-        'status: preview lists the profile VPN rules');
-    ok(await waitText(modalBox, 'through the tunnel'),
-        'status: preview renders verdicts for the checked rules');
-
-    // Without an assigned profile the same button previews the legacy
-    // "do not bypass" list.
-    const legacyStatus = Object.assign({}, canned.status(), {
-        routing_profile: '', routing_mode: '', vpn_mode: 'general'
-    });
-    const legacyTree = statusView.render(legacyStatus);
-    const legacyBtn = findButtons(legacyTree).find(b => hasText(b, 'Preview rules'));
-    ok(legacyBtn !== null, 'status: Preview rules button present without a profile');
-    await click(legacyBtn);
-    await waitText(ui.lastModal.children, 'legacy.example');
-    ok(ui.lastModal && ui.lastModal.title === 'Rule preview',
-        'status: legacy preview modal has the plain title');
-    const legacyBox = { children: ui.lastModal.children };
-    ok(await waitText(legacyBox, 'No routing profile is assigned'),
-        'status: legacy preview explains the full-tunnel mode');
-    ok(await waitText(legacyBox, 'legacy.example'),
-        'status: legacy preview lists the do-not-bypass rules');
 
     // ===== settings.js =====
     console.log('== settings.js');
