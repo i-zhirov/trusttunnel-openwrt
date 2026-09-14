@@ -351,9 +351,12 @@ jobs:
             exit 0
           fi
           # The published artifact is reusable only when the recipe that
-          # produced it matches the current Makefile.
+          # produced it matches the current Makefile. The recipe copy
+          # lives at the release-tree root (one per tree, shared by every
+          # architecture — not inside the feed directories).
+          mkurl="https://i-zhirov.github.io/trusttunnel-openwrt/releases/${{ matrix.version }}/trusttunnel-client.Makefile"
           tmpmk="$(mktemp)"
-          if curl -fsSL -o "$tmpmk" "$(dirname "$url")/trusttunnel-client.Makefile" 2>/dev/null \
+          if curl -fsSL -o "$tmpmk" "$mkurl" 2>/dev/null \
             && diff -q "$tmpmk" packages/trusttunnel-client/Makefile >/dev/null; then
             if [ "${{ matrix.ext }}" = apk ]; then
               # The repository stores the apk without the arch suffix; the
@@ -700,14 +703,16 @@ jobs:
             # apk reconstructs file names from the package metadata, so
             # the -<arch> suffix is stripped on placement.
             cp "$client" "staging/releases/25.12.5/packages/$arch/trusttunnel/$(basename "$client" "-${arch}.apk").apk"
-            # The package recipe travels with the packages: the next
-            # release's reuse check diffs it against the current Makefile
-            # before skipping a rebuild.
-            cp packages/trusttunnel-client/Makefile "staging/releases/25.12.5/packages/$arch/trusttunnel/trusttunnel-client.Makefile"
             # The public key sits next to the index it verifies; the
             # installer fetches it from the feed directory.
             cp key-build.pub "staging/releases/25.12.5/packages/$arch/trusttunnel/key-build.pub"
           done
+
+          # The package recipe travels with the release tree — one copy
+          # per tree, not per architecture (the client Makefile is shared
+          # by every arch): the next release's reuse check diffs it
+          # against the current Makefile before skipping a rebuild.
+          cp packages/trusttunnel-client/Makefile staging/releases/25.12.5/trusttunnel-client.Makefile
 
           # The noarch LuCI app lands in every architecture directory —
           # current and prior versions alike, so the whole version
@@ -792,19 +797,20 @@ jobs:
           done
           # The noarch LuCI app lands in every feed directory — current
           # and prior versions alike, so the whole version history is
-          # installable everywhere. The feed key and the package recipe
-          # travel with every feed: install.sh fetches the key from the
-          # feed directory, and the next release's reuse check diffs the
-          # recipe against the current Makefile before skipping a
-          # rebuild.
+          # installable everywhere. The feed key travels with every feed:
+          # install.sh fetches it from the feed directory.
           for d in staging/releases/22.03.7/packages/*/trusttunnel/; do
             for f in staging/prior-opkg/luci-app-trusttunnel_[0-9]*.ipk; do
               [ -e "$f" ] && cp "$f" "$d/"
             done
             cp staging/luci-ipk/*.ipk "$d/"
             cp opkg-key.pub "$d/"
-            cp packages/trusttunnel-client/Makefile "$d/trusttunnel-client.Makefile"
           done
+          # The package recipe travels with the release tree — one copy
+          # per tree, not per architecture: the next release's reuse
+          # check diffs it against the current Makefile before skipping a
+          # rebuild.
+          cp packages/trusttunnel-client/Makefile staging/releases/22.03.7/trusttunnel-client.Makefile
 
           # The canonical index generator, fetched at run time so the
           # pipeline always uses the tooling of the OpenWrt release it

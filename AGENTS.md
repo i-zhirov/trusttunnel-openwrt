@@ -445,8 +445,10 @@ Triggered by `v*` tag pushes (also builds a GitHub release) and
   `ARCH-<arch>` marker for repository assembly; ipk names already carry
   the arch. A row first checks whether the same version is already
   published and reuses it when the recipe matches — a copy of the client
-  Makefile travels in the repositories for exactly that diff, so a recipe
-  change without a version bump still forces a rebuild.
+  Makefile travels at each release tree's root
+  (`releases/<version>/trusttunnel-client.Makefile`, one per tree, never
+  inside the feed directories) for exactly that diff, so a recipe change
+  without a version bump still forces a rebuild.
 - `verify-integration` — the same `tests/integration/run.sh` harness the
   PR workflow runs, executed against the packages THIS pipeline just
   built (no SDK rebuild; the release's own x86-64 artifacts are consumed
