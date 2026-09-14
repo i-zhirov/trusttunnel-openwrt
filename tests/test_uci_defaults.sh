@@ -390,7 +390,7 @@ EOF
         "upgrade: every domains.direct value moved into bypass_rules"
     assert_contains "$ucd_tt1" "endpoint.routing_profile='Default'" \
         "upgrade: the endpoint references the seeded profile"
-    assert_contains "$ucd_tt1" "about='about'" \
+    assert_contains "$ucd_tt1" "trusttunnel.about=about" \
         "upgrade: the UI-only about section (Versions tab) is created"
     assert_contains "$ucd_out" "RELOADS1=0" \
         "upgrade: the firewall block is untouched on run 1"
@@ -492,7 +492,7 @@ EOF
         "idempotent: the seed log line appears exactly once"
     assert_eq "1" "$(ucd_grep_count 'created the about section for the Versions tab' "$ucd_out")" \
         "idempotent: the about-creation log line appears exactly once"
-    assert_eq "1" "$(ucd_grep_count "about='about'" "$ucd_tt2")" \
+    assert_eq "1" "$(ucd_grep_count 'trusttunnel.about=about' "$ucd_tt2")" \
         "idempotent: the about section is not duplicated"
 }
 
