@@ -156,17 +156,22 @@ First-boot / reinstall setup: dedups the `trusttunnel` firewall zone and
 forwarding, creates them when missing (zone bound to `tun+`, `lan →
 trusttunnel` forwarding), migrates old concrete `tt0` bindings to `tun+`,
 seeds the Default routing profile (migrating `domains.direct` into its
-bypass rules), registers the rc.d link and clears LuCI caches. Idempotent;
-also run immediately by `install.sh`.
+bypass rules), creates the UI-only `about` section that keys the Versions
+tab on the Settings page, registers the rc.d link and clears LuCI caches.
+Idempotent; also run immediately by `install.sh`.
 
 ### rpcd backend (`/usr/share/rpcd/ucode/luci.trusttunnel`)
 
 Exposes `luci.trusttunnel` RPC methods (the ACL grants read on
-`status ping probe check_domain log diagnose` and write on
+`status ping probe check_domain log diagnose versions` and write on
 `service import_config`):
 
 - `status` — service state, device, rule/table/nft flags, endpoint,
   routing profile and effective `vpn_mode`.
+- `versions` — what is installed, read-only: the luci app and client
+  package versions as apk/opkg report them (apk on 25.12+, opkg
+  fallback for 22.03–24.10), plus the client binary's own `--version`;
+  no network access.
 - `service` — start/stop/restart/reload with a post-start liveness probe.
 - `ping` — ping each configured endpoint host (or a given target).
 - `probe` — external IP through the tunnel vs. direct (curl + api.ipify.org).
@@ -190,20 +195,23 @@ file compiles under the pinned ucode.
   legacy `domains.direct` list without one) that checks each effective
   rule via `check_domain`, client log; polls every 10s.
 - `settings.js` — a single tabbed `form.Map` whose sections become tabs
-  (General, Server, Routing profiles, Advanced), plus the Import… modal
-  that calls `import_config` and applies results to pending UCI (nothing
-  is written until Save & Apply). The endpoint section splits into
-  Connection and Security inner tabs (`s.tab`/`s.taboption`) — map-level
-  tabs key panes by the UCI section type, so two sections of the same
-  type would collide. Extra tools: a read-only service line on General
-  (via the `status` RPC), a Test connection modal on Server (`ping`),
-  and a per-profile rule preview (`check_domain`) whose verdicts only
-  apply to the assigned profile. The routing profile picker lives on
-  General and `dns_upstream` on Advanced; both write the endpoint
-  section via `ucisection`. Config values are read via the `uci` module
-  API (`uci.sections()`/`uci.get()`) — current LuCI resolves
-  `uci.load()` with the package-name list, so the load() result is no
-  data source.
+  (General, Server, Routing profiles, Advanced, Versions), plus the
+  Import… modal that calls `import_config` and applies results to pending
+  UCI (nothing is written until Save & Apply). The endpoint section
+  splits into Connection and Security inner tabs (`s.tab`/`s.taboption`)
+  — map-level tabs key panes by the UCI section type, so two sections of
+  the same type would collide. The Versions tab is a `NamedSection` of
+  the UI-only `about` section type: it carries no UCI options, its
+  DummyValue rows read the `versions` RPC result, and uci-defaults
+  creates the section on installs that predate it. Extra tools: a
+  read-only service line on General (via the `status` RPC), a Test
+  connection modal on Server (`ping`), and a per-profile rule preview
+  (`check_domain`) whose verdicts only apply to the assigned profile.
+  The routing profile picker lives on General and `dns_upstream` on
+  Advanced; both write the endpoint section via `ucisection`. Config
+  values are read via the `uci` module API (`uci.sections()`/`uci.get()`)
+  — current LuCI resolves `uci.load()` with the package-name list, so
+  the load() result is no data source.
 - `diagnostics.js` — renders the diagnose checks grouped and ordered
   (config → prereq → service → kernel → network), problems first with a
   toggle for the rest, plus domain-check, ping and address-compare tools

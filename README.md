@@ -108,7 +108,7 @@ refresh the signing keys; `/etc/config/trusttunnel` is left alone.
 
 ## Configuration
 
-Open **Services → TrustTunnel → Settings** in LuCI. The page has four
+Open **Services → TrustTunnel → Settings** in LuCI. The page has five
 tabs:
 
 - **General**: a read-only service line, the service switch ("start on
@@ -137,6 +137,12 @@ tabs:
   blackhole switch, router-traffic routing, the client's own DNS
   upstreams, and the internal routing parameters (firewall mark,
   routing table).
+- **Versions**: what is installed — the app package and the client
+  package versions exactly as the package manager reports them, plus
+  the client binary's own version. Read-only: updates are delivered
+  through the package repository (`apk update && apk upgrade` on
+  OpenWrt 25.12, `opkg update && opkg upgrade` before it, or
+  System → Software in LuCI).
 
 The same configuration headless, over UCI:
 

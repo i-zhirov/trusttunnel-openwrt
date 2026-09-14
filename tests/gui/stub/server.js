@@ -80,7 +80,11 @@ const defaultUci = {
 		},
 		// The legacy "do not bypass" list, consulted when no profile is
 		// assigned (and by the status page's rule preview in that case).
-		domains: { '.type': 'domains', '.anonymous': true, direct: [ 'legacy.example' ] }
+		domains: { '.type': 'domains', '.anonymous': true, direct: [ 'legacy.example' ] },
+		// The UI-only section that keys the Versions tab (map-level tabs
+		// are keyed by the UCI section type); uci-defaults creates it on
+		// installs that predate it.
+		about: { '.type': 'about' }
 	}
 };
 
@@ -113,6 +117,7 @@ let state = {
 	frames: [],
 	status: null, diagnose: null, ping: null, probe: null,
 	log: null, service: null, checkDomain: null, importResult: null,
+	versions: null,
 	uci: JSON.parse(JSON.stringify(defaultUci)),
 	goldenUci: true
 };
@@ -129,6 +134,7 @@ function resolveData(object, method, args) {
 	case 'luci.trusttunnel':
 		switch (method) {
 		case 'status': return state.status || golden('status.json');
+		case 'versions': return state.versions || golden('versions.json');
 		case 'diagnose': return state.diagnose || golden('diagnose.json');
 		case 'ping': return state.ping || (a.target === '8.8.8.8' ? golden('pingtarget8888.json') : golden('ping.json'));
 		case 'probe': return state.probe || golden('probe.json');
@@ -276,7 +282,7 @@ function handleControl(req, res, body) {
 	if (cmd.reset)
 		state = { frames: [], status: null, diagnose: null,
 			ping: null, probe: null, log: null, service: null, checkDomain: null,
-			importResult: null, uci: JSON.parse(JSON.stringify(defaultUci)), goldenUci: true };
+			importResult: null, versions: null, uci: JSON.parse(JSON.stringify(defaultUci)), goldenUci: true };
 	else if (cmd.clearFrames)
 		state.frames = [];
 	else if (cmd.set)

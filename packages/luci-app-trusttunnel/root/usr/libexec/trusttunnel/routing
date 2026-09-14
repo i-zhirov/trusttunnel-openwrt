@@ -220,14 +220,8 @@ attach() {
         return 1
     fi
     "$TT_IP" -6 route replace default dev "$device" table "$TT_TABLE" metric 1 2>/dev/null || true
-    # The device record is replaced atomically (per-process temp + mv), like
-    # the records file, so a concurrent status/diagnose never reads a
-    # half-written name. Attach can race with itself: hotplug re-runs it on
-    # every tun add while the init script may attach at the same time.
     mkdir -p "$OUT_DIR"
-    _dev_tmp="$OUT_DIR/device.$$"
-    printf '%s\n' "$device" > "$_dev_tmp"
-    mv -f "$_dev_tmp" "$DEVICE_FILE"
+    printf '%s\n' "$device" > "$DEVICE_FILE"
     logger -t trusttunnel "routing: attached device $device"
 }
 
