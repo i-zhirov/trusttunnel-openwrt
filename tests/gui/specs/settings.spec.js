@@ -118,7 +118,7 @@ test('import applies the parsed fields to the pending save', async ({ page }) =>
 	});
 	await openView(page, 'settings');
 
-	await button(page, 'Import…').click();
+	await button(page, 'Import server config…').click();
 	const modal = page.locator('#modal_overlay .modal');
 	await expect(modal).toBeVisible();
 	await modal.locator('textarea').fill(IMPORT_TEXT);
@@ -127,7 +127,7 @@ test('import applies the parsed fields to the pending save', async ({ page }) =>
 	// The import handler flushes the pending values with uci.set + uci.save.
 	await waitForFrames(page, 'uci', 'set', 1);
 	await expect(page.locator('#maincontent .alert-message')).toContainText(
-		'Imported. Review the fields and press Save & Apply.');
+		'Import applied. Review the fields, then press Save & Apply.');
 
 	const sets = await framesFor(page, 'uci', 'set');
 	const endpoint = sets[0].args.values;
@@ -151,7 +151,7 @@ test('import shows a spinner on the button while the backend answers', async ({ 
 	await stubSet(page, { delays: { import_config: 800 } });
 	await openView(page, 'settings');
 
-	await button(page, 'Import…').click();
+	await button(page, 'Import server config…').click();
 	const modal = page.locator('#modal_overlay .modal');
 	await expect(modal).toBeVisible();
 	await modal.locator('textarea').fill(IMPORT_TEXT);
@@ -168,14 +168,14 @@ test('import shows a spinner on the button while the backend answers', async ({ 
 	// Once the delayed answer arrives, the normal success flow runs.
 	await waitForFrames(page, 'uci', 'set', 1);
 	await expect(page.locator('#maincontent .alert-message')).toContainText(
-		'Imported. Review the fields and press Save & Apply.');
+		'Import applied. Review the fields, then press Save & Apply.');
 });
 
 test('import failure shows a danger notification', async ({ page }) => {
 	await stubSet(page, { importResult: { error: 'could not parse the config' } });
 	await openView(page, 'settings');
 
-	await button(page, 'Import…').click();
+	await button(page, 'Import server config…').click();
 	const modal = page.locator('#modal_overlay .modal');
 	await modal.locator('textarea').fill('garbage');
 	await modal.locator('button', { hasText: 'Import' }).click();
@@ -213,7 +213,7 @@ test('fwmark validator rejects a non-hexadecimal value', async ({ page }) => {
 	await button(page, 'Save').click();
 
 	await expect(page.locator('#modal_overlay .modal')).toContainText(
-		'Enter a decimal number or 0x-prefixed hexadecimal');
+		'Enter decimal or 0x-prefixed hex');
 });
 
 test('routing profile name uniqueness validator rejects duplicates', async ({ page }) => {
