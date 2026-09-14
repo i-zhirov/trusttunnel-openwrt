@@ -53,6 +53,7 @@ cp "$BACKEND" "$MOD"
 golden_call() {
 	case "$1" in
 		status) printf 'status\t{}' ;;
+		versions) printf 'versions\t{}' ;;
 		serviceactionrestart) printf 'service\t{"action":"restart"}' ;;
 		serviceactionstart) printf 'service\t{"action":"start"}' ;;
 		serviceactionbogus) printf 'service\t{"action":"bogus"}' ;;
@@ -97,8 +98,9 @@ check_goldens() {
 
 LAB_BAKED="tt-contract-baked"
 LAB_HEALTHY="tt-contract-healthy"
-docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" >/dev/null 2>&1
-trap 'docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" >/dev/null 2>&1' EXIT
+LAB_STOPPED="tt-contract-stopped"
+docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" "$LAB_STOPPED" >/dev/null 2>&1
+trap 'docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" "$LAB_STOPPED" >/dev/null 2>&1' EXIT
 
 # --- Phase A: the baked rootfs state (no tun device) ---------------------
 docker run --rm -d --name "$LAB_BAKED" -v "$(pwd)":/ws tt-backend-rootfs sleep 300 >/dev/null || tt_skip "cannot start the lab container"
@@ -161,5 +163,35 @@ exit 0
 EOF
 chmod +x /usr/bin/curl /usr/bin/ip /usr/bin/logread' >/dev/null 2>&1
 check_goldens "$LAB_HEALTHY" "$BASE/goldens/healthy"
+
+# --- Phase C: the service stopped (routing state absent, expected) -------
+# The kernel checks gate their fail/skip verdict on `running`: with the
+# service stopped the absent routing state is expected and must report
+# skip, not fail. Pin that output so a regression (e.g. back to
+# always-fail) fails the contract test.
+docker run --rm -d --name "$LAB_STOPPED" -v "$(pwd)":/ws tt-backend-rootfs sleep 300 >/dev/null || tt_skip "cannot start the stopped lab container"
+docker exec "$LAB_STOPPED" sh -c '
+cat > /etc/init.d/trusttunnel <<"EOF"
+#!/bin/sh
+case "$1" in
+	running) exit 1 ;;
+	*) exit 1 ;;
+esac
+EOF
+chmod +x /etc/init.d/trusttunnel
+cat > /usr/libexec/trusttunnel/routing <<"EOF"
+#!/bin/sh
+case "$1" in
+	status)
+		echo "device down"
+		echo "rule absent"
+		echo "table absent"
+		echo "nft absent"
+		;;
+	*) exit 0 ;;
+esac
+EOF
+chmod +x /usr/libexec/trusttunnel/routing' >/dev/null 2>&1
+check_goldens "$LAB_STOPPED" "$BASE/goldens/stopped"
 
 tt_test_summary
