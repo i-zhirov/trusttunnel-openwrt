@@ -160,4 +160,21 @@ assert_eq "0" "$(line_count 'route replace blackhole' "$nobh_log")" "no blackhol
 assert_contains "$nobh_log" 'ip route del blackhole default table 880 metric 1000' "a stale IPv4 blackhole is removed when the killswitch is disabled"
 assert_contains "$nobh_log" 'ip -6 route del blackhole default table 880 metric 1000' "a stale IPv6 blackhole is removed when the killswitch is disabled"
 
+# --- proxy mode guard ----------------------------------------------------------
+
+# Proxy mode owns no kernel routing: up must refuse instead of installing a
+# pipeline whose marked traffic would blackhole with no tun device behind it.
+printf 'main.mode\tproxy\nproxy.address\t0.0.0.0:1080\n' > "$TT_TEST_TMP/proxy.tsv"
+: > "$TT_CMD_LOG"
+: > "$TT_NFT_STDIN"
+if sh "$R" up "$TT_TEST_TMP/proxy.tsv" "$TT_TEST_TMP" 2>/dev/null; then
+	_tt_fail "up in proxy mode exits non-zero"
+else
+	_tt_pass "up in proxy mode exits non-zero"
+fi
+assert_eq "0" "$(wc -c < "$TT_CMD_LOG" | tr -d ' ')" \
+	"up in proxy mode installs nothing"
+assert_eq "0" "$(wc -c < "$TT_NFT_STDIN" | tr -d ' ')" \
+	"up in proxy mode loads no ruleset"
+
 tt_test_summary

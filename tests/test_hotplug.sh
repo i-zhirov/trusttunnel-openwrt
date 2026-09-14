@@ -183,6 +183,17 @@ scn_g6() {
 	assert_eq "$attach_line" "$(calls)" "no recorded device attaches"
 }
 
+scn_g7() {
+	# G7: proxy mode owns no tun device or routing table, so even a fresh
+	# client tun add must never reach the routing helper.
+	ACT=add IFACE=tun0 DEVNAME=''; reset_state
+	cp tests/fixtures/records/proxy.tsv \
+	   "$scratch/var/etc/trusttunnel/settings.tsv"
+	run_hotplug
+	assert_eq "0" "$?" "proxy mode exits 0"
+	assert_eq "<none>" "$(calls)" "proxy mode never reaches routing"
+}
+
 group_guards() {
 	scn_g1
 	scn_g2
@@ -190,6 +201,7 @@ group_guards() {
 	scn_g4
 	scn_g5
 	scn_g6
+	scn_g7
 }
 
 # --- attach: the routing call and the log -------------------------------------

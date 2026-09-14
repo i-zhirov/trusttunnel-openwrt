@@ -140,6 +140,16 @@ if [ -z "$_has_about" ]; then
 	logger -t trusttunnel "created the about section for the Versions tab"
 fi
 
+# Seed the proxy section on installs that predate proxy mode, so the Proxy
+# tab always renders the listener defaults. The operation mode itself
+# stays absent (tun) — an upgrade must not silently change delivery.
+if ! uci -q get trusttunnel.proxy >/dev/null 2>&1; then
+	uci set trusttunnel.proxy='proxy'
+	uci set trusttunnel.proxy.address='127.0.0.1:1080'
+	uci commit trusttunnel
+	logger -t trusttunnel "created the proxy section with the default listener address"
+fi
+
 # Finalize: register the rc.d link so the service starts on boot (the
 # enabled flag is only consulted inside start_service) and clear the LuCI
 # caches.

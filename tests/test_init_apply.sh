@@ -114,6 +114,14 @@ assert_eq "restart_full" "$(change_class network.fwmark)" \
 	"changing the mark must tear down the old rule"
 assert_eq "restart_full" "$(change_class main.enabled)" \
 	"disabling the service must tear down routing"
+assert_eq "restart_full" "$(change_class main.mode)" \
+	"switching the operation mode must rebuild the routing state"
+assert_eq "restart" "$(change_class proxy.address)" \
+	"the proxy address goes into client.toml"
+assert_eq "restart" "$(change_class proxy.username)" \
+	"the proxy user name goes into client.toml"
+assert_eq "restart" "$(change_class proxy.password)" \
+	"the proxy password goes into client.toml"
 
 # The main conservatism check: an unknown key yields the same behavior as
 # before the classifier existed.
@@ -242,11 +250,13 @@ missing=""
 for k in $keys; do
 	# certificate is intentionally absent from records (PEM is multi-line), but
 	# it still needs classifying — apply_settings compares it via a separate
-	# file.
+	# file. The restart_full keys are exempt: they are the expensive actions
+	# that are chosen deliberately, not by falling into the unknown branch.
 	if [ "$(change_class "$k")" = "restart_full" ] \
 			&& [ "$k" != "network.table" ] \
 			&& [ "$k" != "network.fwmark" ] \
-			&& [ "$k" != "main.enabled" ]; then
+			&& [ "$k" != "main.enabled" ] \
+			&& [ "$k" != "main.mode" ]; then
 		missing="$missing $k"
 	fi
 done

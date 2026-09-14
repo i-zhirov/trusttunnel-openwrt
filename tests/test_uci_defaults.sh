@@ -164,14 +164,17 @@ exit 0
 EOF
 }
 
-# The default trusttunnel fixture shape is the shipped-config shape: a
-# routing_profile section (and the UI-only about section) already
-# present, so the seed blocks are a no-op. The upgrade shape (no
-# profile, populated domains.direct, no about section) is written by the
-# scenarios that need the seed blocks to fire.
+# The default trusttunnel fixture shape is the shipped-config shape: the
+# proxy section, a routing_profile section and the UI-only about section
+# already present, so the seed blocks are a no-op. The upgrade shape (no
+# profile, populated domains.direct, no proxy, no about section) is
+# written by the scenarios that need the seed blocks to fire.
 ucd_trusttunnel_default() {
     ucd_t_dir=$1
     cat > "$ucd_t_dir/trusttunnel" <<'EOF'
+config proxy 'proxy'
+	option address '127.0.0.1:1080'
+
 config routing_profile
 	option name 'Default'
 	option mode 'vpn'
@@ -392,6 +395,10 @@ EOF
         "upgrade: the endpoint references the seeded profile"
     assert_contains "$ucd_tt1" "trusttunnel.about=about" \
         "upgrade: the UI-only about section (Versions tab) is created"
+    assert_contains "$ucd_tt1" "trusttunnel.proxy=proxy" \
+        "upgrade: the proxy section is seeded"
+    assert_contains "$ucd_tt1" "proxy.address='127.0.0.1:1080'" \
+        "upgrade: the proxy section carries the default listener address"
     assert_contains "$ucd_out" "RELOADS1=0" \
         "upgrade: the firewall block is untouched on run 1"
     assert_contains "$ucd_out" "RELOADS2=0" \
@@ -406,6 +413,8 @@ EOF
         "upgrade: the seed log line appears exactly once"
     assert_eq "1" "$(ucd_grep_count 'created the about section for the Versions tab' "$ucd_out")" \
         "upgrade: the about-creation log line appears exactly once"
+    assert_eq "1" "$(ucd_grep_count 'created the proxy section with the default listener address' "$ucd_out")" \
+        "upgrade: the proxy seed log line appears exactly once"
     assert_eq "1" "$(ucd_grep_count '@routing_profile\[[0-9]*\]=routing_profile' "$ucd_tt2")" \
         "upgrade: no second profile after run 2"
 }
@@ -494,6 +503,8 @@ EOF
         "idempotent: the about-creation log line appears exactly once"
     assert_eq "1" "$(ucd_grep_count 'trusttunnel.about=about' "$ucd_tt2")" \
         "idempotent: the about section is not duplicated"
+    assert_eq "1" "$(ucd_grep_count 'created the proxy section with the default listener address' "$ucd_out")" \
+        "idempotent: the proxy seed log line appears exactly once"
 }
 
 # --- runner -------------------------------------------------------------------

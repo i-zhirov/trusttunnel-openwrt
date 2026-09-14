@@ -174,6 +174,90 @@ function routing_status() {
 	return out;
 }
 
+// The port of a "ip:port", "host:port" or "[v6]:port" listen address; an
+// empty string when the address carries no colon-separated port. The last
+// colon separates the port even when an IPv6 address contains more.
+function socks_port(addr) {
+	let s = '' + addr;
+	let c = -1;
+	for (let i = 0; i < length(s); i++)
+		if (substr(s, i, 1) == ':')
+			c = i;
+	return c >= 0 ? substr(s, c + 1) : '';
+}
+
+// The host part of the same address shapes: everything before the last
+// colon, with a bracketed IPv6 literal stripped of its brackets.
+function socks_host(addr) {
+	let s = '' + addr;
+	let c = -1;
+	for (let i = 0; i < length(s); i++)
+		if (substr(s, i, 1) == ':')
+			c = i;
+	let host = c >= 0 ? substr(s, 0, c) : s;
+	if (substr(host, 0, 1) == '[' && substr(host, length(host) - 1, 1) == ']')
+		host = substr(host, 1, length(host) - 2);
+	return host;
+}
+
+// The kernel's hex rendering of a literal host, or an empty string when
+// the host is not one the kernel would print verbatim (a hostname, a
+// compressed IPv6) — the caller then falls back to a port-only match.
+// /proc/net/tcp prints IPv4 as little-endian octets (127.0.0.1 ->
+// 0100007F) and /proc/net/tcp6 prints IPv6 fully expanded to 32 hex
+// digits, uppercase. The loops are index-based on purpose: ucode's
+// `for (x in array)` yields the VALUES, so a value-indexed lookup would
+// resolve only numeric keys that happen to coerce.
+function socks_addrhex(host) {
+	let parts = split(host, '.');
+	if (length(parts) == 4) {
+		for (let i = 0; i < 4; i++)
+			if (!match(parts[i], /^[0-9]{1,3}$/) || int(parts[i]) > 255)
+				return '';
+		return sprintf('%02X%02X%02X%02X',
+			int(parts[3]), int(parts[2]), int(parts[1]), int(parts[0]));
+	}
+	if (host == '::')
+		return '00000000000000000000000000000000';
+	if (host == '::1')
+		return '00000000000000000000000000000001';
+	parts = split(host, ':');
+	if (length(parts) == 8) {
+		let out = '';
+		for (let i = 0; i < 8; i++) {
+			if (!match(parts[i], /^[0-9a-fA-F]{1,4}$/))
+				return '';
+			while (length(parts[i]) < 4)
+				parts[i] = '0' + parts[i];
+			out += parts[i];
+		}
+		return uc(out);
+	}
+	return '';
+}
+
+// Whether anything is bound on the given address. The kernel exposes each
+// listening TCP socket in /proc/net/tcp (v4) and /proc/net/tcp6 (v6) as
+// "sl: IP:HEXPORT ..."; the anchor on the leading sl: and the trailing
+// space keeps the port from matching inside an address or the remote
+// column (the fixed-width sl column carries leading spaces, so a plain
+// field split is not reliable). Matching the address too keeps a foreign
+// daemon bound to the same port but a different address from satisfying
+// the check — a port conflict is exactly the failure mode this check
+// must report as "not listening".
+function socks_listening(addr) {
+	let port = socks_port(addr);
+	if (!length(port) || !match(port, /^[0-9]+$/))
+		return false;
+	let hex = sprintf('%04X', int(port));
+	let addrhex = socks_addrhex(socks_host(addr));
+	let pat = length(addrhex)
+		? "^ *[0-9]+: " + addrhex + ":" + hex + " "
+		: "^ *[0-9]+: [0-9A-F:]*:" + hex + " ";
+	let r = sh_out("grep -E '" + pat + "' /proc/net/tcp /proc/net/tcp6");
+	return length(trim(r.out)) > 0;
+}
+
 // One diagnose check.
 function check(group, label, status, detail, hint) {
 	return { group: group, label: label, status: status, detail: detail, hint: hint };
@@ -195,12 +279,15 @@ return {
 				let rs = routing_status();
 				let pname = first(rec, 'routing_profile.name', '');
 				let pmode = first(rec, 'routing_profile.mode', '');
+				let mode = first(rec, 'main.mode', 'tun');
+				let paddr = first(rec, 'proxy.address', '');
 
 				let running = sh('/etc/init.d/trusttunnel running').code == 0;
 
 				return {
 					enabled: uciget('trusttunnel.main.enabled') == '1',
 					running: running,
+					mode: mode,
 					device: length(rs.device) ? rs.device : null,
 					device_up: rs.device_up,
 					rule: rs.rule,
@@ -215,8 +302,61 @@ return {
 					routing_mode: pmode,
 					// The effective client vpn_mode: selective for a
 					// bypass-mode profile, general otherwise.
-					vpn_mode: pmode == 'bypass' ? 'selective' : 'general'
+					vpn_mode: pmode == 'bypass' ? 'selective' : 'general',
+					// The SOCKS listener fields mean something only in
+					// proxy mode; in tun mode the address is unused and
+					// no listener exists.
+					proxy_address: length(paddr) ? paddr : null,
+					listener_up: mode == 'proxy' ? socks_listening(paddr) : null
 				};
+			}
+		},
+
+		// What is installed, for the Versions tab on the Settings page.
+		// The package versions come from the package manager (apk on
+		// 25.12+, opkg on 22.03-24.10; the other command does not exist
+		// there), the client binary version from the binary itself. A
+		// package that is not installed (or a missing binary) reports
+		// null, never an error. Nothing here touches the network.
+		versions: {
+			args: { },
+			call: function() {
+				let res = { package: null, client_package: null, client: null };
+
+				let apk = sh_out('apk list -I luci-app-trusttunnel');
+				if (apk.code == 0) {
+					let m = match(apk.out, /luci-app-trusttunnel-([^ \t\n]+)/);
+					if (m)
+						res.package = m[1];
+				}
+				if (res.package == null) {
+					let opkg = sh_out('opkg info luci-app-trusttunnel');
+					let m = match(opkg.out, /Version: ([^ \t\n]+)/);
+					if (m)
+						res.package = m[1];
+				}
+
+				apk = sh_out('apk list -I trusttunnel-client');
+				if (apk.code == 0) {
+					let m = match(apk.out, /trusttunnel-client-([^ \t\n]+)/);
+					if (m)
+						res.client_package = m[1];
+				}
+				if (res.client_package == null) {
+					let opkg = sh_out('opkg info trusttunnel-client');
+					let m = match(opkg.out, /Version: ([^ \t\n]+)/);
+					if (m)
+						res.client_package = m[1];
+				}
+
+				let cv = sh_out(CLIENT + ' --version');
+				if (cv.code == 0) {
+					let m = match(cv.out, /[0-9]+\.[0-9]+\.[0-9]+[^ \t\n]*/);
+					if (m)
+						res.client = m[0];
+				}
+
+				return res;
 			}
 		},
 
@@ -276,16 +416,46 @@ return {
 		probe: {
 			args: { },
 			call: function() {
-				let rs = routing_status();
+				let rec = records();
+				let via, plain;
 
-				if (!length(rs.device))
-					return {
-						tunnel: { error: 'the client has not created a tunnel device yet' },
-						direct: { error: 'not attempted' }
-					};
+				// The tunnel leg is bound through the tun device in tun
+				// mode and through the SOCKS listener in proxy mode.
+				if (first(rec, 'main.mode', 'tun') == 'proxy') {
+					let addr = first(rec, 'proxy.address', '');
 
-				let via = sh_out('curl -fsS --max-time 8 --interface ' + shq(rs.device) + ' https://api.ipify.org');
-				let plain = sh_out('curl -fsS --max-time 8 https://api.ipify.org');
+					if (!length(addr))
+						return {
+							tunnel: { error: 'the SOCKS listener address is not configured' },
+							direct: { error: 'not attempted' }
+						};
+
+					// The listener demands the configured credentials
+					// whenever it is exposed beyond the loopback (the
+					// client refuses such binds without them), so the
+					// through-listener leg authenticates when a user name
+					// is set — an unauthenticated request would fail on a
+					// healthy tunnel.
+					let auth = '';
+					let user = first(rec, 'proxy.username', '');
+
+					if (length(user))
+						auth = ' --proxy-user ' + shq(user + ':' + first(rec, 'proxy.password', ''));
+
+					via = sh_out('curl -fsS --max-time 8 --socks5-hostname ' + shq(addr) + auth + ' https://api.ipify.org');
+				} else {
+					let rs = routing_status();
+
+					if (!length(rs.device))
+						return {
+							tunnel: { error: 'the client has not created a tunnel device yet' },
+							direct: { error: 'not attempted' }
+						};
+
+					via = sh_out('curl -fsS --max-time 8 --interface ' + shq(rs.device) + ' https://api.ipify.org');
+				}
+
+				plain = sh_out('curl -fsS --max-time 8 https://api.ipify.org');
 
 				let tunnel = via.code == 0 ? { ip: trim(via.out) } : { error: length(trim(via.out)) ? trim(via.out) : 'request failed' };
 				let direct = plain.code == 0 ? { ip: trim(plain.out) } : { error: length(trim(plain.out)) ? trim(plain.out) : 'request failed' };
@@ -395,6 +565,8 @@ return {
 				let pmode = first(rec, 'routing_profile.mode', '');
 				let mtu_cfg = first(rec, 'network.mtu', '1350');
 				let table = first(rec, 'network.table', '880');
+				let mode = first(rec, 'main.mode', 'tun');
+				let paddr = first(rec, 'proxy.address', '');
 
 				// --- Configuration ---
 
@@ -435,9 +607,11 @@ return {
 						'The client is a dependency of the package; reinstall trusttunnel-client.'));
 				}
 
-				if (access('/dev/net/tun'))
+				// The tun device is a tun-mode prerequisite; proxy mode
+				// binds a listener instead and never opens /dev/net/tun.
+				if (mode != 'proxy' && access('/dev/net/tun'))
 					push(checks, check('prereq', 'tun device', 'ok', '/dev/net/tun present', ''));
-				else
+				else if (mode != 'proxy')
 					push(checks, check('prereq', 'tun device', 'fail', 'missing', 'Install kmod-tun.'));
 
 				// --- Service ---
@@ -463,69 +637,87 @@ return {
 				// recorded device there is nothing to inspect and the
 				// device-bound checks are skipped as a group.
 				let dev = rs.device;
-				let dev_sys = length(dev) ? '/sys/class/net/' + dev : '';
 
-				if (!length(dev)) {
-					push(checks, check('kernel', 'Tunnel device', running ? 'fail' : 'skip', 'the client has not created one',
-						'The device belongs to the client, not to this package. Read the client log below.'));
-				} else if (access(dev_sys) == null) {
-					push(checks, check('kernel', 'Tunnel device', 'fail', 'the client has not created one',
-						'The device belongs to the client, not to this package. Read the client log below.'));
+				// Proxy mode owns no kernel routing: the single kernel
+				// check is the SOCKS listener itself. The tun checks
+				// (device, routes, mark table, fw4 zone) exist only in
+				// tun mode and would be noise here.
+				if (mode == 'proxy') {
+					if (!running)
+						push(checks, check('kernel', 'SOCKS listener', 'skip', 'the service is not running', ''));
+					else if (!length(paddr))
+						push(checks, check('kernel', 'SOCKS listener', 'fail', 'address not configured',
+							'Set the listener address on the Settings page.'));
+					else if (socks_listening(paddr))
+						push(checks, check('kernel', 'SOCKS listener', 'ok', 'bound on ' + paddr, ''));
+					else
+						push(checks, check('kernel', 'SOCKS listener', 'fail', 'not listening',
+							'The client binds the listener at start; a bind error or a port conflict keeps it down. Read the client log below.'));
 				} else {
-					let dev_mtu = trim(readfile(dev_sys + '/mtu') ?? '');
-					push(checks, check('kernel', 'Tunnel device', 'ok',
-						dev + ', MTU ' + dev_mtu, ''));
+					let dev_sys = length(dev) ? '/sys/class/net/' + dev : '';
 
-					// The MTU check only reports a mismatch; a matching
-					// value adds no entry.
-					if (length(dev_mtu) && dev_mtu != mtu_cfg)
-						push(checks, check('kernel', 'MTU matches settings', 'warn',
-							'device ' + dev_mtu + ', configured ' + mtu_cfg,
-							'Restart the service so the client picks up the configured value.'));
+					if (!length(dev)) {
+						push(checks, check('kernel', 'Tunnel device', running ? 'fail' : 'skip', 'the client has not created one',
+							'The device belongs to the client, not to this package. Read the client log below.'));
+					} else if (access(dev_sys) == null) {
+						push(checks, check('kernel', 'Tunnel device', 'fail', 'the client has not created one',
+							'The device belongs to the client, not to this package. Read the client log below.'));
+					} else {
+						let dev_mtu = trim(readfile(dev_sys + '/mtu') ?? '');
+						push(checks, check('kernel', 'Tunnel device', 'ok',
+							dev + ', MTU ' + dev_mtu, ''));
 
-					let route = sh_out('ip route show table ' + shq(table));
-					if (index(route.out, 'dev ' + dev) >= 0)
-						push(checks, check('kernel', 'Route attached to the device', 'ok',
-							'default via ' + dev, ''));
+						// The MTU check only reports a mismatch; a matching
+						// value adds no entry.
+						if (length(dev_mtu) && dev_mtu != mtu_cfg)
+							push(checks, check('kernel', 'MTU matches settings', 'warn',
+								'device ' + dev_mtu + ', configured ' + mtu_cfg,
+								'Restart the service so the client picks up the configured value.'));
+
+						let route = sh_out('ip route show table ' + shq(table));
+						if (index(route.out, 'dev ' + dev) >= 0)
+							push(checks, check('kernel', 'Route attached to the device', 'ok',
+								'default via ' + dev, ''));
+						else
+							push(checks, check('kernel', 'Route attached to the device', 'fail', 'not attached',
+								'Marked traffic falls into the killswitch instead of the tunnel. Restart the service.'));
+
+						let carrier = trim(readfile(dev_sys + '/carrier') ?? '');
+						if (carrier == '1')
+							push(checks, check('kernel', 'Tunnel carrier', 'ok', 'up', ''));
+						else
+							push(checks, check('kernel', 'Tunnel carrier', 'warn', 'no carrier',
+								'The device exists but the client has not established the tunnel yet. This is the client side, not the routing — read the client log.'));
+					}
+
+					if (rs.rule)
+						push(checks, check('kernel', 'Routing rule', 'ok', 'present', ''));
 					else
-						push(checks, check('kernel', 'Route attached to the device', 'fail', 'not attached',
-							'Marked traffic falls into the killswitch instead of the tunnel. Restart the service.'));
+						push(checks, check('kernel', 'Routing rule', running ? 'fail' : 'skip', 'absent', ''));
 
-					let carrier = trim(readfile(dev_sys + '/carrier') ?? '');
-					if (carrier == '1')
-						push(checks, check('kernel', 'Tunnel carrier', 'ok', 'up', ''));
+					if (rs.table)
+						push(checks, check('kernel', 'Routing table', 'ok', 'present', ''));
 					else
-						push(checks, check('kernel', 'Tunnel carrier', 'warn', 'no carrier',
-							'The device exists but the client has not established the tunnel yet. This is the client side, not the routing — read the client log.'));
+						push(checks, check('kernel', 'Routing table', running ? 'fail' : 'skip', 'absent', ''));
+
+					if (rs.nft)
+						push(checks, check('kernel', 'nftables table', 'ok', 'present', ''));
+					else
+						push(checks, check('kernel', 'nftables table', running ? 'fail' : 'skip', 'absent', ''));
+
+					// The package's own `table inet trusttunnel` always matches
+					// a plain 'trusttunnel' grep, so the check must look for
+					// the fw4 zone's own naming: fw4 emits an input_, output_
+					// and forward_ chain per zone (srcnat_/dstnat_ only with
+					// the NAT flags). Anything else means the fw4 zone is
+					// missing.
+					let fw = sh_out('nft list ruleset');
+					if (index(fw.out, 'forward_trusttunnel') >= 0)
+						push(checks, check('kernel', 'Firewall zone', 'ok', 'loaded in fw4', ''));
+					else
+						push(checks, check('kernel', 'Firewall zone', 'warn', 'not in the live ruleset',
+							'Run /etc/init.d/firewall reload — traffic into the tunnel is dropped without the zone.'));
 				}
-
-				if (rs.rule)
-					push(checks, check('kernel', 'Routing rule', 'ok', 'present', ''));
-				else
-					push(checks, check('kernel', 'Routing rule', running ? 'fail' : 'skip', 'absent', ''));
-
-				if (rs.table)
-					push(checks, check('kernel', 'Routing table', 'ok', 'present', ''));
-				else
-					push(checks, check('kernel', 'Routing table', running ? 'fail' : 'skip', 'absent', ''));
-
-				if (rs.nft)
-					push(checks, check('kernel', 'nftables table', 'ok', 'present', ''));
-				else
-					push(checks, check('kernel', 'nftables table', running ? 'fail' : 'skip', 'absent', ''));
-
-				// The package's own `table inet trusttunnel` always matches
-				// a plain 'trusttunnel' grep, so the check must look for
-				// the fw4 zone's own naming: fw4 emits an input_, output_
-				// and forward_ chain per zone (srcnat_/dstnat_ only with
-				// the NAT flags). Anything else means the fw4 zone is
-				// missing.
-				let fw = sh_out('nft list ruleset');
-				if (index(fw.out, 'forward_trusttunnel') >= 0)
-					push(checks, check('kernel', 'Firewall zone', 'ok', 'loaded in fw4', ''));
-				else
-					push(checks, check('kernel', 'Firewall zone', 'warn', 'not in the live ruleset',
-						'Run /etc/init.d/firewall reload — traffic into the tunnel is dropped without the zone.'));
 
 				// --- Network ---
 
@@ -542,7 +734,38 @@ return {
 							'Check the address, and that the router itself has internet access.'));
 				}
 
-				if (running && length(dev)) {
+				if (running && mode == 'proxy' && length(paddr)) {
+					// The through-tunnel leg goes via the SOCKS listener:
+					// curl's --socks5-hostname makes the proxy resolve the
+					// name, so the request follows the same path a LAN
+					// client's would. The listener demands the configured
+					// credentials when exposed beyond the loopback (the
+					// client refuses such binds without them), so the leg
+					// authenticates when a user name is set — otherwise
+					// the check would fail on a healthy tunnel.
+					let auth = '';
+					let user = first(rec, 'proxy.username', '');
+
+					if (length(user))
+						auth = ' --proxy-user ' + shq(user + ':' + first(rec, 'proxy.password', ''));
+
+					let via = sh_out('curl -fsS --max-time 8 --socks5-hostname ' + shq(paddr) + auth + ' https://api.ipify.org');
+					let plain = sh_out('curl -fsS --max-time 8 https://api.ipify.org');
+					let tip = trim(via.out);
+					let dip = trim(plain.out);
+
+					if (via.code == 0 && plain.code == 0 && tip == dip)
+						push(checks, check('network', 'Traffic goes through the tunnel', 'fail',
+							'same address both ways: ' + tip,
+							'The tunnel is up but traffic is not using it.'));
+					else if (via.code == 0 && plain.code == 0)
+						push(checks, check('network', 'Traffic goes through the tunnel', 'ok',
+							'tunnel ' + tip + ', direct ' + dip, ''));
+					else
+						push(checks, check('network', 'Traffic goes through the tunnel', 'fail',
+							length(tip) ? tip : 'request failed',
+							'A request through the SOCKS listener can fail even on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.'));
+				} else if (running && length(dev)) {
 					let via = sh_out('curl -fsS --max-time 8 --interface ' + shq(dev) + ' https://api.ipify.org');
 					let plain = sh_out('curl -fsS --max-time 8 https://api.ipify.org');
 					let tip = trim(via.out);

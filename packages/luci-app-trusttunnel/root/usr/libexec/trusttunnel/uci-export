@@ -2,7 +2,7 @@
 # uci-export: dump the trusttunnel UCI config as the records TSV.
 #
 # Every line is "section.option<TAB>value"; list options repeat the key
-# once per value. The emitted key set — 26 keys, fixed order — is the
+# once per value. The emitted key set — 30 keys, fixed order — is the
 # canonical schema the init script's change classifier and the records
 # accessor library consume, so nothing outside it is ever printed:
 # foreign sections or options in the UCI config must not leak into the
@@ -68,7 +68,7 @@ fi
 
 # schema-keys: routing_profile.name routing_profile.mode routing_profile.vpn_rules routing_profile.bypass_rules
 
-for o in enabled log_level; do scalar main "$o"; done
+for o in enabled log_level mode; do scalar main "$o"; done
 
 for o in hostname username password protocol anti_dpi post_quantum skip_verification has_ipv6 \
 		custom_sni client_random routing_profile; do
@@ -94,5 +94,7 @@ for o in mtu table fwmark blackhole_on_down include_router_traffic \
 		lan_devices; do
 	scalar network "$o"
 done
+
+for o in address username password; do scalar proxy "$o"; done
 
 listopt domains direct

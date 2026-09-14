@@ -163,6 +163,13 @@ resolve_host() {
 # A disabled blackhole is not just skipped: a stale one from an earlier
 # config is removed, so the 1->0 transition takes effect on a reload.
 up() {
+    # Proxy mode owns no kernel routing: refuse rather than install a
+    # pipeline whose marked traffic would blackhole with no tun device
+    # to point the table at.
+    if [ "$(tt_get main.mode)" = "proxy" ]; then
+        logger -t trusttunnel "routing: not applicable in proxy mode"
+        return 1
+    fi
     if [ "$TT_BLACKHOLE" = true ]; then
         "$TT_IP" route replace blackhole default table "$TT_TABLE" metric 1000
         "$TT_IP" -6 route replace blackhole default table "$TT_TABLE" metric 1000

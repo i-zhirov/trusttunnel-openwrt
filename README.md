@@ -4,7 +4,20 @@ TrustTunnel client daemon for OpenWrt routers: it runs the tunnel, exposes
 a LuCI control page and delivers the tunnel to the LAN. It targets OpenWrt
 **22.03 and newer**.
 
-The package is built around **named routing profiles**:
+The package delivers the tunnel in one of two **operation modes**
+(`main.mode`):
+
+- **TUN mode** (the default) routes the whole LAN through the tunnel: LAN
+  traffic is marked with fwmark `0x9527`, a policy rule sends marked
+  packets to table `880`, and the client's tun device carries them.
+- **Proxy mode** runs a SOCKS5 listener on the router instead. Nothing is
+  routed automatically — apps and devices that support a proxy point at
+  the listener address (the Proxy tab) and their traffic goes through the
+  tunnel from there. There is no tun device and no kernel routing
+  involved.
+
+Both modes share the same server settings and the same
+**named routing profiles**:
 
 - Each profile carries a **mode** and two rule lists.
 - **VPN mode** sends everything through the tunnel except the entries in the
@@ -14,7 +27,8 @@ The package is built around **named routing profiles**:
   an `IP:port` pair, or a CIDR range.
 - One profile is assigned to the server via `endpoint.routing_profile`, and
   the client itself enforces the mode and the rule lists once the traffic has
-  been marked into the tunnel.
+  been marked into the tunnel (or, in proxy mode, for every connection made
+  through the listener).
 - With no profile assigned (or a name that no longer matches any profile),
   the previous behavior takes over: everything goes into the tunnel, and the
   flat `domains.direct` list is applied as the exclusions.
@@ -24,10 +38,12 @@ The package is built around **named routing profiles**:
 - `luci-app-trusttunnel`;
 - `trusttunnel-client` and its binaries under `/opt/trusttunnel_client`;
 - the `/etc/config/trusttunnel` configuration file;
-- a firewall zone named `trusttunnel` (bound to the `tun+` device wildcard)
-  together with the forwarding rule `lan → trusttunnel`;
-- the routing chain fwmark → table `880` → the client's tun device, backed by
-  a blackhole killswitch.
+- in TUN mode: a firewall zone named `trusttunnel` (bound to the `tun+`
+  device wildcard) together with the forwarding rule `lan → trusttunnel`,
+  and the routing chain fwmark → table `880` → the client's tun device,
+  backed by a blackhole killswitch;
+- in proxy mode: none of the above — the client binds the SOCKS listener
+  itself.
 
 ## Requirements
 
@@ -113,11 +129,12 @@ refresh the signing keys; `/etc/config/trusttunnel` is left alone.
 Open **Services → TrustTunnel → Settings** in LuCI. The page has five
 tabs:
 
-- **General**: a read-only service line, the service switch ("start on
-  boot") — the service runs only while it is on — the log level, and the
-  routing-profile selector that assigns the profile to the server. After
-  Save & Apply, start the service with the Start button on the Status
-  page.
+- **General**: a read-only service line, the **operation mode** switch
+  (TUN routes the whole LAN; Proxy runs a SOCKS5 listener instead), the
+  service switch ("start on boot") — the service runs only while it is
+  on — the log level, and the routing-profile selector that assigns the
+  profile to the server. After Save & Apply, start the service with the
+  Start button on the Status page.
 - **Server**: the endpoint the client dials, split into **Connection**
   and **Security** inner tabs. The **Import…** button takes what your
   server produces — the text of a config file, or a `tt://` link — and
@@ -126,6 +143,12 @@ tabs:
   `client_random`, plus anti-DPI, IPv6 and certificate-verification
   switches. Everything can also be typed by hand, and a **Test
   connection** button pings every configured address.
+- **Proxy**: the SOCKS5 listener used in proxy mode — the listen
+  address (`IP:port`, default `127.0.0.1:1080`) and optional user/pass
+  authentication (set both or neither). Bind `0.0.0.0:1080` (or the
+  router's LAN address) to serve the whole LAN — the client then
+  **requires** the user/pass pair and refuses to start without it;
+  `127.0.0.1:1080` serves the router itself and needs no credentials.
 - **Routing profiles**: the Default profile (VPN mode) is already seeded
   here. Every profile gets a mode — **VPN** (everything is tunneled
   except the bypass-list entries) or **Bypass** (only the VPN-list
@@ -138,7 +161,7 @@ tabs:
 - **Advanced**: rarely needed — the MTU, the LAN interfaces, the
   blackhole switch, router-traffic routing, the client's own DNS
   upstreams, and the internal routing parameters (firewall mark,
-  routing table).
+  routing table). The routing options apply in TUN mode only.
 - **Versions**: what is installed — the app package and the client
   package versions exactly as the package manager reports them, plus
   the client binary's own version. Read-only: updates are delivered
@@ -172,6 +195,23 @@ The routing-profile block is optional: without it (or with a name that
 matches no profile), the client falls back to the legacy `domains.direct`
 list.
 
+The same configuration in **proxy mode** — a LAN-accessible SOCKS5
+listener with authentication:
+
+```sh
+uci set trusttunnel.main.mode='proxy'
+uci set trusttunnel.proxy.address='0.0.0.0:1080'
+uci set trusttunnel.proxy.username='lan'
+uci set trusttunnel.proxy.password='lan-pass'
+uci set trusttunnel.main.enabled='1'
+uci commit trusttunnel
+/etc/init.d/trusttunnel enable
+/etc/init.d/trusttunnel start
+```
+
+Point the SOCKS5-capable app or device at `0.0.0.0:1080` (the router's
+address as seen from the LAN) with the credentials above.
+
 ## Settings reference
 
 Everything lives in `/etc/config/trusttunnel`. The files under
@@ -183,7 +223,18 @@ the service starts or settings are applied — they must not be edited.
 | Option | Default | Meaning |
 |---|---|---|
 | `enabled` | `0` | The service switch: the service starts at boot when it is on, and a start is refused while it is off |
+| `mode` | `tun` | The operation mode: `tun` routes the whole LAN through the client automatically; `proxy` runs a SOCKS5 listener instead (see the `proxy` section) |
 | `log_level` | `info` | `info`, `debug` or `trace`; the last two are noisy, leave them on only while investigating something |
+
+### Section `proxy`
+
+Used in proxy mode only.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `address` | `127.0.0.1:1080` | The `IP:port` the SOCKS5 listener binds. `127.0.0.1:1080` serves the router itself; `0.0.0.0:1080` or the router's LAN address serves the whole LAN — the client then requires `username`/`password`. |
+| `username` | — | Optional SOCKS5 authentication; set it together with `password`, or leave both empty for an open proxy. Mandatory for any listener outside the loopback. |
+| `password` | — | The SOCKS5 password; emitted only when `username` is set |
 
 ### Section `endpoint`
 
@@ -266,21 +317,31 @@ an IP address, an `IP:port` pair, or a CIDR range.
   | What changed | What happens | Tunnel |
   |---|---|---|
   | `network.lan_devices`, `network.blackhole_on_down`, `network.include_router_traffic` | the rules are regenerated and reloaded, the route reattached; the client keeps running | stays up |
-  | `network.table`, `network.fwmark`, `main.enabled` | full restart: the routing is torn down and rebuilt | drops |
-  | `domains.direct`, `main.log_level`, `network.mtu`, anything under `endpoint.*` or `routing_profile.*` | the client restarts while the routing survives the cycle | drops |
+  | `network.table`, `network.fwmark`, `main.enabled`, `main.mode` | full restart: the routing is torn down and rebuilt (a mode switch tears the tun routing down before the client starts as a listener, or brings it up when switching back) | drops |
+  | `domains.direct`, `main.log_level`, `network.mtu`, anything under `endpoint.*`, `routing_profile.*` or `proxy.*` | the client restarts while the routing survives the cycle | drops |
   | the pinned certificate | treated like a client restart (it is compared separately, as a file) | drops |
   | nothing relevant | only the applied-state records are updated | stays up |
 
   Anything outside the schema gets the fullest action too: an unknown key
   can never be applied cheaply, so the safe default is a full restart.
+- **Proxy mode.** With `main.mode=proxy` the generated config carries
+  `[listener.socks]` instead of `[listener.tun]` — the client accepts
+  exactly one listener, so the two blocks are mutually exclusive. The
+  routing helper, the hotplug reattach and the `tun+` firewall zone are
+  not involved; the SOCKS5 traffic is fail-closed by construction (every
+  connection goes through the tunnel, so a dead tunnel just fails the
+  connection). The killswitch, MTU, LAN-interface and routing options are
+  TUN-mode concepts and have no effect in proxy mode.
 - **LuCI pages.** The Status page presents the service state, the client
   log, and a Mode row that names the assigned routing profile and which
-  half of its rules goes through the tunnel. It renders no device row —
-  the client's tun device is inspected in Diagnostics, whose Tunnel
-  device check reports it. Diagnostics walks the chain from configuration
-  over the client and the tunnel device to routing, firewall and network,
-  with a verdict per check, and offers `ping`, `probe` and `check_domain`
-  tools.
+  half of its rules goes through the tunnel. In proxy mode it shows the
+  listener address instead of the device state, and the "working" verdict
+  keys on the listener being bound. Diagnostics walks the chain from
+  configuration over the client and the tunnel device to routing,
+  firewall and network, with a verdict per check — in proxy mode the
+  kernel group is replaced by a single SOCKS-listener check, and the
+  through-tunnel comparison uses the listener — and offers `ping`,
+  `probe` and `check_domain` tools.
 
 ## Diagnostics
 
@@ -290,16 +351,17 @@ here: Status and Diagnostics (Settings is covered under Configuration).
 ### Status page
 
 - A verdict banner: the client is not installed; the service is off;
-  the service is enabled but not running; the service runs but the tunnel
-  is not established yet ("connecting"); or the tunnel works — with the
-  assigned profile named.
+  the service is enabled but not running; the service runs but the
+  tunnel (or, in proxy mode, the SOCKS listener) is not up yet
+  ("connecting"); or the tunnel works — with the assigned profile named.
 - **Now**: a State row ("working" only when everything is), a Mode row —
   the assigned profile and which half of its rules goes through the
-  tunnel, or "Everything through VPN" without a profile — and the server
-  host name. Start / Stop / Restart buttons. A **Preview rules** button
-  shows how each rule of the assigned profile is treated right now —
-  or the legacy "do not bypass" list when no profile is assigned. The
-  state facts and the client-log tail refresh every ten seconds.
+  tunnel, or "Everything through VPN" without a profile — the server
+  host name, and in proxy mode the listener address. Start / Stop /
+  Restart buttons. A **Preview rules** button shows how each rule of the
+  assigned profile is treated right now — or the legacy "do not bypass"
+  list when no profile is assigned. The state facts and the client-log
+  tail refresh every ten seconds.
 
 ### Diagnostics page
 
@@ -311,10 +373,10 @@ problem.
 | Group | Checks |
 |---|---|
 | Configuration | endpoint address, credentials, TLS host name, assigned routing profile |
-| Prerequisites | client binary, `/dev/net/tun` |
+| Prerequisites | client binary, `/dev/net/tun` (TUN mode only) |
 | Service | enabled at boot, running now |
-| Kernel state | tunnel device and its MTU, route attached to the device, tunnel carrier, fwmark rule, routing table, nftables table, firewall zone |
-| Network | endpoint reachable, traffic actually going through the tunnel |
+| Kernel state | TUN mode: tunnel device and its MTU, route attached to the device, tunnel carrier, fwmark rule, routing table, nftables table, firewall zone. Proxy mode: the SOCKS listener (bound on the configured address or not). |
+| Network | endpoint reachable, traffic actually going through the tunnel (via the device in TUN mode, via the listener in proxy mode) |
 
 Four verdicts, and the distinction matters:
 
@@ -330,9 +392,10 @@ The page also carries three tools:
 - **Ping the server** — loss and min/avg/max for every configured address.
 - **Compare the external address** — the address seen through the tunnel
   next to the one seen directly. The same address both ways means the
-  traffic is not using the tunnel. A request bound to the device can fail
-  even on a healthy tunnel, because the default route lives in the marked
-  table — judge by a LAN client instead.
+  traffic is not using the tunnel. In TUN mode a request bound to the
+  device can fail even on a healthy tunnel, because the default route
+  lives in the marked table — judge by a LAN client instead. In proxy
+  mode the request goes through the SOCKS listener.
 - **Check a domain** — the normalized name, whether the domain is listed
   (an entry like `example.com` matches the domain itself and its
   subdomains), and the verdict — through the tunnel or direct — with the
@@ -402,6 +465,14 @@ The page also carries three tools:
   other software fall under it too (see Notes).
 - The tunnel MTU comes from `network.mtu`; too high a value stalls TLS
   handshakes and large downloads.
+- **Proxy mode** does not route anything automatically: only apps and
+  devices explicitly configured to use the SOCKS5 listener get the
+  tunnel. DNS for proxied connections is resolved by the client through
+  the tunnel (`endpoint.dns_upstream`); apps that resolve locally and
+  send bare IPs do not get that DNS. An open listener (no credentials)
+  bound to `0.0.0.0` is reachable by the whole LAN — the client itself
+  refuses to bind anything outside the loopback without the user/pass
+  pair, so protect LAN-exposed listeners with credentials.
 
 ## Updating
 

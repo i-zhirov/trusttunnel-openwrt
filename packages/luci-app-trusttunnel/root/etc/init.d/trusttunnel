@@ -10,6 +10,13 @@ OUTDIR=/var/etc/trusttunnel
 RECORDS=$OUTDIR/settings.tsv
 CLIENT=/opt/trusttunnel_client/trusttunnel_client
 
+# The operation mode of the APPLIED config: proxy (SOCKS5 listener) or
+# tun. The records carry the UCI value; absent means tun — the default
+# and the only mode of earlier versions.
+mode_is_proxy() {
+	[ "$(awk -F '\t' '$1 == "main.mode" { print $2; exit }' "$RECORDS" 2>/dev/null)" = "proxy" ]
+}
+
 # Undo the keep-routing handshake of an interrupted restart: a start that
 # aborted before the procd instance came up must tear the routing down for
 # real, otherwise the table, the mark rule and the blackhole would stay
@@ -114,15 +121,21 @@ start_service() {
 	fi
 	wait_for_wan
 	wait_for_time
-	if ! "$LIBDIR/routing" up "$RECORDS" "$OUTDIR"; then
-		logger -t trusttunnel "error: routing setup failed"
-		abort_restart_cleanup
-		return 1
+	# Tun mode wires the kernel routing first (a hard prerequisite, the
+	# client would blackhole DNS otherwise) and remembers the newest
+	# existing tun index before the client creates its own device, so the
+	# attach below only ever touches the fresh one. Proxy mode needs no
+	# routing: the client binds the SOCKS listener itself.
+	if mode_is_proxy; then
+		_tun_since=0
+	else
+		if ! "$LIBDIR/routing" up "$RECORDS" "$OUTDIR"; then
+			logger -t trusttunnel "error: routing setup failed"
+			abort_restart_cleanup
+			return 1
+		fi
+		_tun_since=$(max_ifindex)
 	fi
-
-	# Remember the newest existing tun index before the client creates its
-	# own device, so the attach below only ever touches the fresh one.
-	_tun_since=$(max_ifindex)
 
 	procd_open_instance trusttunnel
 	procd_set_param command "$CLIENT" -c "$OUTDIR/client.toml"
@@ -139,7 +152,9 @@ start_service() {
 	procd_set_param pidfile /var/run/trusttunnel.pid
 	procd_close_instance
 
-	attach_client_device "$_tun_since" || true
+	if [ "$_tun_since" -gt 0 ]; then
+		attach_client_device "$_tun_since" || true
+	fi
 	return 0
 }
 
@@ -266,10 +281,10 @@ change_class() {
 		network.lan_devices|network.blackhole_on_down|network.include_router_traffic)
 			echo "reload"
 			;;
-		network.table|network.fwmark|main.enabled)
+		network.table|network.fwmark|main.enabled|main.mode)
 			echo "restart_full"
 			;;
-		domains.direct|main.log_level|network.mtu|endpoint.*|routing_profile.*)
+		domains.direct|main.log_level|network.mtu|endpoint.*|routing_profile.*|proxy.*)
 			echo "restart"
 			;;
 		*)
@@ -349,8 +364,14 @@ apply_settings() {
 			;;
 		reload)
 			rm -f "$RECORDS.next"
-			if regenerate && "$LIBDIR/routing" up "$RECORDS" "$OUTDIR"; then
-				"$LIBDIR/routing" reattach "$RECORDS" "$OUTDIR"
+			# The reload-class keys are tun-mode routing options; in proxy
+			# mode nothing is rebuilt (the regenerate below still applies
+			# the new records), and in tun mode the routing must come up
+			# before the client is told to keep running.
+			if ! regenerate; then
+				logger -t trusttunnel "warning: applying without a restart failed, restarting the service"
+				restart
+			elif mode_is_proxy || { "$LIBDIR/routing" up "$RECORDS" "$OUTDIR" && "$LIBDIR/routing" reattach "$RECORDS" "$OUTDIR"; }; then
 				logger -t trusttunnel "settings applied without restarting the client"
 			else
 				logger -t trusttunnel "warning: applying without a restart failed, restarting the service"
