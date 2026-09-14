@@ -5,9 +5,11 @@ The theme's default layout ends with a "This site is open source. Improve
 this page" footer, whose link is built from the page's own source path
 (<url>/edit/<branch>/repo-site/<page-path>). That link is correct for the
 homepage (repo-site/README.md), but the repository index pages are generated
-by the release workflow into site/releases/<version>/, its packages/ level,
-the per-arch pages and the per-feed pages — the file the footer would point
-to does not exist in the repository. This layout
+by the release workflow into site/releases/ (tree list), site/releases/<version>/
+(arch lists) and the per-feed pages; the structural levels in between
+(packages/, packages/<arch>/) are one-line redirect stubs using the
+redirect layout — the file the footer would point to does not exist in
+the repository. This layout
 is the theme's default minus that footer; the index templates must keep using
 it and never switch to `layout: default` for the sake of the footer.
 
