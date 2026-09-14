@@ -98,6 +98,48 @@ assert_eq "0" "$(count_occ bank.example "$bypass_out")" \
 assert_eq "0" "$(count_occ legacy.example "$bypass_out")" \
     "domains.direct does not leak in bypass mode"
 
+# --- proxy fixture (proxy-mode records with auth) -----------------------------------
+
+proxy_out=$(sh "$GEN" tests/fixtures/records/proxy.tsv)
+
+assert_contains "$proxy_out" 'vpn_mode = "general"' \
+    "the profile still drives vpn_mode in proxy mode"
+assert_contains "$proxy_out" 'exclusions = ["bank.example"]' \
+    "the profile still drives the exclusions in proxy mode"
+assert_contains "$proxy_out" '[listener.socks]' \
+    "proxy mode emits the socks listener block"
+assert_contains "$proxy_out" 'address = "0.0.0.0:1080"' \
+    "the listener address comes from the proxy records"
+assert_contains "$proxy_out" 'username = "lanuser"' \
+    "a set user name enables socks authentication"
+assert_contains "$proxy_out" 'password = "lanpass"' \
+    "the password is emitted with the user name"
+assert_eq "0" "$(count_occ listener.tun "$proxy_out")" \
+    "proxy mode never emits the tun listener"
+assert_eq "0" "$(count_occ mtu_size "$proxy_out")" \
+    "mtu is tun-only and absent in proxy mode"
+assert_eq "0" "$(count_occ included_routes "$proxy_out")" \
+    "the route lists are tun-only and absent in proxy mode"
+assert_eq "0" "$(count_occ change_system_dns "$proxy_out")" \
+    "the dns switch is tun-only and absent in proxy mode"
+
+# --- proxy without auth: no username means no credentials at all --------------------
+
+noauth_tsv="$TT_TEST_TMP/proxy-noauth.tsv"
+printf 'main.enabled\t1\nmain.mode\tproxy\nproxy.address\t127.0.0.1:1080\nendpoint.hostname\tvpn.example.com\nendpoint.address\t1.2.3.4:443\nendpoint.username\talice\nendpoint.password\ts3cret\n' > "$noauth_tsv"
+
+noauth_out=$(sh "$GEN" "$noauth_tsv")
+
+assert_contains "$noauth_out" '[listener.socks]' "proxy mode without auth still emits the listener"
+assert_contains "$noauth_out" 'address = "127.0.0.1:1080"' "the default-style address is emitted"
+# The endpoint block also carries a username record, so the absence check
+# must be scoped to the listener block: auth is emitted only there.
+noauth_socks=$(printf '%s\n' "$noauth_out" | sed -n '/^\[listener.socks\]/,$p')
+assert_eq "0" "$(count_occ username "$noauth_socks")" \
+    "an unset user name leaves socks auth off entirely"
+assert_eq "0" "$(count_occ password "$noauth_socks")" \
+    "an unset password is not emitted either"
+
 # --- stale reference: named profile does not exist --------------------------------
 
 stale_tsv="$TT_TEST_TMP/stale.tsv"

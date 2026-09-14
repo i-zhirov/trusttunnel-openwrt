@@ -18,14 +18,15 @@ test.beforeEach(async ({ page }) => {
 test('renders the tabs in order', async ({ page }) => {
 	await openView(page, 'settings');
 
-	// Five map-level tabs, keyed by the UCI section type...
+	// Six map-level tabs, keyed by the UCI section type...
 	const tabs = page.locator('#view .cbi-map > .cbi-tabmenu li a');
-	await expect(tabs).toHaveCount(5);
+	await expect(tabs).toHaveCount(6);
 	await expect(tabs.nth(0)).toHaveText('General');
 	await expect(tabs.nth(1)).toHaveText('Server');
-	await expect(tabs.nth(2)).toHaveText('Routing profiles');
-	await expect(tabs.nth(3)).toHaveText('Advanced');
-	await expect(tabs.nth(4)).toHaveText('Versions');
+	await expect(tabs.nth(2)).toHaveText('Proxy');
+	await expect(tabs.nth(3)).toHaveText('Routing profiles');
+	await expect(tabs.nth(4)).toHaveText('Advanced');
+	await expect(tabs.nth(5)).toHaveText('Versions');
 
 	// ...and the endpoint section splits into its own inner tabs (map
 	// tabs key panes by section type, so two endpoint sections would
@@ -76,6 +77,13 @@ test('fields render the loaded UCI state', async ({ page }) => {
 	const profile = page.locator('[id="widget.cbid.trusttunnel.main.routing_profile"]');
 	await expect(profile.locator('option')).toHaveCount(2);
 	await expect(profile.locator('option[value="Default"]')).toHaveText('Default');
+
+	// The operation mode picker defaults to TUN and the Proxy tab carries
+	// the listener defaults.
+	await expect(page.locator('[id="widget.cbid.trusttunnel.main.mode"] option:checked'))
+		.toHaveText('TUN — route the whole LAN');
+	await expect(page.locator('[id="widget.cbid.trusttunnel.proxy.address"]'))
+		.toHaveValue('127.0.0.1:1080');
 });
 
 test('the Versions tab reports the installed package versions', async ({ page }) => {

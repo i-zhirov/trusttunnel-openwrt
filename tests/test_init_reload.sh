@@ -119,6 +119,32 @@ assert_contains "$(calls)" "routing reattach" \
 assert_contains "$(cat "$RECORDS")" "br-guest" \
 	"the applied-state record is updated"
 
+# --- Proxy mode: no kernel routing ---------------------------------------------
+
+# In proxy mode the routing options are inert: a reload-class edit still
+# regenerates the records, but nothing is loaded into the kernel.
+setup
+printf 'main.mode\tproxy\n' >> "$RECORDS"
+printf 'main.mode\tproxy\n' >> "$TT_NEXT"
+printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
+apply_settings
+
+assert_eq "" "$(no_call 'restart')" \
+	"in proxy mode a LAN-interfaces edit does not restart the client"
+assert_eq "" "$(no_call 'routing up')" \
+	"in proxy mode no routing is loaded into the kernel"
+assert_contains "$(calls)" "regenerate" \
+	"in proxy mode the records are still regenerated"
+
+# A mode switch rebuilds everything: the tun routing must come down with the
+# old mode before the client starts in the new one.
+setup
+printf 'main.mode\tproxy\n' >> "$TT_NEXT"
+apply_settings
+
+assert_contains "$(calls)" "restart keep_routing=0" \
+	"switching the operation mode tears the routing down completely"
+
 # --- Restart keeping routing --------------------------------------------------
 
 setup

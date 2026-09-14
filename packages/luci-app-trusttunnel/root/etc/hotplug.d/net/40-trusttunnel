@@ -33,6 +33,10 @@ RECORDS=/var/etc/trusttunnel/settings.tsv
 OUTDIR=/var/etc/trusttunnel
 [ -f "$RECORDS" ] || exit 0
 
+# The tun reattach dance is tun-mode only: in proxy mode the client binds a
+# SOCKS listener and no tun device or routing table exists to attach.
+[ "$(awk -F '\t' '$1 == "main.mode" { print $2; exit }' "$RECORDS" 2>/dev/null)" = "proxy" ] && exit 0
+
 # Only a running service may reattach; a stopped one must not touch routing.
 /etc/init.d/trusttunnel running >/dev/null 2>&1 || exit 0
 

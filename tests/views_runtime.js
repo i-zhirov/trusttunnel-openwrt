@@ -102,7 +102,7 @@ const dom = {
 // the configuration object. The data lives in state.values; sections()
 // and get() read it.
 const uciData = {
-    main:     { '.type': 'main', '.name': 'main', enabled: '1', log_level: 'info' },
+    main:     { '.type': 'main', '.name': 'main', enabled: '1', log_level: 'info', mode: 'tun' },
     endpoint: { '.type': 'endpoint', '.name': 'endpoint',
                 hostname: 'kz.hexbrains.com', address: ['kz.hexbrains.com:443'],
                 username: 'iceman', password: 'secret', protocol: 'http2',
@@ -110,6 +110,8 @@ const uciData = {
                 has_ipv6: '1', routing_profile: 'Test' },
     network:  { '.type': 'network', '.name': 'network', mtu: '1350', table: '880',
                 fwmark: '0x9527', blackhole_on_down: '1', include_router_traffic: '0' },
+    proxy:    { '.type': 'proxy', '.name': 'proxy', address: '127.0.0.1:1080',
+                username: '', password: '' },
     cfg1:     { '.type': 'routing_profile', '.name': 'cfg1', name: 'Default', mode: 'vpn' },
     cfg2:     { '.type': 'routing_profile', '.name': 'cfg2', name: 'Test',
                 mode: 'bypass', vpn_rules: ['api.ipify.org', 'example.com'] },
@@ -211,12 +213,14 @@ form.Map.prototype.render = function () {
 const canned = {
     status: function () {
         return {
-            enabled: true, running: true, device: 'tun0', device_up: true,
+            enabled: true, running: true, mode: 'tun',
+            device: 'tun0', device_up: true,
             rule: true, table: true, nft: true,
             endpoint_hostname: 'kz.hexbrains.com',
             addresses: ['kz.hexbrains.com:443'],
             client_installed: true, routing_profile: 'Test',
-            routing_mode: 'bypass', vpn_mode: 'selective'
+            routing_mode: 'bypass', vpn_mode: 'selective',
+            proxy_address: null, listener_up: null
         };
     },
     service: function () { return { code: 0 }; },
@@ -475,6 +479,17 @@ async function main() {
         aboutSec.options.some(o => o.name === n)),
         'settings: the Versions section carries the three version rows');
     ok(hasText(settingsTree, 'Versions'), 'settings: the Versions tab title renders');
+
+    // The operation mode picker lives on the General tab and the SOCKS
+    // listener settings on their own Proxy tab.
+    const mainSec = form_lastMap.sections.find(s => s.type === 'main');
+    ok(mainSec && mainSec.options.some(o => o.name === 'mode'),
+        'settings: the operation mode picker exists on General');
+    const proxySec = form_lastMap.sections.find(s => s.type === 'proxy');
+    ok(proxySec && proxySec.options.some(o => o.name === 'address') &&
+        proxySec.options.some(o => o.name === 'username') &&
+        proxySec.options.some(o => o.name === 'password'),
+        'settings: the proxy section exposes address and authentication');
 
     // Import flow: open the modal, paste a config, press Import, verify the
     // values land in pending UCI only (uci.set recorded, nothing else).

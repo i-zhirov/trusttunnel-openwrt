@@ -84,7 +84,7 @@ one generated client config, and one routing helper. The chain is:
 
 `uci-export` is the canonical emitter of the records TSV
 (`section.option<TAB>value`, list options repeat their key). The emitted
-key set — **26 keys, fixed order** — is a hard contract shared by
+key set — **30 keys, fixed order** — is a hard contract shared by
 `records.sh`, `gen-config`, the `routing` helper, the init script's change
 classifier and the ucode backend's `records()` parser. Nothing outside the
 schema ever appears in the file (foreign UCI sections must not leak), and
@@ -93,6 +93,31 @@ written separately to `endpoint.pem` by the init script).
 
 `uci-export` must never gain `set -u`: `/lib/functions.sh` reads
 uninitialized variables and dies under it.
+
+### Operation modes (tun / proxy)
+
+`main.mode` (default `tun`, absent on upgraded installs means `tun`)
+selects how the tunnel is delivered:
+
+- **tun mode** — the classic wiring: `[listener.tun]` in `client.toml`,
+  kernel routing via fwmark → table 880 → the client's tun device,
+  hotplug reattach, the `tun+` firewall zone, MTU.
+- **proxy mode** — `[listener.socks]` in `client.toml` (address +
+  optional user/pass auth) instead; no kernel routing, no tun device, no
+  hotplug, no zone. The client accepts EXACTLY ONE listener, so
+  `gen-config` must never emit both blocks.
+
+The mode gates: `gen-config` (listener block), the init script's
+`mode_is_proxy()` (skip `routing up`/attach in `start_service`, skip the
+routing reload in `apply_settings`), the `routing` helper (refuses `up` in
+proxy mode — defense in depth), the hotplug hook (exits early), the
+backend (`status.mode`/`proxy_address`/`listener_up`, `probe` via
+`curl --socks5-hostname`, `diagnose`'s kernel group and tunnel check) and
+the views (mode picker, Proxy tab, verdict/facts). `main.mode` maps to
+`restart_full` and `proxy.*` to `restart` in the change classifier; the
+listener state is detected through `/proc/net/tcp{,6}` (local port in hex,
+anchored grep — the fixed-width sl column makes plain field splits
+unreliable).
 
 ### Routing profiles (the core feature)
 
@@ -120,6 +145,7 @@ Subcommands: `dump | up | attach | reattach | detach | down | status`.
   LAN device and destined outside the endpoint sets and the private
   ranges with fwmark `0x9527`). Endpoint addresses are resolved BEFORE
   the ruleset lands (marked traffic would otherwise blackhole DNS).
+  `up` refuses to run when the records declare proxy mode.
 - `attach`: point table 880's default route at the client tun device
   (metric 1) and record the device name in `$OUT_DIR/device`.
 - `down`: remove everything; the client's device is never deleted.
@@ -131,8 +157,9 @@ procd service, `USE_PROCD=1`, `START=95`, `STOP=10`. Notable behaviors:
 
 - `start_service` checks `main.enabled`, the client binary, the trust
   store, regenerates records + config, waits for a default route and for
-  the clock to catch up, runs `routing up`, then starts the client with
-  `procd` and attaches an already-existing tun device.
+  the clock to catch up, runs `routing up` (tun mode only), then starts
+  the client with `procd` and attaches an already-existing tun device
+  (tun mode only).
 - `reload_service` → `apply_settings`: classifies the diff between the
   current records and the new export (`changed_keys` →
   `classify_change`), producing `noop | reload | restart | restart_full`,
@@ -190,28 +217,33 @@ file compiles under the pinned ucode.
 
 ### LuCI views
 
-- `status.js` — verdict banner, facts (state/mode/server), Start/Stop/
-  Restart buttons, a rules preview for the assigned profile (or the
-  legacy `domains.direct` list without one) that checks each effective
-  rule via `check_domain`, client log; polls every 10s.
+- `status.js` — verdict banner, facts (state/mode/server/proxy address),
+  Start/Stop/Restart buttons, a rules preview for the assigned profile
+  (or the legacy `domains.direct` list without one) that checks each
+  effective rule via `check_domain`, client log; polls every 10s. The
+  verdict is mode-aware: the "working" gate is `device_up` in tun mode
+  and `listener_up` in proxy mode.
 - `settings.js` — a single tabbed `form.Map` whose sections become tabs
-  (General, Server, Routing profiles, Advanced, Versions), plus the
-  Import… modal that calls `import_config` and applies results to pending
-  UCI (nothing is written until Save & Apply). The endpoint section
-  splits into Connection and Security inner tabs (`s.tab`/`s.taboption`)
-  — map-level tabs key panes by the UCI section type, so two sections of
-  the same type would collide. The Versions tab is a `NamedSection` of
-  the UI-only `about` section type: it carries no UCI options, its
-  DummyValue rows read the `versions` RPC result, and uci-defaults
-  creates the section on installs that predate it. Extra tools: a
-  read-only service line on General (via the `status` RPC), a Test
-  connection modal on Server (`ping`), and a per-profile rule preview
-  (`check_domain`) whose verdicts only apply to the assigned profile.
-  The routing profile picker lives on General and `dns_upstream` on
-  Advanced; both write the endpoint section via `ucisection`. Config
-  values are read via the `uci` module API (`uci.sections()`/`uci.get()`)
-  — current LuCI resolves `uci.load()` with the package-name list, so
-  the load() result is no data source.
+  (General, Server, Proxy, Routing profiles, Advanced, Versions), plus
+  the Import… modal that calls `import_config` and applies results to
+  pending UCI (nothing is written until Save & Apply). The endpoint
+  section splits into Connection and Security inner tabs
+  (`s.tab`/`s.taboption`) — map-level tabs key panes by the UCI section
+  type, so two sections of the same type would collide. The General tab
+  carries the operation-mode picker (`main.mode`), the Proxy tab the
+  SOCKS5 listener settings (address + optional user/pass pair, validated
+  both-or-neither). The Versions tab is a `NamedSection` of the UI-only
+  `about` section type: it carries no UCI options, its DummyValue rows
+  read the `versions` RPC result, and uci-defaults creates the section
+  on installs that predate it. Extra tools: a read-only service line on
+  General (via the `status` RPC), a Test connection modal on Server
+  (`ping`), and a per-profile rule preview (`check_domain`) whose
+  verdicts only apply to the assigned profile. The routing profile
+  picker lives on General and `dns_upstream` on Advanced; both write the
+  endpoint section via `ucisection`. Config values are read via the
+  `uci` module API (`uci.sections()`/`uci.get()`) — current LuCI
+  resolves `uci.load()` with the package-name list, so the load()
+  result is no data source.
 - `diagnostics.js` — renders the diagnose checks grouped and ordered
   (config → prereq → service → kernel → network), problems first with a
   toggle for the rest, plus domain-check, ping and address-compare tools
@@ -561,12 +593,13 @@ package managers rely on. No branch ever holds packages.
   the tag.
 - **Do not rebuild goldens casually**: backend behavior changes require
   updating the golden set in `tests/backend/goldens/` and its `healthy/`
-  variant, and the `driver.uc` normalizations must stay in sync.
+  and proxy-mode variants, and the `driver.uc` normalizations must stay
+  in sync.
 
 ## Typical tasks
 
 - **Change a setting end-to-end**: UCI option in
-  `root/etc/config/trusttunnel` → `uci-export` schema (26-key contract,
+  `root/etc/config/trusttunnel` → `uci-export` schema (30-key contract,
   see its header and `schema-keys:` comments) → `gen-config` emission →
   init script `change_class` mapping → settings.js field (+ validation)
   → records fixtures/tests → goldens if the backend surfaces it.

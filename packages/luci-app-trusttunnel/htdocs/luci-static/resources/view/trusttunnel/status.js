@@ -92,7 +92,16 @@ return view.extend({
 			};
 		}
 
-		if (!st.device_up)
+		// Proxy mode has no tun device: the SOCKS listener state is the
+		// liveness signal, and the device_up gate below is tun-only.
+		if (st.mode === 'proxy' && !st.listener_up)
+			return {
+				level: 'warning',
+				head: host ? _('Connecting to %s').format(host) : _('Connecting to the server'),
+				detail: _('The client is running but the SOCKS listener is not up yet. If this persists, the client log below says why.')
+			};
+
+		if (st.mode !== 'proxy' && !st.device_up)
 			return {
 				level: 'warning',
 				head: host ? _('Connecting to %s').format(host) : _('Connecting to the server'),
@@ -117,6 +126,13 @@ return view.extend({
 				head: host ? _('Tunnel works, profile %s — everything except the bypass rules goes through %s').format(st.routing_profile, host)
 				           : _('Tunnel works, profile %s — everything except the bypass rules goes through the tunnel').format(st.routing_profile),
 				detail: _('The bypass rules are sent out directly.')
+			};
+
+		if (st.mode === 'proxy')
+			return {
+				level: 'success',
+				head: host ? _('Proxy traffic goes through %s').format(host) : _('Proxy traffic goes through the tunnel'),
+				detail: _('Domains from the "do not bypass" list are sent out directly.')
 			};
 
 		return {
@@ -174,6 +190,9 @@ return view.extend({
 
 		if (st.endpoint_hostname)
 			rows.push(this.row(_('Server'), E('code', st.endpoint_hostname)));
+
+		if (st.mode === 'proxy' && st.proxy_address)
+			rows.push(this.row(_('Proxy'), E('code', st.proxy_address)));
 
 		return E('table', { 'class': 'table' }, rows);
 	},

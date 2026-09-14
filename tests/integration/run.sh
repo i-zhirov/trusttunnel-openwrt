@@ -43,7 +43,13 @@
 #      swallows marked traffic when the attached route is gone, a clean
 #      stop tears the routing down and a start restores it, install.sh /
 #      uci-defaults / reload are idempotent, and the endpoint log shows
-#      the tunneled CONNECTs.
+#      the tunneled CONNECTs;
+#  12. proxy      — proxy mode contract: the mode switch tears the tun
+#      routing down and the client binds a SOCKS5 listener instead, the
+#      generated config carries [listener.socks] and never [listener.tun],
+#      SOCKS traffic arrives with the ENDPOINT's source address, direct
+#      traffic ignores the proxy, and switching back to tun mode restores
+#      the tunnel.
 #
 # Usage:
 #   TT_PM=apk sh tests/integration/run.sh                 # default
@@ -1316,6 +1322,103 @@ st_lifecycle() {
 	fi
 }
 
+# --- stage: proxy mode (SOCKS5) ----------------------------------------------------
+
+# wait_proxy <label> — polls for a live SOCKS listener: the client log
+# reports the connection AND port 1080 appears in the listen tables.
+wait_proxy() {
+	_i=0
+	while [ "$_i" -lt 60 ]; do
+		_i=$((_i + 1))
+		if docker exec "$ROUTER_CID" \
+				sh -c 'logread 2>/dev/null | grep -q "Successfully connected to endpoint"' \
+				>/dev/null 2>&1 \
+				&& docker exec "$ROUTER_CID" \
+				sh -c "grep -Eq '^ *[0-9]+: [0-9A-F:]*:0438 ' /proc/net/tcp /proc/net/tcp6" \
+				>/dev/null 2>&1; then
+			_tt_pass "$1"
+			return 0
+		fi
+		sleep 1
+	done
+	_tt_fail "$1 (the SOCKS listener did not come up within 60s)"
+	docker exec "$ROUTER_CID" sh -c 'logread | grep trusttunnel | tail -8' 2>/dev/null
+	return 1
+}
+
+st_proxy() {
+	stage proxy || return
+	echo "== proxy mode assertions"
+
+	# Switch the router to proxy mode while the tun tunnel is running: the
+	# mode change is a full restart, so the tun routing must come down and
+	# the client must come back up as a SOCKS5 listener. The client
+	# refuses to bind a NON-loopback address without credentials (the
+	# vendor enforces authentication for LAN-exposed listeners), so the
+	# LAN-serving pair is configured here too.
+	docker exec "$ROUTER_CID" sh -c "uci set trusttunnel.main.mode='proxy'
+uci set trusttunnel.proxy.address='0.0.0.0:1080'
+uci set trusttunnel.proxy.username='lan'
+uci set trusttunnel.proxy.password='lan-pass'
+uci commit trusttunnel
+/etc/init.d/trusttunnel reload" >/dev/null 2>&1
+
+	_i=0
+	while [ "$_i" -lt 20 ]; do
+		_i=$((_i + 1))
+		[ -z "$(docker exec "$ROUTER_CID" sh -c 'ps | grep "[t]rusttunnel_client"' 2>/dev/null)" ] && break
+		sleep 1
+	done
+	wait_proxy "the mode switch brings the SOCKS listener up"
+
+	# --- P1: the generated config carries the socks listener, never the
+	# tun one, and the kernel routing is gone.
+	_toml=$(docker exec "$ROUTER_CID" cat /var/etc/trusttunnel/client.toml 2>/dev/null)
+	assert_contains "$_toml" "[listener.socks]" \
+		"proxy mode emits the socks listener block"
+	assert_contains "$_toml" 'address = "0.0.0.0:1080"' \
+		"the listener binds the configured address"
+	assert_eq "0" "$(printf '%s' "$_toml" | grep -c listener.tun)" \
+		"proxy mode never emits the tun listener"
+	assert_eq "0" "$(printf '%s' "$_toml" | grep -c mtu_size)" \
+		"mtu is tun-only and absent in proxy mode"
+
+	_rs=$(docker exec "$ROUTER_CID" \
+		sh -c '/usr/libexec/trusttunnel/routing status /var/etc/trusttunnel/settings.tsv' 2>/dev/null)
+	assert_contains "$_rs" "rule absent" "the mode switch removed the fwmark rule"
+	assert_contains "$_rs" "table absent" "the mode switch emptied the routing table"
+	assert_contains "$_rs" "nft absent" "the mode switch removed the nft table"
+	_tun=$(docker exec "$ROUTER_CID" sh -c 'ls /sys/class/net/ 2>/dev/null | grep -c "^tun"' 2>/dev/null)
+	assert_eq "0" "$_tun" "proxy mode creates no tun device"
+
+	# --- P2: SOCKS traffic flows through the tunnel — the target observes
+	# the ENDPOINT's address as the source. The listener requires the
+	# configured credentials (the client enforces auth for LAN-exposed
+	# binds).
+	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 --socks5-hostname lan:lan-pass@127.0.0.1:1080 http://$IP_TARGET:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" \
+		"SOCKS traffic arrives with the endpoint's source address"
+
+	# --- P3: traffic that does not use the proxy stays direct.
+	_src=$(docker exec "$ROUTER_CID" \
+		sh -c "ip route get $DIRECT_IP 2>/dev/null | grep -o 'src [0-9.]*' | awk '{print \$2}' | head -1" 2>/dev/null)
+	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$DIRECT_IP:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$_src" "$_got" \
+		"direct traffic ignores the proxy (source: the router itself)"
+
+	# --- P4: switching back to tun mode restores the routing tunnel.
+	docker exec "$ROUTER_CID" sh -c "uci set trusttunnel.main.mode='tun'
+uci commit trusttunnel
+/etc/init.d/trusttunnel reload" >/dev/null 2>&1
+	wait_tunnel "switching back to tun mode restores the tunnel"
+	_toml=$(docker exec "$ROUTER_CID" cat /var/etc/trusttunnel/client.toml 2>/dev/null)
+	assert_contains "$_toml" "[listener.tun]" \
+		"tun mode emits the tun listener again"
+	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" \
+		"the restored tun mode carries traffic again"
+}
+
 # --- main -------------------------------------------------------------------------
 
 st_preflight
@@ -1331,5 +1434,6 @@ st_asserts
 st_connect
 st_traffic
 st_lifecycle
+st_proxy
 
 tt_test_summary

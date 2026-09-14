@@ -34,7 +34,8 @@ const root = path.resolve(__dirname, '..');
 const VIEW_DIR = 'packages/luci-app-trusttunnel/htdocs/luci-static/resources/view/trusttunnel';
 const BACKEND = 'packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel';
 const ACL = 'packages/luci-app-trusttunnel/root/usr/share/rpcd/acl.d/luci-app-trusttunnel.json';
-const GOLDENS = ['tests/backend/goldens/diagnose.json', 'tests/backend/goldens/healthy/diagnose.json'];
+const GOLDENS = ['tests/backend/goldens/diagnose.json', 'tests/backend/goldens/healthy/diagnose.json',
+	'tests/backend/goldens/proxy/diagnose.json', 'tests/backend/goldens/proxy-healthy/diagnose.json'];
 
 let failures = 0;
 
@@ -148,6 +149,7 @@ const ALLOWLIST = [
 	/^user .+$/,                                          // 'user ' + user
 	/^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/,                     // endpoint hostname
 	/^same address both ways: .+$/,                       // 'same address both ways: ' + tip
+	/^bound on .+$/,                                      // 'bound on ' + paddr
 	/^.+, MTU \d+$/,                                      // dev + ', MTU ' + dev_mtu
 	/^device \d+, configured \d+$/,                       // 'device ' + dev_mtu + ', configured ' + mtu_cfg
 	/^default via .+$/,                                   // 'default via ' + dev

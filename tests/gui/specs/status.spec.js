@@ -12,10 +12,11 @@ const {
 
 // The fields the view's verdict()/renderFacts() read.
 const BASE = {
-	enabled: true, running: true, device_up: true, rule: true, table: true,
-	nft: true, client_installed: true, endpoint_hostname: 'vpn.example.com',
-	addresses: [ '1.2.3.4:443' ], routing_profile: 'Default',
-	routing_mode: 'vpn', vpn_mode: 'general'
+	enabled: true, running: true, mode: 'tun', device_up: true, rule: true,
+	table: true, nft: true, client_installed: true,
+	endpoint_hostname: 'vpn.example.com', addresses: [ '1.2.3.4:443' ],
+	routing_profile: 'Default', routing_mode: 'vpn', vpn_mode: 'general',
+	proxy_address: null, listener_up: null
 };
 
 test.beforeEach(async ({ page }) => {
@@ -54,6 +55,29 @@ test('missing client binary shows the danger verdict', async ({ page }) => {
 
 test('client running without a tunnel device shows the warning verdict', async ({ page }) => {
 	await stubSet(page, { status: { ...BASE, device_up: false } });
+	await openView(page, 'status');
+	await expect(page.locator('#view .alert-message.warning')).toContainText(
+		'Connecting to vpn.example.com');
+});
+
+test('proxy mode with a live listener shows the working verdict and the address', async ({ page }) => {
+	await stubSet(page, {
+		status: { ...BASE, mode: 'proxy', device: null, device_up: false,
+		          listener_up: true, proxy_address: '0.0.0.0:1080' }
+	});
+	await openView(page, 'status');
+
+	// Success verdicts render no banner; the facts carry the listener.
+	await expect(page.locator('#view .alert-message')).toHaveCount(0);
+	await expect(page.locator('#view')).toContainText('working');
+	await expect(page.locator('#view code:has-text("0.0.0.0:1080")')).toHaveCount(1);
+});
+
+test('proxy mode without a live listener shows the warning verdict', async ({ page }) => {
+	await stubSet(page, {
+		status: { ...BASE, mode: 'proxy', device: null, device_up: false,
+		          listener_up: false, proxy_address: '127.0.0.1:1080' }
+	});
 	await openView(page, 'status');
 	await expect(page.locator('#view .alert-message.warning')).toContainText(
 		'Connecting to vpn.example.com');

@@ -53,7 +53,7 @@ const VIEW_DIR = 'luci-static/resources/view/trusttunnel';
 
 const defaultUci = {
 	trusttunnel: {
-		main: { '.type': 'main', enabled: '0', log_level: 'info' },
+		main: { '.type': 'main', enabled: '0', log_level: 'info', mode: 'tun' },
 		endpoint: {
 			'.type': 'endpoint', hostname: 'vpn.example.com', username: 'alice',
 			password: 'secret', protocol: 'http2', anti_dpi: '0', post_quantum: '1',
@@ -67,6 +67,9 @@ const defaultUci = {
 		network: {
 			'.type': 'network', mtu: '1350', table: '880', fwmark: '0x9527',
 			blackhole_on_down: '1', include_router_traffic: '0', lan_devices: ''
+		},
+		proxy: {
+			'.type': 'proxy', address: '127.0.0.1:1080', username: '', password: ''
 		},
 		// Anonymous section in UCI ("config routing_profile" + option
 		// name), seeded by uci-defaults exactly like the shipped default

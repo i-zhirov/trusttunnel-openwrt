@@ -1,0 +1,16 @@
+main.enabled	1
+main.mode	proxy
+proxy.address	0.0.0.0:1080
+proxy.username	lanuser
+proxy.password	lanpass
+# A proxy-mode records set: the SOCKS listener replaces the tun block in
+# client.toml, while the profile keeps driving vpn_mode and exclusions.
+endpoint.hostname	vpn.example.com
+endpoint.address	1.2.3.4:443
+endpoint.username	alice
+endpoint.password	s3cret
+endpoint.routing_profile	Default
+routing_profile.name	Default
+routing_profile.mode	vpn
+routing_profile.vpn_rules	telegram.org
+routing_profile.bypass_rules	bank.example

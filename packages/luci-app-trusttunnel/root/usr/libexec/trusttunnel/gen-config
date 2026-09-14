@@ -14,6 +14,11 @@
 # everything except its bypass_rules; anything else (no assignment, a
 # stale name, an unknown mode) falls back to the legacy domains.direct
 # list with the general mode.
+#
+# The operation mode (main.mode, default tun) picks the listener block:
+# tun mode emits [listener.tun] with the routing owned by the package,
+# proxy mode emits [listener.socks] instead. The client accepts exactly
+# one listener, so the blocks are mutually exclusive by construction.
 
 set -u
 
@@ -117,10 +122,24 @@ printf 'upstream_protocol = "%s"\n' "$(tt_esc "$(tt_get endpoint.protocol http2)
 printf 'anti_dpi = %s\n' "$(tt_bool endpoint.anti_dpi)"
 printf 'dns_upstreams = %s\n' "$(tt_array endpoint.dns_upstream)"
 
-# Tun listener block: routing is owned by the package, so the route
-# lists stay empty and only the mtu and the dns switch are configurable.
-printf '\n[listener.tun]\n'
-printf 'included_routes = []\n'
-printf 'excluded_routes = []\n'
-printf 'mtu_size = %s\n' "$(tt_get network.mtu 1350)"
-printf 'change_system_dns = false\n'
+# Listener block: exactly one of the two — the client rejects a config
+# that declares both or neither. Tun mode (the default) keeps the kernel
+# routing owned by the package; proxy mode binds a SOCKS5 listener whose
+# address and optional auth come from the proxy records.
+if [ "$(tt_get main.mode)" = "proxy" ]; then
+	printf '\n[listener.socks]\n'
+	printf 'address = "%s"\n' "$(tt_esc "$(tt_get proxy.address 127.0.0.1:1080)")"
+	# Auth is an on/off pair: a username without a password (or vice
+	# versa) would make the client demand credentials nobody knows, so
+	# both sides are emitted only when the username is set.
+	if [ -n "$(tt_get proxy.username)" ]; then
+		printf 'username = "%s"\n' "$(tt_esc "$(tt_get proxy.username)")"
+		printf 'password = "%s"\n' "$(tt_esc "$(tt_get proxy.password)")"
+	fi
+else
+	printf '\n[listener.tun]\n'
+	printf 'included_routes = []\n'
+	printf 'excluded_routes = []\n'
+	printf 'mtu_size = %s\n' "$(tt_get network.mtu 1350)"
+	printf 'change_system_dns = false\n'
+fi

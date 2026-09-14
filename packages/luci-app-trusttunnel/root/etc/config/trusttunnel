@@ -1,6 +1,12 @@
 config main 'main'
 	option enabled '0'
 	option log_level 'info'
+	option mode 'tun'
+
+config proxy 'proxy'
+	option address '127.0.0.1:1080'
+	option username ''
+	option password ''
 
 config endpoint 'endpoint'
 	option hostname ''

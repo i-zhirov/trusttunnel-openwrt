@@ -58,6 +58,20 @@ function statusSummary(st) {
 	if (!st.running)
 		return st.enabled ? _('The service is not running') : _('The service is off');
 
+	// Proxy mode has no tun device: the listener state takes its place.
+	if (st.mode === 'proxy') {
+		if (!st.listener_up)
+			return _('Connecting to the server…');
+
+		var addr = st.proxy_address || '';
+		var head = addr ? _('Proxy listening on %s').format(addr) : _('Proxy listening');
+
+		if (st.routing_profile)
+			return _('%s — profile %s').format(head, st.routing_profile);
+
+		return head;
+	}
+
 	if (!st.device_up)
 		return _('Connecting to the server…');
 
@@ -345,6 +359,12 @@ return view.extend({
 			_('Whether the service starts when the router boots. The Start button on the Status page runs it right now.'));
 		o.rmempty = false;
 
+		o = s.option(form.ListValue, 'mode', _('Operation mode'),
+			_('TUN routes the whole LAN through the client automatically. Proxy runs a SOCKS5 listener instead: point apps and devices that support a proxy at the address on the Proxy tab.'));
+		o.value('tun', _('TUN — route the whole LAN'));
+		o.value('proxy', _('Proxy — SOCKS5 listener'));
+		o.rmempty = false;
+
 		o = s.option(form.ListValue, 'log_level', _('Log level'));
 		o.value('info', 'info');
 		o.value('debug', 'debug');
@@ -490,6 +510,69 @@ return view.extend({
 		o.rows = 6;
 		o.optional = true;
 
+		// Tab 3 — Proxy: the SOCKS5 listener used in proxy mode.
+		s = m.section(form.NamedSection, 'proxy', 'proxy', _('Proxy'));
+		s.description = _('Used when the operation mode on the General tab is Proxy. The client binds a SOCKS5 listener on this address; every app or device that wants the tunnel must point at it.');
+
+		o = s.option(form.Value, 'address', _('Listen address'),
+			_('IP:port to bind. 127.0.0.1:1080 serves the router itself; 0.0.0.0:1080 or the router\'s LAN address serves the whole LAN. The client requires the user name and password for any address outside the loopback.'));
+		o.placeholder = '127.0.0.1:1080';
+		o.default = '127.0.0.1:1080';
+		o.rmempty = false;
+		o.validate = function(section_id, value) {
+			if (!value)
+				return true;
+
+			if (!/^(\[[0-9a-fA-F:]+\]|[0-9a-zA-Z._-]+):[0-9]+$/.test(value))
+				return _('Use the format address:port, e.g. 127.0.0.1:1080');
+
+			var port = +value.slice(value.lastIndexOf(':') + 1);
+
+			if (port < 1 || port > 65535)
+				return _('Enter a port between 1 and 65535');
+
+			// The client enforces SOCKS authentication for any listener
+			// outside the loopback: without credentials the bind fails at
+			// start, so the pair below becomes mandatory here.
+			var host = value.slice(0, value.lastIndexOf(':'));
+			var loopback = host === '127.0.0.1' || host === '::1' ||
+				host === '[::1]' || host === 'localhost';
+
+			if (!loopback && !uci.get('trusttunnel', section_id, 'username'))
+				return _('Listening outside the loopback requires the user name and password below');
+
+			return true;
+		};
+
+		// SOCKS5 authentication is an on/off pair: the client enables it
+		// when the user name is set, so a password without a user name (or
+		// vice versa) would lock everyone out in a surprising way.
+		o = s.option(form.Value, 'username', _('User name'),
+			_('Optional SOCKS5 authentication. Leave both fields empty for an open proxy.'));
+		o.optional = true;
+		o.validate = function(section_id, value) {
+			if (!value)
+				return true;
+
+			if (!uci.get('trusttunnel', section_id, 'password'))
+				return _('Set the password as well — authentication needs both');
+
+			return true;
+		};
+
+		o = s.option(form.Value, 'password', _('Password'));
+		o.password = true;
+		o.optional = true;
+		o.validate = function(section_id, value) {
+			if (!value)
+				return true;
+
+			if (!uci.get('trusttunnel', section_id, 'username'))
+				return _('Set the user name as well — authentication needs both');
+
+			return true;
+		};
+
 		// Tab 4 — Routing profiles: named rule sets.
 		// TypedSection: current LuCI's form module exports no plain
 		// `Section` class.
@@ -566,7 +649,7 @@ return view.extend({
 
 		// Tab 5 — Advanced: networking internals and the client's own DNS.
 		s = m.section(form.NamedSection, 'network', 'network', _('Advanced'));
-		s.description = _('These rarely need changing. MTU is the exception: too high a value makes small pages load while TLS handshakes and large downloads stall.');
+		s.description = _('These rarely need changing. MTU is the exception: too high a value makes small pages load while TLS handshakes and large downloads stall. The routing options apply in TUN mode only.');
 
 		o = s.option(form.Value, 'mtu', _('MTU'));
 		o.datatype = 'range(576,9000)';
