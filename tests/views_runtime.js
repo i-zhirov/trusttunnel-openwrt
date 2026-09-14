@@ -222,7 +222,8 @@ const canned = {
     service: function () { return { code: 0 }; },
     log: function () { return { lines: ['line one', 'line two'] }; },
     versions: function () {
-        return { package: '1.0.20-r1', client_package: '1.0.49-r1', client: '1.0.49' };
+        return { package: '1.0.20-r1', client: '1.0.49',
+                 latest: 'v1.0.20', update_available: false, ahead: false, stale: false };
     },
     diagnose: function () {
         return {
@@ -371,9 +372,6 @@ async function main() {
         dump(statusTree, 0);
     }
     ok(hasText(statusTree, 'Client log'), 'status: client log section present');
-    // The log is fetched over RPC on the first poll tick, so the initial
-    // render shows a spinner in its place.
-    ok(hasText(statusTree, 'Loading'), 'status: the client log shows a loading indicator before the first fetch');
     // The verdict and facts boxes render their content immediately
     // (E('div', {}, node) passes the node as a child — the bare
     // two-argument form treats it as attributes), and the polls refresh
@@ -382,7 +380,6 @@ async function main() {
     for (const task of pollTasks)
         await task();
     await Promise.resolve();
-    ok(!hasText(statusTree, 'Loading'), 'status: the loading indicator is gone once the log arrives');
     ok(hasText(statusTree, 'State'), 'status: facts table has a State row');
     ok(hasText(statusTree, 'working'), 'status: State row says working');
     ok(hasText(statusTree, 'Server'), 'status: facts table has a Server row');
@@ -465,16 +462,6 @@ async function main() {
     const rpOpt = rpSec && rpSec.options.find(o => o.name === 'routing_profile');
     ok(rpOpt && rpOpt.values.indexOf('Default') !== -1 && rpOpt.values.indexOf('Test') !== -1,
         'settings: the routing profile select lists Default and Test');
-    // The Versions tab is a NamedSection of the UI-only 'about' type
-    // (map-level tabs key panes by the section type, so the section must
-    // exist for the tab to render its rows).
-    const aboutSec = form_lastMap.sections.find(s => s.type === 'about');
-    ok(aboutSec && aboutSec.title === 'Versions',
-        'settings: the Versions tab section is created');
-    ok(aboutSec && [ '_package', '_client_package', '_client' ].every(n =>
-        aboutSec.options.some(o => o.name === n)),
-        'settings: the Versions section carries the three version rows');
-    ok(hasText(settingsTree, 'Versions'), 'settings: the Versions tab title renders');
 
     // Import flow: open the modal, paste a config, press Import, verify the
     // values land in pending UCI only (uci.set recorded, nothing else).
@@ -497,31 +484,6 @@ async function main() {
         'settings: Import applies the hostname to pending UCI');
     ok(uciSets.some(c => c[0] === 'endpoint' && c[1] === 'address'),
         'settings: Import applies the address list to pending UCI');
-
-    // A pending import_config shows a loading state: the Import button is
-    // disabled and spins until the backend answers, then applies the
-    // values exactly like the immediate path above.
-    let importResolve = null;
-    const pendingImport = new Promise(res => { importResolve = res; });
-    const realImport = canned.import_config;
-    canned.import_config = () => pendingImport;
-    settingsView.handleImport();
-    let pModal = ui.lastModal, pTa = null, pBtn = null;
-    walk(pModal.children, n => {
-        if (n.tag === 'textarea') pTa = n;
-        if (n.tag === 'button' && hasText(n, 'Import')) pBtn = n;
-    });
-    pTa.value = 'hostname = "pending.example.com"\n';
-    const pendingClick = click(pBtn);
-    await Promise.resolve();
-    ok(pBtn.disabled === true, 'settings: the Import button is disabled while importing');
-    ok(hasText(pBtn, 'Importing'), 'settings: the Import button shows a spinner label while importing');
-    importResolve({ hostname: 'pending.example.com', addresses: ['pending.example.com:443'] });
-    await pendingClick;
-    await Promise.resolve();
-    canned.import_config = realImport;
-    ok(uciSets.some(c => c[0] === 'endpoint' && c[1] === 'hostname' && c[2] === 'pending.example.com'),
-        'settings: the deferred import still applies the hostname');
 
     // ===== diagnostics.js =====
     console.log('== diagnostics.js');

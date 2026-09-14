@@ -133,6 +133,16 @@ artifacts are consumed directly.
   loads the lan-zone rule asynchronously after the network restart, and
   the tunnel needs up to a minute to establish — the harness polls for
   all three instead of sleeping.
+- **The hermetic repository mirrors the official layout.** The release
+  pipeline serves the repositories as
+  `releases/<version>/packages/<arch>/trusttunnel/` (the official
+  OpenWrt pattern; `releases/25.12.5/` for apk, `releases/22.03.7/` for
+  opkg), and the harness assembles the same shape
+  (`repo/releases/25.12.5/packages/x86_64/trusttunnel/` or the 22.03.7
+  equivalent with the signed index next to the packages), so
+  `install.sh`'s derived URLs and the router-side repository
+  configuration are exercised against the exact paths a router will
+  fetch from the Pages site.
 - **apk fetches packages by their metadata-derived names.** The release
   assets carry a `-x86_64` suffix (per-arch uploads), which would 404 on
   the metadata-derived name, so

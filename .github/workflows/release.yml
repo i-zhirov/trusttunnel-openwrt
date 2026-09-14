@@ -3,8 +3,11 @@
 #
 # A tag push (v*) or a manual workflow_dispatch run produces:
 #   - the noarch LuCI packages and the per-architecture client builds,
-#   - per-architecture signed apk repositories and one merged, signed
-#     opkg feed, each verified by installing into fresh rootfs containers,
+#   - per-architecture signed repositories in the official OpenWrt layout
+#     (releases/<version>/packages/<arch>/trusttunnel/ on the site: the
+#     apk tree 25.12.5 serves OpenWrt 25.12+, the opkg tree 22.03.7
+#     serves 22.03-24.10, one signed feed directory per architecture),
+#     each verified by installing into fresh rootfs containers,
 #   - an end-to-end integration verification of the release's own x86-64
 #     packages (the dockerized suite from tests/integration/) that the
 #     publish step waits for,
@@ -160,10 +163,11 @@ jobs:
   # selects the vendor build (armv7l/armv8l/mips/...) from the target
   # arch, so every OpenWrt target string in the matrix must be built
   # explicitly. apk matches the package arch against the device's own
-  # arch byte-exactly — hence one signed directory per arch; opkg ignores
-  # foreign-arch packages in a merged feed, which is why a single ipk
-  # feed works. The ipk row list is the apk list minus
-  # aarch64_cortex-a76 (that target only exists on 25.12-era SDKs).
+  # arch byte-exactly, and opkg does the same for the feed it installs
+  # from — hence one signed feed directory per arch
+  # (releases/<version>/packages/<arch>/trusttunnel/ on the site). The
+  # ipk row list is the apk list minus aarch64_cortex-a76 (that target
+  # only exists on 25.12-era SDKs).
   # Every row first checks whether the same version is already published
   # on the site and only runs the SDK build for missing packages: the
   # client version comes from the Makefile, not the release tag, so a
@@ -330,11 +334,14 @@ jobs:
           fi
           if [ "${{ matrix.ext }}" = apk ]; then
             pkg="trusttunnel-client-${version}-r${release}.apk"
-            url="https://i-zhirov.github.io/trusttunnel-openwrt/apk/${{ matrix.arch }}/${pkg}"
           else
             pkg="trusttunnel-client_${version}-${release}_${{ matrix.arch }}.ipk"
-            url="https://i-zhirov.github.io/trusttunnel-openwrt/opkg/${pkg}"
           fi
+          # Both package types live in their release tree — apk in
+          # releases/25.12.5/, ipk in releases/22.03.7/ (the matrix
+          # version IS the tree segment; the official
+          # releases/<version>/packages/<arch>/<feed>/ layout).
+          url="https://i-zhirov.github.io/trusttunnel-openwrt/releases/${{ matrix.version }}/packages/${{ matrix.arch }}/trusttunnel/${pkg}"
           mkdir -p dist
           tmp="$(mktemp)"
           if ! curl -fsSL -o "$tmp" "$url" 2>/dev/null; then
@@ -606,12 +613,21 @@ jobs:
             fi
           done
 
+      # The repositories are assembled in the official OpenWrt layout:
+      # one release tree per package-manager era
+      # (releases/25.12.5/ for apk, releases/22.03.7/ for opkg), each
+      # holding per-architecture feed directories
+      # (releases/<version>/packages/<arch>/trusttunnel/ on the site)
+      # with the signed index, the public key and every released version
+      # of the packages. apk fetches
+      # <url>/releases/25.12.5/packages/<arch>/trusttunnel/packages.adb,
+      # opkg appends /Packages.gz to
+      # <url>/releases/22.03.7/packages/<arch>/trusttunnel.
       - name: Assemble and sign the apk repositories
         env:
           SIGN_KEY: ${{ secrets.TT_APK_SIGN_KEY }}
         run: |
-          mkdir -p staging/apk
-          cp key-build.pub staging/apk/
+          mkdir -p staging/releases/25.12.5/packages
           printf '%s\n' "$SIGN_KEY" > key-build.sec
 
           # Prior releases first, so the freshly built packages win on a
@@ -660,11 +676,11 @@ jobs:
             arch="${arch%.apk}"
             case "$arch" in
               x86_64|aarch64_*|arm_*|mips*)
-                mkdir -p "staging/apk/$arch"
+                mkdir -p "staging/releases/25.12.5/packages/$arch/trusttunnel"
                 # Same rename as the current-run placement below: apk
                 # reconstructs file names from the package metadata, so
                 # the -<arch> suffix is stripped.
-                cp "$f" "staging/apk/$arch/$(basename "$f" "-${arch}.apk").apk" ;;
+                cp "$f" "staging/releases/25.12.5/packages/$arch/trusttunnel/$(basename "$f" "-${arch}.apk").apk" ;;
               *) echo "warning: skipping prior apk with unexpected name: $(basename "$f")" ;;
             esac
           done
@@ -675,7 +691,7 @@ jobs:
           for m in staging/apk-pkgs/ARCH-*; do
             [ -e "$m" ] || { echo "::error::no client artifacts for any architecture"; exit 1; }
             arch="${m#staging/apk-pkgs/ARCH-}"
-            mkdir -p "staging/apk/$arch"
+            mkdir -p "staging/releases/25.12.5/packages/$arch/trusttunnel"
             client="$(find staging/apk-pkgs -maxdepth 1 -name "trusttunnel-client-*-${arch}.apk" -print -quit)"
             if [ -z "$client" ]; then
               echo "::error::no client apk was built for $arch"
@@ -683,18 +699,21 @@ jobs:
             fi
             # apk reconstructs file names from the package metadata, so
             # the -<arch> suffix is stripped on placement.
-            cp "$client" "staging/apk/$arch/$(basename "$client" "-${arch}.apk").apk"
+            cp "$client" "staging/releases/25.12.5/packages/$arch/trusttunnel/$(basename "$client" "-${arch}.apk").apk"
             # The package recipe travels with the packages: the next
             # release's reuse check diffs it against the current Makefile
             # before skipping a rebuild.
-            cp packages/trusttunnel-client/Makefile "staging/apk/$arch/trusttunnel-client.Makefile"
+            cp packages/trusttunnel-client/Makefile "staging/releases/25.12.5/packages/$arch/trusttunnel/trusttunnel-client.Makefile"
+            # The public key sits next to the index it verifies; the
+            # installer fetches it from the feed directory.
+            cp key-build.pub "staging/releases/25.12.5/packages/$arch/trusttunnel/key-build.pub"
           done
 
           # The noarch LuCI app lands in every architecture directory —
           # current and prior versions alike, so the whole version
           # history is installable everywhere. Prior first: the fresh
           # build wins on a same-version collision.
-          for d in staging/apk/*/; do
+          for d in staging/releases/25.12.5/packages/*/trusttunnel/; do
             for f in staging/prior-apk/luci-app-trusttunnel-[0-9]*.apk; do
               [ -e "$f" ] && cp "$f" "$d/"
             done
@@ -702,45 +721,52 @@ jobs:
           done
 
           # The packages are built unsigned; only the index is signed, so
-          # both mkndx and adbsign must tolerate unsigned packages.
+          # both mkndx and adbsign must tolerate unsigned packages. The
+          # feed directories are three levels deep
+          # (releases/<version>/packages/<arch>/<feed>/) — the same
+          # layout the official repositories use.
           cat > index-apk.sh <<'EOF'
           #!/bin/sh
-          for d in /repo/*/; do
+          for d in /repo/*/*/; do
             (cd "$d" && apk mkndx --output packages.adb --allow-untrusted *.apk && apk adbsign --allow-untrusted --sign-key /key-build.sec packages.adb) || exit 1
           done
           EOF
           chmod +x index-apk.sh
           docker run --rm \
-            -v "$PWD/staging/apk:/repo" \
+            -v "$PWD/staging/releases/25.12.5/packages:/repo" \
             -v "$PWD/key-build.sec:/key-build.sec" \
             -v "$PWD/index-apk.sh:/index-apk.sh:ro" \
             alpine:edge@sha256:266f29255458134745f2bf588cb23ed1ed1768b96ff2580a05d70a8aba59e145 \
             sh /index-apk.sh
 
-          find staging/apk -name packages.adb
+          find staging/releases/25.12.5 -name packages.adb
 
-      - name: Assemble and sign the opkg repository
+      # One signed opkg feed per architecture in the 22.03.7 release
+      # tree (releases/22.03.7/packages/<arch>/trusttunnel/): opkg
+      # matches the package arch against the device's own arch, so a
+      # router only ever reads its own feed directory (install.sh builds
+      # the feed URL from DISTRIB_ARCH). Prior releases first, so the
+      # freshly built packages win on a same-name collision (a dispatch
+      # run at the latest tag). The [0-9] anchor keeps the old -lite
+      # packages and the dropped i18n packages out of the feed, and the
+      # same version filter as the apk step keeps an old client (the
+      # vendor's 1.1.5 segfaults on IPv4-only routers) from shadowing the
+      # fresh build — opkg installs the highest version.
+      - name: Assemble and sign the opkg repositories
         env:
           SIGN_KEY: ${{ secrets.TT_OPKG_SIGN_KEY }}
         run: |
-          mkdir -p staging/opkg
-          # One merged feed: opkg ignores packages built for other
-          # architectures and picks the build matching the device, so the
-          # arch suffix in the file names keeps the builds apart.
-          # Prior releases first, so the freshly built packages win on a
-          # same-name collision (a dispatch run at the latest tag). The
-          # [0-9] anchor keeps the old -lite packages and the dropped
-          # i18n packages out of the feed, and the same version filter
-          # as the apk step keeps an old client (the vendor's 1.1.5
-          # segfaults on IPv4-only routers) from shadowing the fresh
-          # build — opkg installs the highest version.
+          mkdir -p staging/releases/22.03.7/packages
           cur_client="$(find staging/opkg-pkgs -maxdepth 1 -name "trusttunnel-client_*.ipk" -print -quit)"
           cur_client="${cur_client##*/}"
           cur_client="${cur_client#trusttunnel-client_}"
           cur_client="${cur_client%%_*}"   # drop the _<arch>.ipk suffix
-          for f in staging/prior-opkg/luci-app-trusttunnel_[0-9]*.ipk; do
-            [ -e "$f" ] && cp "$f" staging/opkg/
-          done
+
+          # The arch is the last underscore-segment of the file name
+          # (trusttunnel-client_<ver>-<rel>_<arch>.ipk); architecture
+          # names contain no underscores. A dir the current matrix no
+          # longer builds is created, so a dropped architecture keeps its
+          # prior packages.
           for f in staging/prior-opkg/trusttunnel-client_[0-9]*.ipk; do
             [ -e "$f" ] || continue
             verrev="${f##*/}"
@@ -750,15 +776,35 @@ jobs:
               echo "skipping prior client $verrev (the current build ships $cur_client)"
               continue
             fi
-            cp "$f" staging/opkg/
+            arch="${f##*/}"
+            arch="${arch##*_}"
+            arch="${arch%.ipk}"
+            mkdir -p "staging/releases/22.03.7/packages/$arch/trusttunnel"
+            cp "$f" "staging/releases/22.03.7/packages/$arch/trusttunnel/"
           done
-          cp staging/luci-ipk/*.ipk staging/opkg/
-          cp staging/opkg-pkgs/*.ipk staging/opkg/
-          cp opkg-key.pub staging/opkg/
-          # The package recipe travels with the feed: the next release's
-          # reuse check diffs it against the current Makefile before
-          # skipping a rebuild.
-          cp packages/trusttunnel-client/Makefile staging/opkg/trusttunnel-client.Makefile
+          for f in staging/opkg-pkgs/trusttunnel-client_*.ipk; do
+            [ -e "$f" ] || continue
+            arch="${f##*/}"
+            arch="${arch##*_}"
+            arch="${arch%.ipk}"
+            mkdir -p "staging/releases/22.03.7/packages/$arch/trusttunnel"
+            cp "$f" "staging/releases/22.03.7/packages/$arch/trusttunnel/"
+          done
+          # The noarch LuCI app lands in every feed directory — current
+          # and prior versions alike, so the whole version history is
+          # installable everywhere. The feed key and the package recipe
+          # travel with every feed: install.sh fetches the key from the
+          # feed directory, and the next release's reuse check diffs the
+          # recipe against the current Makefile before skipping a
+          # rebuild.
+          for d in staging/releases/22.03.7/packages/*/trusttunnel/; do
+            for f in staging/prior-opkg/luci-app-trusttunnel_[0-9]*.ipk; do
+              [ -e "$f" ] && cp "$f" "$d/"
+            done
+            cp staging/luci-ipk/*.ipk "$d/"
+            cp opkg-key.pub "$d/"
+            cp packages/trusttunnel-client/Makefile "$d/trusttunnel-client.Makefile"
+          done
 
           # The canonical index generator, fetched at run time so the
           # pipeline always uses the tooling of the OpenWrt release it
@@ -772,29 +818,32 @@ jobs:
           EOF
           chmod +x mkhash.sh
           ws="$PWD"
-          ( cd staging/opkg && MKHASH="$ws/mkhash.sh" bash "$ws/ipkg-make-index.sh" . > Packages.manifest )
-          # The manifest carries per-package metadata fields that opkg
-          # does not understand; drop them from the published index.
-          grep -vE '^(Maintainer|LicenseFiles|Source|SourceName|Require|SourceDateEpoch)' staging/opkg/Packages.manifest > staging/opkg/Packages
-          rm -f staging/opkg/Packages.manifest
-          # usign cannot sign SHA-512 messages of two specific sizes
-          # (OpenWrt works around the same bug in its package Makefile);
-          # padding the index by two empty lines shifts it past the
-          # affected sizes.
-          size="$(wc -c < staging/opkg/Packages)"
-          if [ $(( (64 + size) % 128 )) -eq 110 ] || [ $(( (64 + size) % 128 )) -eq 111 ]; then
-            printf '\n\n' >> staging/opkg/Packages
-          fi
-          gzip -9nc staging/opkg/Packages > staging/opkg/Packages.gz
+          for d in staging/releases/22.03.7/packages/*/trusttunnel/; do
+            [ -n "$(ls "$d"/*.ipk 2>/dev/null)" ] || continue
+            ( cd "$d" && MKHASH="$ws/mkhash.sh" bash "$ws/ipkg-make-index.sh" . > Packages.manifest )
+            # The manifest carries per-package metadata fields that opkg
+            # does not understand; drop them from the published index.
+            grep -vE '^(Maintainer|LicenseFiles|Source|SourceName|Require|SourceDateEpoch)' "$d/Packages.manifest" > "$d/Packages"
+            rm -f "$d/Packages.manifest"
+            # usign cannot sign SHA-512 messages of two specific sizes
+            # (OpenWrt works around the same bug in its package Makefile);
+            # padding the index by two empty lines shifts it past the
+            # affected sizes.
+            size="$(wc -c < "$d/Packages")"
+            if [ $(( (64 + size) % 128 )) -eq 110 ] || [ $(( (64 + size) % 128 )) -eq 111 ]; then
+              printf '\n\n' >> "$d/Packages"
+            fi
+            gzip -9nc "$d/Packages" > "$d/Packages.gz"
+          done
           printf '%s\n' "$SIGN_KEY" > opkg.sec
           # The signature covers the UNCOMPRESSED Packages: opkg
           # decompresses the index before verifying it.
           docker run --rm \
-            -v "$PWD/staging/opkg:/repo" \
+            -v "$PWD/staging/releases/22.03.7/packages:/repo" \
             -v "$PWD/opkg.sec:/opkg.sec" \
             openwrt/rootfs:x86-64-22.03.7 \
-            sh -c 'cd /repo && usign -S -s /opkg.sec -m Packages -x Packages.sig'
-          ls -la staging/opkg/
+            sh -c 'for d in /repo/*/*/; do [ -n "$(ls "$d"/*.ipk 2>/dev/null)" ] || continue; (cd "$d" && usign -S -s /opkg.sec -m Packages -x Packages.sig) || exit 1; done'
+          find staging/releases/22.03.7 -name Packages.sig
 
       # The verification installs mirror install.sh's repository setup
       # exactly (key placement, repository entry, feed line), so a green
@@ -806,10 +855,10 @@ jobs:
           #!/bin/sh
           set -e
           mkdir -p /var/lock /etc/apk/keys /etc/apk/repositories.d
-          cp /repo/key-build.pub /etc/apk/keys/trusttunnel.pub
+          cp /repo/x86_64/trusttunnel/key-build.pub /etc/apk/keys/trusttunnel.pub
           # The index file is named explicitly: a bare directory URL would
           # make apk look for an Alpine-style APKINDEX.tar.gz.
-          printf '%s\n' 'file:///repo/x86_64/packages.adb' > /etc/apk/repositories.d/trusttunnel.list
+          printf '%s\n' 'file:///repo/x86_64/trusttunnel/packages.adb' > /etc/apk/repositories.d/trusttunnel.list
           apk update
           apk add luci-app-trusttunnel
           # Full path: the client is not on PATH. The version output
@@ -817,7 +866,7 @@ jobs:
           /opt/trusttunnel_client/trusttunnel_client --version
           EOF
           docker run --rm \
-            -v "$PWD/staging/apk:/repo:ro" \
+            -v "$PWD/staging/releases/25.12.5/packages:/repo:ro" \
             -v "$PWD/verify-apk.sh:/verify.sh:ro" \
             openwrt/rootfs:x86-64-25.12.0 \
             sh /verify.sh
@@ -832,21 +881,21 @@ jobs:
           #!/bin/sh
           set -e
           mkdir -p /var/lock /etc/opkg/keys
-          cp /repo/opkg-key.pub /etc/opkg/keys/trusttunnel.pub
+          cp /repo/x86_64/trusttunnel/opkg-key.pub /etc/opkg/keys/trusttunnel.pub
           # opkg-key matches keys named by their usign fingerprint; the
           # stable name is kept alongside, exactly as install.sh sets up.
           fp="$(usign -F -p /etc/opkg/keys/trusttunnel.pub)"
           cp /etc/opkg/keys/trusttunnel.pub "/etc/opkg/keys/$fp"
           # The feed URL must NOT name the index: opkg appends
           # /Packages.gz itself and verifies Packages.sig against the key.
-          printf '%s\n' 'src/gz trusttunnel file:///repo' > /etc/opkg/customfeeds.conf
+          printf '%s\n' 'src/gz trusttunnel file:///repo/x86_64/trusttunnel' > /etc/opkg/customfeeds.conf
           opkg update
           opkg install luci-app-trusttunnel
           /opt/trusttunnel_client/trusttunnel_client --version
           EOF
           for img in x86-64-23.05.6 x86-64-24.10.8; do
             docker run --rm \
-              -v "$PWD/staging/opkg:/repo:ro" \
+              -v "$PWD/staging/releases/22.03.7/packages:/repo:ro" \
               -v "$PWD/verify-opkg.sh:/verify.sh:ro" \
               "openwrt/rootfs:$img" \
               sh /verify.sh
@@ -867,17 +916,16 @@ jobs:
 
       # The site is the workflow's direct output: nothing is committed to
       # any branch. The index pages exist because Pages serves no
-      # directory listings — the bare apk/, apk/<arch>/ and opkg/ URLs
-      # would 404 in a browser without them, while the package managers
-      # never fetch those URLs (apk fetches <url>/apk/<arch>/packages.adb,
+      # directory listings — the bare releases/, releases/<version>/,
+      # releases/<version>/packages/, releases/<version>/packages/<arch>/
+      # and the feed URLs would 404 in a browser without them, while the
+      # package managers never fetch those URLs (apk fetches
+      # <url>/releases/25.12.5/packages/<arch>/trusttunnel/packages.adb,
       # opkg appends /Packages.gz to the feed URL).
       - name: Assemble the Pages site
         run: |
-          mkdir -p site/apk site/opkg
-          cp -r staging/apk/. site/apk/
-          # Only the feed files are copied: the index tooling and the
-          # manifest never reach the site.
-          cp staging/opkg/*.ipk staging/opkg/Packages staging/opkg/Packages.gz staging/opkg/Packages.sig staging/opkg/opkg-key.pub staging/opkg/trusttunnel-client.Makefile site/opkg/
+          mkdir -p site/releases
+          cp -r staging/releases/. site/releases/
           rm -rf staging
 
           # The favicon keeps the browsers' automatic /favicon.ico
@@ -885,9 +933,9 @@ jobs:
           # this page" link at the real homepage template.
           cp repo-site/favicon.ico site/favicon.ico
           cp repo-site/_config.yml site/_config.yml
-          # The layout all three index templates reference via their
-          # front matter — the theme's default minus the "Improve this
-          # page" footer.
+          # The layout all the index templates reference via their front
+          # matter — the theme's default minus the "Improve this page"
+          # footer.
           cp -r repo-site/_layouts site/_layouts
 
           cp repo-site/README.md site/README.md
@@ -895,68 +943,78 @@ jobs:
           # the tag, on a branch dispatch it is the branch name.
           sed -i "s/__TAG__/$GITHUB_REF_NAME/g" site/README.md
 
-          # The apk index lists the assembled architecture directories —
+          # The releases index lists the assembled release trees —
           # generated from the directories themselves, so there is no
-          # second copy of the build-client matrix to keep in sync.
-          arch_list="$(mktemp)"
-          for d in site/apk/*/; do
-            printf '%s\n' "- [$(basename "$d")]($(basename "$d")/)" >> "$arch_list"
+          # second copy of the tree list to keep in sync.
+          release_list="$(mktemp)"
+          for t in site/releases/*/; do
+            printf '%s\n' "- [$(basename "$t")]($(basename "$t")/)" >> "$release_list"
           done
           # r swallows the rest of its line: file read and delete must
           # sit on separate lines inside the braces (see the __FILES__
           # substitution below).
-          sed "/__ARCH_LIST__/{
-            r $arch_list
+          sed "/__RELEASE_LIST__/{
+            r $release_list
             d
-          }" repo-site/apk-index.md > site/apk/index.md
-          rm -f "$arch_list"
+          }" repo-site/releases-index.md > site/releases/index.md
+          rm -f "$release_list"
 
-          # The opkg index lists what the feed actually holds: the ipk
-          # packages are generated into the page (the machinery links
-          # above them are static), so a released version shows up here
-          # without touching the template. Generated from the directory
-          # itself, like the apk arch pages below — no second copy of
-          # the package list to keep in sync.
+          arch_list="$(mktemp)"
+          feeds="$(mktemp)"
           files="$(mktemp)"
-          for p in site/opkg/*.ipk; do
-            [ -e "$p" ] || continue
-            b="$(basename "$p")"
-            printf '%s\n' "- [$b]($b)" >> "$files"
-          done
-          # r swallows the rest of its line: file read and delete must
-          # sit on separate lines inside the braces (see the __ARCH_LIST__
-          # substitution above).
-          sed "/__FILES__/{
-            r $files
-            d
-          }" repo-site/opkg-index.md > site/opkg/index.md
-          rm -f "$files"
+          for t in site/releases/*/; do
+            tree="$(basename "$t")"
+            sed "s/__TREE__/$tree/g" repo-site/release-index.md > "$t/index.md"
 
-          # One index per architecture, listing what that directory
-          # actually holds: the signed index and every apk, each as a
-          # link to the file itself (a bare name would be dead text —
-          # Pages serves no directory listings).
-          files="$(mktemp)"
-          for d in site/apk/*/; do
-            arch="$(basename "$d")"
-            : > "$files"
-            if [ -f "$d/packages.adb" ]; then
-              printf '%s\n' "- [packages.adb](packages.adb)" >> "$files"
-            fi
-            for p in "$d"*.apk; do
-              [ -e "$p" ] || continue
-              printf '%s\n' "- [$(basename "$p")]($(basename "$p"))" >> "$files"
+            # The tree's packages index lists the assembled architecture
+            # directories — generated from the directories themselves, so
+            # there is no second copy of the build-client matrix to keep
+            # in sync.
+            : > "$arch_list"
+            for d in "$t/packages/"*/; do
+              printf '%s\n' "- [$(basename "$d")]($(basename "$d")/)" >> "$arch_list"
             done
-            # The r command consumes the rest of its line as the file
-            # name: a "; d" after it would be swallowed and the brace
-            # would never close. The file read and the delete must sit on
-            # separate lines inside the braces.
-            sed -e "s/__ARCH__/$arch/g" -e "/__FILES__/{
-              r $files
+            sed -e "s/__TREE__/$tree/g" -e "/__ARCH_LIST__/{
+              r $arch_list
               d
-            }" repo-site/apk-arch-index.md > "$d/index.md"
+            }" repo-site/packages-index.md > "$t/packages/index.md"
+
+            # One index per architecture listing its feeds, and one per
+            # feed listing what that directory actually holds: the signed
+            # index, the public key and every package, each as a link to
+            # the file itself (a bare name would be dead text — Pages
+            # serves no directory listings). Generated from the
+            # directories themselves, so a released version shows up here
+            # without touching a template.
+            for d in "$t/packages/"*/; do
+              arch="$(basename "$d")"
+              : > "$feeds"
+              for f in "$d"*/; do
+                printf '%s\n' "- [$(basename "$f")]($(basename "$f")/)" >> "$feeds"
+              done
+              # The r command consumes the rest of its line as the file
+              # name: a "; d" after it would be swallowed and the brace
+              # would never close. The file read and the delete must sit
+              # on separate lines inside the braces.
+              sed -e "s/__TREE__/$tree/g" -e "s/__ARCH__/$arch/g" -e "/__FEED_LIST__/{
+                r $feeds
+                d
+              }" repo-site/packages-arch-index.md > "$d/index.md"
+
+              for f in "$d"*/; do
+                : > "$files"
+                for p in "$f"*; do
+                  [ -f "$p" ] || continue
+                  printf '%s\n' "- [$(basename "$p")]($(basename "$p"))" >> "$files"
+                done
+                sed -e "s/__ARCH__/$arch/g" -e "/__FILES__/{
+                  r $files
+                  d
+                }" repo-site/packages-feed-index.md > "$f/index.md"
+              done
+            done
           done
-          rm -f "$files"
+          rm -f "$arch_list" "$feeds" "$files"
 
       - name: Render the site with Jekyll
         uses: actions/jekyll-build-pages@v1

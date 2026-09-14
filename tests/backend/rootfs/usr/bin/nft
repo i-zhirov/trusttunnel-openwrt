@@ -1,10 +1,7 @@
 #!/bin/sh
 # Lab stub: the firewall check greps the ruleset for the fw4 zone chain.
-# fw4 names the per-zone chains input_/output_/forward_<zone> (see
-# firewall4's ruleset.uc); forward_trusttunnel is the probe the backend
-# keys on.
 echo "table inet fw4 {"
-echo "  chain forward_trusttunnel {"
+echo "  chain zone_trusttunnel_prerouting {"
 echo "  }"
 echo "}"
 echo "table inet trusttunnel {"

@@ -156,22 +156,17 @@ First-boot / reinstall setup: dedups the `trusttunnel` firewall zone and
 forwarding, creates them when missing (zone bound to `tun+`, `lan →
 trusttunnel` forwarding), migrates old concrete `tt0` bindings to `tun+`,
 seeds the Default routing profile (migrating `domains.direct` into its
-bypass rules), creates the UI-only `about` section that keys the Versions
-tab on the Settings page, registers the rc.d link and clears LuCI caches.
-Idempotent; also run immediately by `install.sh`.
+bypass rules), registers the rc.d link and clears LuCI caches. Idempotent;
+also run immediately by `install.sh`.
 
 ### rpcd backend (`/usr/share/rpcd/ucode/luci.trusttunnel`)
 
 Exposes `luci.trusttunnel` RPC methods (the ACL grants read on
-`status ping probe check_domain log diagnose versions` and write on
+`status ping probe check_domain log diagnose` and write on
 `service import_config`):
 
 - `status` — service state, device, rule/table/nft flags, endpoint,
   routing profile and effective `vpn_mode`.
-- `versions` — what is installed, read-only: the luci app and client
-  package versions as apk/opkg report them (apk on 25.12+, opkg
-  fallback for 22.03–24.10), plus the client binary's own `--version`;
-  no network access.
 - `service` — start/stop/restart/reload with a post-start liveness probe.
 - `ping` — ping each configured endpoint host (or a given target).
 - `probe` — external IP through the tunnel vs. direct (curl + api.ipify.org).
@@ -195,23 +190,20 @@ file compiles under the pinned ucode.
   legacy `domains.direct` list without one) that checks each effective
   rule via `check_domain`, client log; polls every 10s.
 - `settings.js` — a single tabbed `form.Map` whose sections become tabs
-  (General, Server, Routing profiles, Advanced, Versions), plus the
-  Import… modal that calls `import_config` and applies results to pending
-  UCI (nothing is written until Save & Apply). The endpoint section
-  splits into Connection and Security inner tabs (`s.tab`/`s.taboption`)
-  — map-level tabs key panes by the UCI section type, so two sections of
-  the same type would collide. The Versions tab is a `NamedSection` of
-  the UI-only `about` section type: it carries no UCI options, its
-  DummyValue rows read the `versions` RPC result, and uci-defaults
-  creates the section on installs that predate it. Extra tools: a
-  read-only service line on General (via the `status` RPC), a Test
-  connection modal on Server (`ping`), and a per-profile rule preview
-  (`check_domain`) whose verdicts only apply to the assigned profile.
-  The routing profile picker lives on General and `dns_upstream` on
-  Advanced; both write the endpoint section via `ucisection`. Config
-  values are read via the `uci` module API (`uci.sections()`/`uci.get()`)
-  — current LuCI resolves `uci.load()` with the package-name list, so
-  the load() result is no data source.
+  (General, Server, Routing profiles, Advanced), plus the Import… modal
+  that calls `import_config` and applies results to pending UCI (nothing
+  is written until Save & Apply). The endpoint section splits into
+  Connection and Security inner tabs (`s.tab`/`s.taboption`) — map-level
+  tabs key panes by the UCI section type, so two sections of the same
+  type would collide. Extra tools: a read-only service line on General
+  (via the `status` RPC), a Test connection modal on Server (`ping`),
+  and a per-profile rule preview (`check_domain`) whose verdicts only
+  apply to the assigned profile. The routing profile picker lives on
+  General and `dns_upstream` on Advanced; both write the endpoint
+  section via `ucisection`. Config values are read via the `uci` module
+  API (`uci.sections()`/`uci.get()`) — current LuCI resolves
+  `uci.load()` with the package-name list, so the load() result is no
+  data source.
 - `diagnostics.js` — renders the diagnose checks grouped and ordered
   (config → prereq → service → kernel → network), problems first with a
   toggle for the rest, plus domain-check, ping and address-compare tools
@@ -459,26 +451,35 @@ Triggered by `v*` tag pushes (also builds a GitHub release) and
   merged: the early `-lite` releases and the dropped i18n packages are
   filtered out, and an ipk-less first release is skipped, not failed),
   assembles:
-  - per-arch signed apk repositories (`apk mkndx --allow-untrusted` +
-    `apk adbsign` with `secrets.TT_APK_SIGN_KEY`), cumulative: prior
-    client apks are placed by their `-<arch>` asset suffix and prior
-    noarch LuCI apks land in every arch dir, so every released version
-    stays installable — but a prior client is merged only when its
-    version equals the current build's (the package managers install
-    the highest version, and an old client must not shadow the pinned
-    one),
-  - one merged opkg feed (`ipkg-make-index.sh` fetched from openwrt-22.03,
-    manifest fields stripped, gzip, `usign -S` with
-    `secrets.TT_OPKG_SIGN_KEY`; the signature covers the UNCOMPRESSED
-    `Packages`). The two-empty-line padding works around usign's SHA-512
-    size bug — keep it. The feed indexes the prior ipks too (same client
-    version filter).
+  - per-arch signed repositories in the official OpenWrt layout —
+    `releases/<version>/packages/<arch>/trusttunnel/` on the site, one
+    release tree per package-manager era (the tree segment is the
+    OpenWrt release the packages were built against: `25.12.5` for apk,
+    `22.03.7` for opkg — bump together with the SDK pins, and with the
+    `TT_REPO_APK_RELEASE`/`TT_REPO_OPKG_RELEASE` constants in
+    install.sh), each holding per-arch feed directories with the apk
+    index (`apk mkndx --allow-untrusted` + `apk adbsign` with
+    `secrets.TT_APK_SIGN_KEY`) or the opkg index, the public keys and
+    every released version of the packages. Cumulative: prior client
+    packages are placed by their `-<arch>` asset suffix (apk) or their
+    `_<arch>` name segment (ipk), and prior noarch LuCI packages land in
+    every feed dir, so every released version stays installable — but a
+    prior client is merged only when its version equals the current
+    build's (the package managers install the highest version, and an
+    old client must not shadow the pinned one),
+  - per-arch opkg feeds (`ipkg-make-index.sh` fetched from openwrt-22.03,
+    run once per feed directory, manifest fields stripped, gzip,
+    `usign -S` with `secrets.TT_OPKG_SIGN_KEY`; the signature covers the
+    UNCOMPRESSED `Packages`). The two-empty-line padding works around
+    usign's SHA-512 size bug — keep it. The feeds index the prior ipks
+    too (same client version filter).
   - verification: installs the built repos into fresh rootfs containers
     exactly as `install.sh` sets them up (25.12.0 apk; 23.05.6 and 24.10.8
     opkg) and runs the client `--version`.
   - GitHub release upload (tag pushes only, single writer).
   - GitHub Pages site assembly: `repo-site/` templates + generated index
-    pages — the apk arch pages and the opkg index list what their
+    pages — the releases index, the per-tree pages, the packages index,
+    the per-arch pages and the per-feed pages list what their
     directories actually hold (`sed r` substitutions must keep file-read
     and delete on separate lines), rendered with Jekyll, deployed via
     Pages (`permissions: contents, pages, id-token`).

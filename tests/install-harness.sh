@@ -166,7 +166,9 @@ write_prep() {
                 echo 'mv /etc/openwrt_release /etc/openwrt_release.hidden'
                 ;;
             *)
-                echo "printf \"DISTRIB_RELEASE='%s'\\n\" \"$2\" > /etc/openwrt_release"
+                # DISTRIB_ARCH names the feed directories (the package
+                # architecture); install.sh reads it on the opkg branch.
+                echo "printf \"DISTRIB_RELEASE='%s'\\nDISTRIB_ARCH='x86_64'\\n\" \"$2\" > /etc/openwrt_release"
                 ;;
         esac
         echo 'cp /stubs/etc/init.d/rpcd /etc/init.d/rpcd'
@@ -312,10 +314,10 @@ sc_apk_repo_happy() {
 }
 as_apk_repo_happy() {
     assert_log "-O /etc/apk/keys/trusttunnel.pub" "wget targets the apk key path"
-    assert_log "http://repo.test/apk/key-build.pub" "wget fetches the apk key URL"
-    assert_log_order "http://repo.test/apk/key-build.pub" "apk --print-arch" "the key is fetched before the arch is probed"
+    assert_log "http://repo.test/releases/25.12.5/packages/x86_64/trusttunnel/key-build.pub" "wget fetches the apk key URL from the release tree"
+    assert_log_order "apk --print-arch" "http://repo.test/releases/25.12.5/packages/x86_64/trusttunnel/key-build.pub" "the arch is probed before the key is fetched (the key URL carries the arch)"
     assert_file_content /etc/apk/keys/trusttunnel.pub "stub pubkey" "the apk key file holds the fetched body"
-    assert_file_content /etc/apk/repositories.d/trusttunnel.list "http://repo.test/apk/x86_64/packages.adb" "the apk repo entry is the single arch-specific line"
+    assert_file_content /etc/apk/repositories.d/trusttunnel.list "http://repo.test/releases/25.12.5/packages/x86_64/trusttunnel/packages.adb" "the apk repo entry is the single arch-specific index line"
 }
 
 sc_apk_repo_wget_fail() {
@@ -338,7 +340,7 @@ sc_apk_repo_arch_file() {
         'printf "%s\n" "mipsel_24kc" > /etc/apk/arch' as_apk_repo_arch_file
 }
 as_apk_repo_arch_file() {
-    assert_file_content /etc/apk/repositories.d/trusttunnel.list "http://repo.test/apk/mipsel_24kc/packages.adb" "the /etc/apk/arch value names the repo directory"
+    assert_file_content /etc/apk/repositories.d/trusttunnel.list "http://repo.test/releases/25.12.5/packages/mipsel_24kc/trusttunnel/packages.adb" "the /etc/apk/arch value names the feed directory"
     assert_no_log "apk --print-arch" "apk --print-arch is not consulted when /etc/apk/arch exists"
 }
 
@@ -348,19 +350,38 @@ sc_apk_repo_arch_file_empty() {
 }
 as_apk_repo_arch_file_empty() {
     assert_log "apk --print-arch" "an empty /etc/apk/arch falls back to the probe"
-    assert_file_content /etc/apk/repositories.d/trusttunnel.list "http://repo.test/apk/x86_64/packages.adb" "the probe value names the repo directory"
+    assert_file_content /etc/apk/repositories.d/trusttunnel.list "http://repo.test/releases/25.12.5/packages/x86_64/trusttunnel/packages.adb" "the probe value names the feed directory"
 }
 
 sc_opkg_repo_fresh() {
     run_scenario "chunk3: opkg repo fresh setup (feed file absent)" "$IMG_OPKG" 0 "uname opkg wget usign" "22.03.7" "STUB_USIGN_FP=aabbccdd" 'rm -f /etc/opkg/customfeeds.conf' as_opkg_repo_fresh
 }
 as_opkg_repo_fresh() {
-    assert_file_content /etc/opkg/customfeeds.conf "src/gz trusttunnel http://repo.test/opkg" "the feed file is created with exactly one feed line"
+    assert_file_content /etc/opkg/customfeeds.conf "src/gz trusttunnel http://repo.test/releases/22.03.7/packages/x86_64/trusttunnel" "the feed file is created with exactly one arch-specific feed line"
     assert_log "-O /etc/opkg/keys/trusttunnel.pub" "wget targets the opkg key path"
-    assert_log "http://repo.test/opkg/opkg-key.pub" "wget fetches the opkg key URL"
-    assert_log_order "http://repo.test/opkg/opkg-key.pub" "usign -F -p /etc/opkg/keys/trusttunnel.pub" "the key is fetched before the fingerprint is computed"
+    assert_log "http://repo.test/releases/22.03.7/packages/x86_64/trusttunnel/opkg-key.pub" "wget fetches the opkg key URL from the release tree"
+    assert_log_order "http://repo.test/releases/22.03.7/packages/x86_64/trusttunnel/opkg-key.pub" "usign -F -p /etc/opkg/keys/trusttunnel.pub" "the key is fetched before the fingerprint is computed"
     assert_file_content /etc/opkg/keys/trusttunnel.pub "stub pubkey" "the stable-name key copy holds the fetched body"
     assert_file_content /etc/opkg/keys/aabbccdd "stub pubkey" "the fingerprint-named key copy is identical"
+}
+
+sc_opkg_repo_arch_distrib() {
+    run_scenario "chunk3: opkg feed dir from DISTRIB_ARCH" "$IMG_OPKG" 0 "uname opkg wget usign" "22.03.7" "STUB_USIGN_FP=aabbccdd" \
+        'rm -f /etc/opkg/customfeeds.conf; sed -i "s/DISTRIB_ARCH=.x86_64./DISTRIB_ARCH='"'"'mipsel_24kc'"'"'/" /etc/openwrt_release' as_opkg_repo_arch_distrib
+}
+as_opkg_repo_arch_distrib() {
+    assert_file_content /etc/opkg/customfeeds.conf "src/gz trusttunnel http://repo.test/releases/22.03.7/packages/mipsel_24kc/trusttunnel" "DISTRIB_ARCH names the feed directory"
+    assert_log "http://repo.test/releases/22.03.7/packages/mipsel_24kc/trusttunnel/opkg-key.pub" "the opkg key URL carries the DISTRIB_ARCH directory"
+}
+
+sc_opkg_repo_arch_missing() {
+    run_scenario "chunk3: opkg without DISTRIB_ARCH -> die" "$IMG_OPKG" 1 "uname opkg wget usign" "22.03.7" "" \
+        'sed -i "/^DISTRIB_ARCH=/d" /etc/openwrt_release' as_opkg_repo_arch_missing
+}
+as_opkg_repo_arch_missing() {
+    assert_grep "$SCRATCH/run.out" "could not determine the architecture" "the die message names the arch resolution failure"
+    assert_no_file /etc/opkg/keys/trusttunnel.pub "no opkg key file is written"
+    assert_crun 'grep -c "^src/gz trusttunnel " /etc/opkg/customfeeds.conf || true' "0" "no feed line is written"
 }
 
 sc_opkg_repo_stock_file() {
@@ -700,6 +721,8 @@ run_all() {
     sc_apk_repo_arch_file
     sc_apk_repo_arch_file_empty
     sc_opkg_repo_fresh
+    sc_opkg_repo_arch_distrib
+    sc_opkg_repo_arch_missing
     sc_opkg_repo_stock_file
     sc_opkg_repo_idempotent
     sc_opkg_repo_key_fail
