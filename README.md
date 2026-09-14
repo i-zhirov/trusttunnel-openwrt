@@ -131,7 +131,8 @@ tabs:
   domain, a `*.domain` wildcard, an IP address, an `IP:port` pair or a
   CIDR range. A **Rule preview** button shows how each entry of the
   profile is treated; the profile is assigned to the server with the
-  selector on the General tab.
+  selector on the General tab. The Status page offers the same preview
+  for whichever profile is assigned right now.
 - **Advanced**: rarely needed — the MTU, the LAN interfaces, the
   blackhole switch, router-traffic routing, the client's own DNS
   upstreams, and the internal routing parameters (firewall mark,
@@ -287,8 +288,10 @@ here: Status and Diagnostics (Settings is covered under Configuration).
 - **Now**: a State row ("working" only when everything is), a Mode row —
   the assigned profile and which half of its rules goes through the
   tunnel, or "Everything through VPN" without a profile — and the server
-  host name. Start / Stop / Restart buttons. The state facts and the
-  client-log tail refresh every ten seconds.
+  host name. Start / Stop / Restart buttons. A **Preview rules** button
+  shows how each rule of the assigned profile is treated right now —
+  or the legacy "do not bypass" list when no profile is assigned. The
+  state facts and the client-log tail refresh every ten seconds.
 
 ### Diagnostics page
 

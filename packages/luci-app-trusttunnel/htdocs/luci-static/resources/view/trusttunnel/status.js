@@ -5,6 +5,7 @@
 'require rpc';
 'require ui';
 'require dom';
+'require uci';
 
 var callStatus = rpc.declare({
 	object: 'luci.trusttunnel',
@@ -26,6 +27,44 @@ var callLog = rpc.declare({
 	params: [ 'lines' ],
 	expect: {}
 });
+
+var callCheckDomain = rpc.declare({
+	object: 'luci.trusttunnel',
+	method: 'check_domain',
+	params: [ 'domain' ],
+	expect: {}
+});
+
+// Header and rows for the rule preview table, mirroring the Check a
+// domain tool: the rule itself, a verdict badge and the backend's reason.
+function verdictHead() {
+	return E('tr', { 'class': 'cbi-section-table-row' }, [
+		E('th', { 'class': 'cbi-section-table-cell' }, _('Rule')),
+		E('th', { 'class': 'cbi-section-table-cell' }, _('Verdict')),
+		E('th', { 'class': 'cbi-section-table-cell' }, _('Why'))
+	]);
+}
+
+function verdictRow(rule, res) {
+	var cell;
+
+	if (res.error) {
+		cell = E('td', { 'class': 'cbi-section-table-cell' }, _('not checked'));
+	}
+	else {
+		var tunnel = res.verdict && res.verdict.indexOf('tunnel') === 0;
+
+		cell = E('td', { 'class': 'cbi-section-table-cell' },
+			E('span', { 'style': 'font-weight:bold; color:' + (tunnel ? '#2e7d32' : '#c62828') + ';' },
+				tunnel ? _('through the tunnel') : _('direct')));
+	}
+
+	return E('tr', { 'class': 'cbi-section-table-row' }, [
+		E('td', { 'class': 'cbi-section-table-cell' }, E('code', rule)),
+		cell,
+		E('td', { 'class': 'cbi-section-table-cell' }, res.error || res.reason || '')
+	]);
+}
 
 return view.extend({
 	verdict: function(st) {
@@ -157,6 +196,113 @@ return view.extend({
 		});
 	},
 
+	handlePreview: function(st) {
+		var self = this;
+		var name = (st && st.routing_profile) || '';
+
+		// The mode comes from the status: the records it reflects are the
+		// same ones check_domain answers from, so an edited-but-not-applied
+		// profile previews exactly like the verdicts compute it.
+		var mode = (name && st.routing_mode === 'bypass') ? 'bypass'
+		         : (name && st.routing_mode === 'vpn') ? 'vpn' : '';
+		var modeLabel = mode === 'bypass' ? _('Bypass mode') : _('VPN mode');
+
+		var box = E('div', {}, [
+			E('p', { 'class': 'spinning' }, _('Checking…'))
+		]);
+
+		var close = E('div', { 'class': 'right' }, [
+			E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Close'))
+		]);
+
+		ui.showModal(mode ? _('Rule preview — %s').format(name) : _('Rule preview'), [
+			mode
+				? E('p', {}, _('How each rule of this profile is treated in %s. The verdicts come from the applied settings — press Save & Apply on the Settings page to preview pending changes.').format(modeLabel))
+				: E('p', {}, _('No routing profile is assigned, so everything goes through the tunnel except the "do not bypass" list below.')),
+			box,
+			close
+		]);
+
+		uci.load('trusttunnel').then(function() {
+			var profile = null;
+			var secs = uci.sections('trusttunnel', 'routing_profile') || [];
+
+			for (var i = 0; i < secs.length; i++)
+				if (secs[i].name === name) {
+					profile = secs[i];
+					break;
+				}
+
+			// In vpn mode the bypass rules are the exclusions, in bypass
+			// mode the VPN rules are the tunneled set; the other list is
+			// inert. Without a profile (or with an unrecognized one) the
+			// backend falls back to the legacy domains.direct list, so
+			// the preview does too.
+			var effective = [], inert = [];
+
+			if (mode && profile) {
+				if (mode === 'bypass') {
+					effective = profile.vpn_rules || [];
+					inert = profile.bypass_rules || [];
+				}
+				else {
+					effective = profile.bypass_rules || [];
+					inert = profile.vpn_rules || [];
+				}
+			}
+			else {
+				effective = uci.get('trusttunnel', 'domains', 'direct') || [];
+			}
+
+			// The checks run one after another, never in parallel.
+			var rows = [];
+			var chain = Promise.resolve();
+
+			effective.forEach(function(rule) {
+				chain = chain.then(function() {
+					return callCheckDomain(rule).then(function(res) {
+						rows.push(verdictRow(rule, res));
+					}).catch(function(e) {
+						rows.push(verdictRow(rule, { error: e.message || String(e) }));
+					});
+				});
+			});
+
+			chain.then(function() {
+				var nodes = [];
+
+				if (effective.length) {
+					nodes.push(E('h4', mode
+						? (mode === 'bypass' ? _('Tunneled by this profile') : _('Bypassed by this profile'))
+						: _('The "do not bypass" list')));
+					nodes.push(E('table', { 'class': 'cbi-section-table' }, [ verdictHead() ].concat(rows)));
+				}
+
+				if (inert.length) {
+					nodes.push(E('h4', _('No effect in %s').format(modeLabel)));
+					nodes.push(E('table', { 'class': 'cbi-section-table' }, [ verdictHead() ].concat(inert.map(function(rule) {
+						return E('tr', { 'class': 'cbi-section-table-row' }, [
+							E('td', { 'class': 'cbi-section-table-cell' }, E('code', rule)),
+							E('td', { 'class': 'cbi-section-table-cell' }, _('no effect')),
+							E('td', { 'class': 'cbi-section-table-cell' }, _('this list is ignored in %s').format(modeLabel))
+						]);
+					}))));
+				}
+
+				if (!effective.length && !inert.length)
+					nodes.push(E('p', {}, mode
+						? _('This profile has no rules yet.')
+						: _('The "do not bypass" list is empty — everything goes through the tunnel.')));
+
+				dom.content(box, nodes);
+			}).catch(function(e) {
+				dom.content(box, E('p', e.message || String(e)));
+			});
+		}).catch(function(e) {
+			dom.content(box, E('p', e.message || String(e)));
+		});
+	},
+
 	load: function() {
 		return callStatus();
 	},
@@ -164,12 +310,17 @@ return view.extend({
 	render: function(st) {
 		var self = this;
 
+		// The Preview rules button answers for the newest status the polls
+		// have seen, not the load-time snapshot.
+		self._lastStatus = st;
+
 		var verdictBox = E('div', {}, this.renderVerdict(st));
 		var factsBox = E('div', {}, this.renderFacts(st));
 		var logBox = E('pre', { 'style': 'max-height:22em;overflow:auto;margin:0' });
 
 		poll.add(function() {
 			return callStatus().then(function(s) {
+				self._lastStatus = s;
 				dom.content(verdictBox, self.renderVerdict(s));
 				dom.content(factsBox, self.renderFacts(s));
 			});
@@ -204,7 +355,13 @@ return view.extend({
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', _('Now')),
-				factsBox
+				factsBox,
+				E('div', { 'style': 'margin-top:0.75em' }, [
+					E('button', {
+						'class': 'cbi-button cbi-button-action',
+						'click': function(ev) { self.handlePreview(self._lastStatus); }
+					}, _('Preview rules'))
+				])
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', _('Client log')),

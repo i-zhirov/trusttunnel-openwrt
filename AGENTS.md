@@ -186,7 +186,9 @@ file compiles under the pinned ucode.
 ### LuCI views
 
 - `status.js` — verdict banner, facts (state/mode/server), Start/Stop/
-  Restart buttons, client log; polls every 10s.
+  Restart buttons, a rules preview for the assigned profile (or the
+  legacy `domains.direct` list without one) that checks each effective
+  rule via `check_domain`, client log; polls every 10s.
 - `settings.js` — a single tabbed `form.Map` whose sections become tabs
   (General, Server, Routing profiles, Advanced), plus the Import… modal
   that calls `import_config` and applies results to pending UCI (nothing
@@ -323,7 +325,11 @@ absent, so the plain suite runs anywhere.
   `TT_LOGS_DIR`, `TT_RELEASE_TAG` — see `tests/integration/README.md`.
   Docker-gated (skip 77), deliberately NOT picked up by `tests/run.sh`;
   `integration.yml` runs it on PRs/main/dispatch, and the release
-  pipeline reuses it against the release's own artifacts.
+  pipeline reuses it against the release's own artifacts. Every network
+  request in the docker harnesses is retried (transient registry/mirror/
+  lab-net failures must not fail a run): the `retry`/`retry_out` helpers
+  in `run.sh`, and the same shape in `build-sdk.sh`, `restricted-feeds.sh`,
+  `gui/run.sh` and `test_backend_contract.sh`.
 - `tests/integration/restricted-feeds.sh` — the SDK feed pins: prints the
   `EXTRA_FEEDS` value (base/packages/luci only — the routing/telephony/
   video clones are dead weight; the client build uses base only) and
