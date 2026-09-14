@@ -316,7 +316,14 @@ return view.extend({
 
 		var verdictBox = E('div', {}, this.renderVerdict(st));
 		var factsBox = E('div', {}, this.renderFacts(st));
+
+		// The first log fetch only runs on the first poll tick and
+		// logread over RPC takes a while, so show a spinner in the log
+		// section until the first response lands. Later polls only
+		// refresh the text — no spinner flash on every 10 s tick.
 		var logBox = E('pre', { 'style': 'max-height:22em;overflow:auto;margin:0' });
+		var logArea = E('div', {}, E('p', { 'class': 'spinning' }, _('Loading…')));
+		var logReady = false;
 
 		poll.add(function() {
 			return callStatus().then(function(s) {
@@ -329,6 +336,19 @@ return view.extend({
 		poll.add(function() {
 			return callLog(80).then(function(r) {
 				logBox.textContent = (r.lines || []).join('\n');
+
+				if (!logReady) {
+					logReady = true;
+					dom.content(logArea, logBox);
+				}
+			}).catch(function() {
+				// A failed first fetch must not leave the spinner
+				// spinning forever: swap in the empty box, the next
+				// poll retries.
+				if (!logReady) {
+					logReady = true;
+					dom.content(logArea, logBox);
+				}
 			});
 		}, 10);
 
@@ -365,7 +385,7 @@ return view.extend({
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', _('Client log')),
-				logBox
+				logArea
 			])
 		]);
 	}
