@@ -1,7 +1,9 @@
 'use strict';
 
 // Status view (status.js): verdict banner for each status shape, facts
-// table, the Start/Stop/Restart actions and the two 10 s polls.
+// table, the Start/Stop/Restart actions, the rule preview modal for the
+// effective profile (and the legacy do-not-bypass list), and the two 10 s
+// polls.
 
 const { test, expect } = require('@playwright/test');
 const {
@@ -107,6 +109,58 @@ test('service failure surfaces a warning notification', async ({ page }) => {
 	await button(page, 'Start').click();
 	await expect(page.locator('#maincontent .alert-message.warning')).toContainText(
 		'The service did not start. The client log below says why.');
+});
+
+test('Preview rules checks the assigned profile rule by rule', async ({ page }) => {
+	// The stub's Default profile (vpn mode) carries bank.example as its
+	// bypass list and telegram.org as its VPN list; the check_domain
+	// golden for bank.example verdicts 'direct'.
+	await openView(page, 'status');
+
+	await button(page, 'Preview rules').click();
+	const modal = page.locator('#modal_overlay .modal');
+	await expect(modal).toContainText('Rule preview — Default');
+	await expect(modal).toContainText(
+		'How each rule of this profile is treated in VPN mode');
+
+	// Only the effective list (the bypass list in vpn mode) is checked.
+	await waitForFrames(page, 'luci.trusttunnel', 'check_domain', 1);
+	let frames = await framesFor(page, 'luci.trusttunnel', 'check_domain');
+	expect(frames.length).toBe(1);
+	expect(frames[0].args.domain).toBe('bank.example');
+
+	await expect(modal).toContainText('Bypassed by this profile');
+	await expect(modal).toContainText('bank.example');
+	await expect(modal).toContainText('direct');
+
+	// The VPN list is inert in vpn mode and marked as such.
+	await expect(modal).toContainText('No effect in VPN mode');
+	await expect(modal).toContainText('telegram.org');
+	await expect(modal).toContainText('no effect');
+});
+
+test('Preview rules without a profile shows the do-not-bypass list', async ({ page }) => {
+	await stubSet(page, {
+		status: { ...BASE, routing_profile: '', routing_mode: '', vpn_mode: 'general' },
+		checkDomain: {
+			domain: 'legacy.example', normalized: 'legacy.example',
+			verdict: 'direct',
+			reason: 'listed in the "do not bypass" list; the client sends it out by SNI'
+		}
+	});
+	await openView(page, 'status');
+
+	await button(page, 'Preview rules').click();
+	const modal = page.locator('#modal_overlay .modal');
+	await expect(modal).toContainText('Rule preview');
+	await expect(modal).toContainText('No routing profile is assigned');
+
+	await waitForFrames(page, 'luci.trusttunnel', 'check_domain', 1);
+	const frames = await framesFor(page, 'luci.trusttunnel', 'check_domain');
+	expect(frames[0].args.domain).toBe('legacy.example');
+
+	await expect(modal).toContainText('The "do not bypass" list');
+	await expect(modal).toContainText('legacy.example');
 });
 
 test('the 10 s polls refresh the verdict and fetch the client log', async ({ page }) => {
