@@ -142,6 +142,7 @@ jobs:
             tests/test_uci_defaults.sh \
             tests/test_init_regenerate.sh \
             tests/integration/run.sh \
+            tests/integration/ipk-arch.sh \
             tests/integration/build-sdk.sh \
             tests/integration/restricted-feeds.sh \
             tests/install-harness.sh \

@@ -46,6 +46,7 @@ scratch directory and the served public key is what install.sh installs.
 | Stage | What it verifies |
 |---|---|
 | `preflight` | docker, `/dev/net/tun` |
+| `archparse` | regression: the ipk arch/version derivation shared with release.yml (`ipk-arch.sh`) returns every matrix arch-name shape intact — a last-underscore split once clipped `mipsel_24kc` to `24kc` and `x86_64` to `64` |
 | `pkgs` | the two packages for the PM (luci-app + client), from TT_REPO_DIR / dist/ / release |
 | `repo` | hermetic repo assembly + signing (apk: mkndx+adbsign; opkg: ipkg-make-index+usign) |
 | `serve` | repo server on the lab network (44.55.66.0/24), polled until it answers |
@@ -133,6 +134,17 @@ artifacts are consumed directly.
   loads the lan-zone rule asynchronously after the network restart, and
   the tunnel needs up to a minute to establish — the harness polls for
   all three instead of sleeping.
+- **The arch derivation is pinned against the pipeline.** release.yml
+  derives the per-arch opkg feed directories from the client ipk file
+  names (`trusttunnel-client_<ver>-<rel>_<arch>.ipk`), and the
+  derivation lives in `ipk-arch.sh` — sourced by both the workflow and
+  the harness, so the `archparse` regression stage tests the exact code
+  the pipeline runs. A first implementation split at the last
+  underscore and clipped arch names containing underscores (`mipsel_24kc`
+  → `24kc`, `x86_64` → `64`), silently producing feed directories no
+  device would fetch; the release-time verification caught it. The
+  harness's own opkg assembly also derives the feed directory from the
+  run's real artifact, so a regression fails the install assertions too.
 - **The hermetic repository mirrors the official layout.** The release
   pipeline serves the repositories as
   `releases/<version>/packages/<arch>/trusttunnel/` (the official
