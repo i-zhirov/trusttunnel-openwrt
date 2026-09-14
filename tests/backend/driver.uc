@@ -7,13 +7,14 @@ let out = api[name].call({ args: args });
 // The tun device's carrier sysfs read is not stable (it can be 0, 1 or
 // EINVAL depending on kernel timing): normalize the diagnose entry so the
 // golden comparison does not depend on it. The carrier branch itself is
-// pinned by the state-matrix comparison (ok 'up' when 1, warn otherwise).
+// pinned by the state-matrix comparison (ok 'link up' when 1, warn
+// otherwise).
 if (type(out) == 'object' && type(out.checks) == 'array') {
 	for (let c in out.checks) {
-		if (c.label == 'Tunnel carrier') {
+		if (c.label == 'Carrier state') {
 			c.status = 'warn';
-			c.detail = 'no carrier';
-			c.hint = 'The device exists but the client has not established the tunnel yet. This is the client side, not the routing — read the client log.';
+			c.detail = 'link down';
+			c.hint = "The device exists but the tunnel is not established yet; that is on the client, not the routing. See the client log.";
 		}
 	}
 	// The counts are computed by the backend before this normalization:

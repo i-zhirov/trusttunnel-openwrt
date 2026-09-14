@@ -22,7 +22,7 @@
 //    this gate.
 //
 // The goldens only cover the states they pin; a literal that no golden
-// exercises (e.g. 'request failed' in the curl-failure branch of diagnose)
+// exercises (e.g. 'request error' in the curl-failure branch of diagnose)
 // cannot be caught here -- cover the state in the backend contract test
 // first, then this gate sees it.
 
@@ -148,12 +148,12 @@ const ALLOWLIST = [
 	/^.+ \(.+\)$/,                                        // pname + ' (' + pmode + ')'
 	/^user .+$/,                                          // 'user ' + user
 	/^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/,                     // endpoint hostname
-	/^same address both ways: .+$/,                       // 'same address both ways: ' + tip
-	/^bound on .+$/,                                      // 'bound on ' + paddr
-	/^.+, MTU \d+$/,                                      // dev + ', MTU ' + dev_mtu
-	/^device \d+, configured \d+$/,                       // 'device ' + dev_mtu + ', configured ' + mtu_cfg
+	/^identical addresses via both routes: .+$/,          // 'identical addresses via both routes: ' + tip
+	/^bound at .+$/,                                      // 'bound at ' + paddr
+	/^.+ with MTU \d+$/,                                  // dev + ' with MTU ' + dev_mtu
+	/^device \d+ vs configured \d+$/,                     // 'device ' + dev_mtu + ' vs configured ' + mtu_cfg
 	/^default via .+$/,                                   // 'default via ' + dev
-	/^tunnel .+, direct .+$/                              // 'tunnel ' + tip + ', direct ' + dip
+	/^tunnel .+ vs direct .+$/                            // 'tunnel ' + tip + ' vs direct ' + dip
 ];
 
 const seen = new Set();

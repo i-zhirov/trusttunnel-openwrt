@@ -3,48 +3,39 @@
 import { popen, readfile, writefile, access, unlink, stat, chmod } from 'fs';
 import { rand, srand } from 'math';
 
-// The tmp_path() helper below uses rand(), which lives in the math module,
+// The scratch_path() helper below uses rand(), which lives in the math module,
 // not in the ucode core. The module is declared in LUCI_DEPENDS as
-// +ucode-mod-math; without the import tmp_path() throws at runtime and the
+// +ucode-mod-math; without the import scratch_path() throws at runtime and the
 // config import and the domain check break with it.
-srand(time());
+let seed = time();
+srand(seed);
 
 const LIBDIR = '/usr/libexec/trusttunnel';
 const OUTDIR = '/var/etc/trusttunnel';
 const RECORDS = OUTDIR + '/settings.tsv';
 const CLIENT = '/opt/trusttunnel_client/trusttunnel_client';
 
-// Run a command and return { code, out } with stderr merged into stdout.
-// Merging matters wherever the error text is itself the result (service
-// control, log, import).
-function sh(cmd) {
-	let p = popen(cmd + ' 2>&1');
+// Run a command and return { code, out }. With capture the output carries
+// stdout only and stderr is dropped — the right mode wherever the output is
+// parsed, because warnings on stderr would otherwise become data. Without
+// capture stderr is merged into the output so error text surfaces in the
+// result (service control, log, import).
+function run(cmd, capture) {
+	let p = popen(cmd + (capture ? ' 2>/dev/null' : ' 2>&1'));
 	if (!p)
 		return { code: 127, out: '' };
 
-	let out = p.read('all') ?? '';
-	let code = p.close() ?? 127;
+	let body = p.read('all') ?? '';
+	let status = p.close() ?? 127;
 
-	return { code: code, out: out };
+	return { code: status, out: body };
 }
 
-// Run a command and return stdout only. Required wherever the output is
-// parsed: warnings on stderr would otherwise become data.
-function sh_out(cmd) {
-	let p = popen(cmd + ' 2>/dev/null');
-	if (!p)
-		return { code: 127, out: '' };
-
-	let out = p.read('all') ?? '';
-	let code = p.close() ?? 127;
-
-	return { code: code, out: out };
-}
-
-// Shell single-quote escaping: close the quote, insert the escaped quote,
-// reopen.
-function shq(s) {
-	return "'" + replace('' + s, "'", "'\\''") + "'";
+// Shell single-quote escaping: every ' becomes '\'' and the whole string
+// is wrapped in quotes. Note the join argument order: in ucode it is
+// join(separator, array).
+function shell_quote(s) {
+	return "'" + join("'\\''", split('' + s, "'")) + "'";
 }
 
 // An unpredictable name in the world-writable temp directory. These files
@@ -52,37 +43,39 @@ function shq(s) {
 // puts the endpoint password there in the clear; a fixed name plus default
 // permissions would make the file readable and replaceable for any local
 // unprivileged process in the window between writing and reading.
-function tmp_path(prefix) {
-	return sprintf('/tmp/.tt-%s-%08x%04x', prefix, time(), rand() % 65536);
+function scratch_path(prefix) {
+	return sprintf('/tmp/.tt-%s-%04x%04x%04x', prefix, time() % 65536,
+		rand() % 65536, rand() % 65536);
 }
 
 // Write a secret into a fresh temp file with mode 0600 in one place, so no
 // caller can forget the permissions after creating a file with a secret in
 // it.
-function write_secret_tmp(prefix, data) {
-	let path = tmp_path(prefix);
-	writefile(path, data);
-	chmod(path, 384); // 0600
-	return path;
+function secret_file(prefix, data) {
+	let f = scratch_path(prefix);
+	writefile(f, data);
+	chmod(f, 384); // 0600
+	return f;
 }
 
 // Read the UCI value at the given dotted path. The output is trimmed.
-function uciget(path) {
-	let r = sh_out('uci -q get ' + shq(path));
-	return trim(r.out);
+function uci_value(path) {
+	return trim(run('uci -q get ' + shell_quote(path), true).out);
 }
 
 // Parse the records TSV (section.option<TAB>value, one line per list
 // value) into a key -> array map. Lines without a tab separator are
 // skipped.
-function records() {
+function load_records() {
 	let raw = readfile(RECORDS);
 	let out = {};
 
 	if (raw == null)
 		return out;
 
-	for (let line in split(raw, '\n')) {
+	let lines = split(raw, '\n');
+	for (let i = 0; i < length(lines); i++) {
+		let line = lines[i];
 		let t = index(line, '\t');
 		if (t < 0)
 			continue;
@@ -149,16 +142,17 @@ function parse_ping(host, output) {
 // object with the device name (when the helper reports one) and the four
 // presence flags; everything is false/empty when the records file is
 // absent or the helper fails.
-function routing_status() {
+function kernel_state() {
 	let out = { device: '', device_up: false, rule: false, table: false, nft: false };
 
 	if (access(RECORDS) == null)
 		return out;
 
-	let r = sh(LIBDIR + '/routing status ' + shq(RECORDS) + ' ' + shq(OUTDIR));
+	let r = run(LIBDIR + '/routing status ' + shell_quote(RECORDS) + ' ' + shell_quote(OUTDIR));
 
-	for (let line in split(r.out, '\n')) {
-		line = trim(line);
+	let lines = split(r.out, '\n');
+	for (let i = 0; i < length(lines); i++) {
+		let line = trim(lines[i]);
 		if (line == 'device up')
 			out.device_up = true;
 		else if (line == 'rule present')
@@ -244,7 +238,7 @@ function socks_addrhex(host) {
 // field split is not reliable). Matching the address too keeps a foreign
 // daemon bound to the same port but a different address from satisfying
 // the check — a port conflict is exactly the failure mode this check
-// must report as "not listening".
+// must report as "not bound".
 function socks_listening(addr) {
 	let port = socks_port(addr);
 	if (!length(port) || !match(port, /^[0-9]+$/))
@@ -254,7 +248,7 @@ function socks_listening(addr) {
 	let pat = length(addrhex)
 		? "^ *[0-9]+: " + addrhex + ":" + hex + " "
 		: "^ *[0-9]+: [0-9A-F:]*:" + hex + " ";
-	let r = sh_out("grep -E '" + pat + "' /proc/net/tcp /proc/net/tcp6");
+	let r = run("grep -E '" + pat + "' /proc/net/tcp /proc/net/tcp6", true);
 	return length(trim(r.out)) > 0;
 }
 
@@ -267,7 +261,7 @@ function check(group, label, status, detail, hint) {
 // summary.
 function avg_text(output) {
 	let m = match(output, /round-trip min\/avg\/max = ([0-9.]+)\/([0-9.]+)\/([0-9.]+)/);
-	return m ? m[2] + ' ms average' : 'no reply';
+	return m ? m[2] + ' ms average' : 'no response';
 }
 
 return {
@@ -275,17 +269,17 @@ return {
 		status: {
 			args: { },
 			call: function() {
-				let rec = records();
-				let rs = routing_status();
+				let rec = load_records();
+				let rs = kernel_state();
 				let pname = first(rec, 'routing_profile.name', '');
 				let pmode = first(rec, 'routing_profile.mode', '');
 				let mode = first(rec, 'main.mode', 'tun');
 				let paddr = first(rec, 'proxy.address', '');
 
-				let running = sh('/etc/init.d/trusttunnel running').code == 0;
+				let running = run('/etc/init.d/trusttunnel running').code == 0;
 
 				return {
-					enabled: uciget('trusttunnel.main.enabled') == '1',
+					enabled: uci_value('trusttunnel.main.enabled') == '1',
 					running: running,
 					mode: mode,
 					device: length(rs.device) ? rs.device : null,
@@ -323,33 +317,33 @@ return {
 			call: function() {
 				let res = { package: null, client_package: null, client: null };
 
-				let apk = sh_out('apk list -I luci-app-trusttunnel');
+				let apk = run('apk list -I luci-app-trusttunnel', true);
 				if (apk.code == 0) {
 					let m = match(apk.out, /luci-app-trusttunnel-([^ \t\n]+)/);
 					if (m)
 						res.package = m[1];
 				}
 				if (res.package == null) {
-					let opkg = sh_out('opkg info luci-app-trusttunnel');
+					let opkg = run('opkg info luci-app-trusttunnel', true);
 					let m = match(opkg.out, /Version: ([^ \t\n]+)/);
 					if (m)
 						res.package = m[1];
 				}
 
-				apk = sh_out('apk list -I trusttunnel-client');
+				apk = run('apk list -I trusttunnel-client', true);
 				if (apk.code == 0) {
 					let m = match(apk.out, /trusttunnel-client-([^ \t\n]+)/);
 					if (m)
 						res.client_package = m[1];
 				}
 				if (res.client_package == null) {
-					let opkg = sh_out('opkg info trusttunnel-client');
+					let opkg = run('opkg info trusttunnel-client', true);
 					let m = match(opkg.out, /Version: ([^ \t\n]+)/);
 					if (m)
 						res.client_package = m[1];
 				}
 
-				let cv = sh_out(CLIENT + ' --version');
+				let cv = run(CLIENT + ' --version', true);
 				if (cv.code == 0) {
 					let m = match(cv.out, /[0-9]+\.[0-9]+\.[0-9]+[^ \t\n]*/);
 					if (m)
@@ -367,16 +361,16 @@ return {
 
 				if (action != 'start' && action != 'stop' &&
 				    action != 'restart' && action != 'reload')
-					return { error: 'unsupported action' };
+					return { error: 'unknown action' };
 
-				let r = sh('/etc/init.d/trusttunnel ' + action);
+				let r = run('/etc/init.d/trusttunnel ' + action);
 
 				// A start is only a start once the service answers
 				// "running": procd forks the client asynchronously, so the
 				// init script may have exited 0 before anything came up.
 				if (action == 'start') {
 					sleep(1);
-					if (sh('/etc/init.d/trusttunnel running').code != 0)
+					if (run('/etc/init.d/trusttunnel running').code != 0)
 						return { code: 1, output: r.out, not_running: true };
 				}
 
@@ -393,11 +387,11 @@ return {
 				if (length(target)) {
 					push(hosts, target);
 				} else {
-					let rec = records();
+					let rec = load_records();
 					let addrs = rec['endpoint.address'] ?? [];
 
 					if (!length(addrs))
-						return { error: 'no endpoint address configured' };
+						return { error: 'no server address configured' };
 
 					for (let a in addrs)
 						push(hosts, endpoint_host(a));
@@ -405,7 +399,7 @@ return {
 
 				let results = [];
 				for (let h in hosts) {
-					let r = sh_out('ping -c 4 -W 2 -q ' + shq(h));
+					let r = run('ping -c 4 -W 2 -q ' + shell_quote(h), true);
 					push(results, parse_ping(h, r.out));
 				}
 
@@ -416,7 +410,7 @@ return {
 		probe: {
 			args: { },
 			call: function() {
-				let rec = records();
+				let rec = load_records();
 				let via, plain;
 
 				// The tunnel leg is bound through the tun device in tun
@@ -426,8 +420,8 @@ return {
 
 					if (!length(addr))
 						return {
-							tunnel: { error: 'the SOCKS listener address is not configured' },
-							direct: { error: 'not attempted' }
+							tunnel: { error: 'the SOCKS listener address is unset' },
+							direct: { error: 'not tried' }
 						};
 
 					// The listener demands the configured credentials
@@ -440,25 +434,25 @@ return {
 					let user = first(rec, 'proxy.username', '');
 
 					if (length(user))
-						auth = ' --proxy-user ' + shq(user + ':' + first(rec, 'proxy.password', ''));
+						auth = ' --proxy-user ' + shell_quote(user + ':' + first(rec, 'proxy.password', ''));
 
-					via = sh_out('curl -fsS --max-time 8 --socks5-hostname ' + shq(addr) + auth + ' https://api.ipify.org');
+					via = run('curl -fsS --max-time 8 --socks5-hostname ' + shell_quote(addr) + auth + ' https://api.ipify.org', true);
 				} else {
-					let rs = routing_status();
+					let rs = kernel_state();
 
 					if (!length(rs.device))
 						return {
-							tunnel: { error: 'the client has not created a tunnel device yet' },
-							direct: { error: 'not attempted' }
+							tunnel: { error: 'the client has not created a tun device yet' },
+							direct: { error: 'not tried' }
 						};
 
-					via = sh_out('curl -fsS --max-time 8 --interface ' + shq(rs.device) + ' https://api.ipify.org');
+					via = run('curl -fsS --max-time 8 --interface ' + shell_quote(rs.device) + ' https://api.ipify.org', true);
 				}
 
-				plain = sh_out('curl -fsS --max-time 8 https://api.ipify.org');
+				plain = run('curl -fsS --max-time 8 https://api.ipify.org', true);
 
-				let tunnel = via.code == 0 ? { ip: trim(via.out) } : { error: length(trim(via.out)) ? trim(via.out) : 'request failed' };
-				let direct = plain.code == 0 ? { ip: trim(plain.out) } : { error: length(trim(plain.out)) ? trim(plain.out) : 'request failed' };
+				let tunnel = via.code == 0 ? { ip: trim(via.out) } : { error: length(trim(via.out)) ? trim(via.out) : 'request error' };
+				let direct = plain.code == 0 ? { ip: trim(plain.out) } : { error: length(trim(plain.out)) ? trim(plain.out) : 'request error' };
 
 				return { tunnel: tunnel, direct: direct };
 			}
@@ -470,9 +464,9 @@ return {
 				let raw = trim(req.args?.domain ?? '');
 
 				if (!length(raw))
-					return { error: 'domain is required' };
+					return { error: 'a domain is required' };
 
-				let rec = records();
+				let rec = load_records();
 				let pname = first(rec, 'routing_profile.name', '');
 				let pmode = first(rec, 'routing_profile.mode', '');
 				let list_key;
@@ -505,8 +499,8 @@ return {
 						domain: raw, normalized: lc_raw,
 						verdict: in_list ? 'tunnel' : 'direct',
 						reason: in_list
-							? "listed in the profile's VPN rules; the client routes it through the tunnel"
-							: 'the assigned profile is in bypass mode; everything else stays direct'
+							? "listed in the profile's VPN rules; the client sends it through the tunnel"
+							: 'the assigned profile runs in bypass mode; everything else goes out directly'
 					};
 
 				if (length(pname) && pmode == 'vpn')
@@ -514,16 +508,16 @@ return {
 						domain: raw, normalized: lc_raw,
 						verdict: in_list ? 'direct' : 'tunnel',
 						reason: in_list
-							? "listed in the profile's bypass rules; the client sends it out directly"
-							: 'the assigned profile is in VPN mode; everything else goes through the tunnel'
+							? "listed in the profile's bypass rules; the client keeps it direct"
+							: 'the assigned profile is in VPN mode, so everything else is tunneled'
 					};
 
 				return {
 					domain: raw, normalized: lc_raw,
 					verdict: in_list ? 'direct' : 'tunnel',
 					reason: in_list
-						? 'listed in the "do not bypass" list; the client sends it out by SNI'
-						: 'all LAN traffic goes through the tunnel (full-tunnel mode)'
+						? 'listed in the "do not bypass" list; the client matches it by SNI'
+						: 'no exclusions: all LAN traffic is tunneled (full-tunnel mode)'
 				};
 			}
 		},
@@ -538,7 +532,7 @@ return {
 				let n = int(req.args?.lines ?? 100);
 				if (!(n >= 1))
 					n = 100;
-				let r = sh_out('logread -e trusttunnel | tail -n ' + n);
+				let r = run('logread -e trusttunnel | tail -n ' + n, true);
 				let o = trim(r.out);
 
 				return { lines: length(o) ? split(o, '\n') : [ '' ] };
@@ -548,8 +542,8 @@ return {
 		diagnose: {
 			args: { },
 			call: function() {
-				let rec = records();
-				let rs = routing_status();
+				let rec = load_records();
+				let rs = kernel_state();
 				// The routing checks report "absent" as a failure only while
 				// the service is running; when it is stopped or mid-restart
 				// the state is expected to be missing (the routing is torn
@@ -571,22 +565,22 @@ return {
 				// --- Configuration ---
 
 				if (length(addrs))
-					push(checks, check('config', 'Endpoint address', 'ok', join(', ', addrs), ''));
+					push(checks, check('config', 'Server address', 'ok', join(', ', addrs), ''));
 				else
-					push(checks, check('config', 'Endpoint address', 'fail', 'not set',
-						'Fill in the address on the Settings page, or import the server config.'));
+					push(checks, check('config', 'Server address', 'fail', 'unset',
+						'Set the address on the Settings page or import the server config.'));
 
 				if (length(user) && length(pass))
-					push(checks, check('config', 'Credentials', 'ok', 'user ' + user, ''));
+					push(checks, check('config', 'Endpoint credentials', 'ok', 'user ' + user, ''));
 				else
-					push(checks, check('config', 'Credentials', 'fail', 'not set',
-						'Both the user name and the password are required.'));
+					push(checks, check('config', 'Endpoint credentials', 'fail', 'unset',
+						'The user name and the password must both be filled in.'));
 
 				if (length(host))
-					push(checks, check('config', 'TLS host name', 'ok', host, ''));
+					push(checks, check('config', 'TLS SNI', 'ok', host, ''));
 				else
-					push(checks, check('config', 'TLS host name', 'warn', 'not set',
-						'Without it the TLS session uses the bare address, which many servers reject.'));
+					push(checks, check('config', 'TLS SNI', 'warn', 'unset',
+						'Without it the TLS session uses the plain address, which many servers reject.'));
 
 				if (length(pname))
 					push(checks, check('config', 'Routing profile', 'ok', pname + ' (' + pmode + ')', ''));
@@ -599,37 +593,37 @@ return {
 				let cl = access(CLIENT);
 
 				if (cl) {
-					let ver = sh_out(CLIENT + ' --version');
+					let ver = run(CLIENT + ' --version', true);
 					let vm = match(ver.out, /[0-9]+\.[0-9]+\.[0-9]+[^ \t\n]*/);
-					push(checks, check('prereq', 'TrustTunnel client', 'ok', vm ? vm[0] : trim(ver.out), ''));
+					push(checks, check('prereq', 'Client binary', 'ok', vm ? vm[0] : trim(ver.out), ''));
 				} else {
-					push(checks, check('prereq', 'TrustTunnel client', 'fail', 'not installed',
+					push(checks, check('prereq', 'Client binary', 'fail', 'binary missing',
 						'The client is a dependency of the package; reinstall trusttunnel-client.'));
 				}
 
 				// The tun device is a tun-mode prerequisite; proxy mode
 				// binds a listener instead and never opens /dev/net/tun.
 				if (mode != 'proxy' && access('/dev/net/tun'))
-					push(checks, check('prereq', 'tun device', 'ok', '/dev/net/tun present', ''));
+					push(checks, check('prereq', 'TUN device', 'ok', '/dev/net/tun present', ''));
 				else if (mode != 'proxy')
-					push(checks, check('prereq', 'tun device', 'fail', 'missing', 'Install kmod-tun.'));
+					push(checks, check('prereq', 'TUN device', 'fail', 'not present', 'Install the kmod-tun package.'));
 
 				// --- Service ---
 
-				let enabled = uciget('trusttunnel.main.enabled') == '1';
-				let running = sh('/etc/init.d/trusttunnel running').code == 0;
+				let enabled = uci_value('trusttunnel.main.enabled') == '1';
+				let running = run('/etc/init.d/trusttunnel running').code == 0;
 
 				if (enabled)
-					push(checks, check('service', 'Enabled', 'ok', 'yes', ''));
+					push(checks, check('service', 'Service enabled', 'ok', 'on', ''));
 				else
-					push(checks, check('service', 'Enabled', 'warn', 'no',
-						'Turn on Enable on the Settings page, then press Start.'));
+					push(checks, check('service', 'Service enabled', 'warn', 'off',
+						'Enable the service on the Settings page, then press Start.'));
 
 				if (running)
-					push(checks, check('service', 'Running', 'ok', 'yes', ''));
+					push(checks, check('service', 'Service running', 'ok', 'on', ''));
 				else
-					push(checks, check('service', 'Running', 'fail', 'no',
-						'Press Start and read the client log below.'));
+					push(checks, check('service', 'Service running', 'fail', 'off',
+						'Press Start and look at the client log below.'));
 
 				// --- Kernel ---
 
@@ -644,66 +638,66 @@ return {
 				// tun mode and would be noise here.
 				if (mode == 'proxy') {
 					if (!running)
-						push(checks, check('kernel', 'SOCKS listener', 'skip', 'the service is not running', ''));
+						push(checks, check('kernel', 'SOCKS listener', 'skip', 'the service is stopped', ''));
 					else if (!length(paddr))
-						push(checks, check('kernel', 'SOCKS listener', 'fail', 'address not configured',
+						push(checks, check('kernel', 'SOCKS listener', 'fail', 'address unset',
 							'Set the listener address on the Settings page.'));
 					else if (socks_listening(paddr))
-						push(checks, check('kernel', 'SOCKS listener', 'ok', 'bound on ' + paddr, ''));
+						push(checks, check('kernel', 'SOCKS listener', 'ok', 'bound at ' + paddr, ''));
 					else
-						push(checks, check('kernel', 'SOCKS listener', 'fail', 'not listening',
-							'The client binds the listener at start; a bind error or a port conflict keeps it down. Read the client log below.'));
+						push(checks, check('kernel', 'SOCKS listener', 'fail', 'not bound',
+							'The listener is bound by the client at start; a bind error or a port conflict keeps it down. See the client log below.'));
 				} else {
 					let dev_sys = length(dev) ? '/sys/class/net/' + dev : '';
 
 					if (!length(dev)) {
-						push(checks, check('kernel', 'Tunnel device', running ? 'fail' : 'skip', 'the client has not created one',
-							'The device belongs to the client, not to this package. Read the client log below.'));
+						push(checks, check('kernel', 'Tunnel device', running ? 'fail' : 'skip', 'the client has not created it yet',
+							'The tun device is created by the client, not by this package. See the client log below.'));
 					} else if (access(dev_sys) == null) {
-						push(checks, check('kernel', 'Tunnel device', 'fail', 'the client has not created one',
-							'The device belongs to the client, not to this package. Read the client log below.'));
+						push(checks, check('kernel', 'Tunnel device', 'fail', 'the client has not created it yet',
+							'The tun device is created by the client, not by this package. See the client log below.'));
 					} else {
 						let dev_mtu = trim(readfile(dev_sys + '/mtu') ?? '');
 						push(checks, check('kernel', 'Tunnel device', 'ok',
-							dev + ', MTU ' + dev_mtu, ''));
+							dev + ' with MTU ' + dev_mtu, ''));
 
 						// The MTU check only reports a mismatch; a matching
 						// value adds no entry.
 						if (length(dev_mtu) && dev_mtu != mtu_cfg)
-							push(checks, check('kernel', 'MTU matches settings', 'warn',
-								'device ' + dev_mtu + ', configured ' + mtu_cfg,
-								'Restart the service so the client picks up the configured value.'));
+							push(checks, check('kernel', 'MTU matches config', 'warn',
+								'device ' + dev_mtu + ' vs configured ' + mtu_cfg,
+								'Restart the service so the client applies the configured value.'));
 
-						let route = sh_out('ip route show table ' + shq(table));
+						let route = run('ip route show table ' + shell_quote(table), true);
 						if (index(route.out, 'dev ' + dev) >= 0)
 							push(checks, check('kernel', 'Route attached to the device', 'ok',
 								'default via ' + dev, ''));
 						else
 							push(checks, check('kernel', 'Route attached to the device', 'fail', 'not attached',
-								'Marked traffic falls into the killswitch instead of the tunnel. Restart the service.'));
+								'Marked traffic hits the blackhole route instead of the tunnel. Restart the service.'));
 
 						let carrier = trim(readfile(dev_sys + '/carrier') ?? '');
 						if (carrier == '1')
-							push(checks, check('kernel', 'Tunnel carrier', 'ok', 'up', ''));
+							push(checks, check('kernel', 'Carrier state', 'ok', 'link up', ''));
 						else
-							push(checks, check('kernel', 'Tunnel carrier', 'warn', 'no carrier',
-								'The device exists but the client has not established the tunnel yet. This is the client side, not the routing — read the client log.'));
+							push(checks, check('kernel', 'Carrier state', 'warn', 'link down',
+								'The device exists but the tunnel is not established yet; that is on the client, not the routing. See the client log.'));
 					}
 
 					if (rs.rule)
-						push(checks, check('kernel', 'Routing rule', 'ok', 'present', ''));
+						push(checks, check('kernel', 'Marking rule', 'ok', 'found', ''));
 					else
-						push(checks, check('kernel', 'Routing rule', running ? 'fail' : 'skip', 'absent', ''));
+						push(checks, check('kernel', 'Marking rule', running ? 'fail' : 'skip', 'not found', ''));
 
 					if (rs.table)
-						push(checks, check('kernel', 'Routing table', 'ok', 'present', ''));
+						push(checks, check('kernel', 'Routing-table entry', 'ok', 'found', ''));
 					else
-						push(checks, check('kernel', 'Routing table', running ? 'fail' : 'skip', 'absent', ''));
+						push(checks, check('kernel', 'Routing-table entry', running ? 'fail' : 'skip', 'not found', ''));
 
 					if (rs.nft)
-						push(checks, check('kernel', 'nftables table', 'ok', 'present', ''));
+						push(checks, check('kernel', 'nft ruleset', 'ok', 'found', ''));
 					else
-						push(checks, check('kernel', 'nftables table', running ? 'fail' : 'skip', 'absent', ''));
+						push(checks, check('kernel', 'nft ruleset', running ? 'fail' : 'skip', 'not found', ''));
 
 					// The package's own `table inet trusttunnel` always matches
 					// a plain 'trusttunnel' grep, so the check must look for
@@ -711,27 +705,27 @@ return {
 					// and forward_ chain per zone (srcnat_/dstnat_ only with
 					// the NAT flags). Anything else means the fw4 zone is
 					// missing.
-					let fw = sh_out('nft list ruleset');
+					let fw = run('nft list ruleset', true);
 					if (index(fw.out, 'forward_trusttunnel') >= 0)
-						push(checks, check('kernel', 'Firewall zone', 'ok', 'loaded in fw4', ''));
+						push(checks, check('kernel', 'Zone binding', 'ok', 'in the fw4 ruleset', ''));
 					else
-						push(checks, check('kernel', 'Firewall zone', 'warn', 'not in the live ruleset',
-							'Run /etc/init.d/firewall reload — traffic into the tunnel is dropped without the zone.'));
+						push(checks, check('kernel', 'Zone binding', 'warn', 'missing from the fw4 ruleset',
+							'Run /etc/init.d/firewall reload — without the zone, traffic into the tunnel is dropped.'));
 				}
 
 				// --- Network ---
 
 				if (length(addrs)) {
 					let first_addr = endpoint_host(addrs[0]);
-					let pr = sh_out('ping -c 2 -W 2 ' + shq(first_addr));
+					let pr = run('ping -c 2 -W 2 ' + shell_quote(first_addr), true);
 
 					if (pr.code == 0)
-						push(checks, check('network', 'Endpoint reachable', 'ok',
+						push(checks, check('network', 'Server reachable', 'ok',
 							avg_text(pr.out), ''));
 					else
-						push(checks, check('network', 'Endpoint reachable', 'fail',
-							'no reply from ' + first_addr,
-							'Check the address, and that the router itself has internet access.'));
+						push(checks, check('network', 'Server reachable', 'fail',
+							'no response from ' + first_addr,
+							'Check the address and whether the router itself can reach the internet.'));
 				}
 
 				if (running && mode == 'proxy' && length(paddr)) {
@@ -747,41 +741,41 @@ return {
 					let user = first(rec, 'proxy.username', '');
 
 					if (length(user))
-						auth = ' --proxy-user ' + shq(user + ':' + first(rec, 'proxy.password', ''));
+						auth = ' --proxy-user ' + shell_quote(user + ':' + first(rec, 'proxy.password', ''));
 
-					let via = sh_out('curl -fsS --max-time 8 --socks5-hostname ' + shq(paddr) + auth + ' https://api.ipify.org');
-					let plain = sh_out('curl -fsS --max-time 8 https://api.ipify.org');
+					let via = run('curl -fsS --max-time 8 --socks5-hostname ' + shell_quote(paddr) + auth + ' https://api.ipify.org', true);
+					let plain = run('curl -fsS --max-time 8 https://api.ipify.org', true);
 					let tip = trim(via.out);
 					let dip = trim(plain.out);
 
 					if (via.code == 0 && plain.code == 0 && tip == dip)
-						push(checks, check('network', 'Traffic goes through the tunnel', 'fail',
-							'same address both ways: ' + tip,
-							'The tunnel is up but traffic is not using it.'));
+						push(checks, check('network', 'Traffic takes the tunnel', 'fail',
+							'identical addresses via both routes: ' + tip,
+							'The tunnel is up, yet traffic is not going through it.'));
 					else if (via.code == 0 && plain.code == 0)
-						push(checks, check('network', 'Traffic goes through the tunnel', 'ok',
-							'tunnel ' + tip + ', direct ' + dip, ''));
+						push(checks, check('network', 'Traffic takes the tunnel', 'ok',
+							'tunnel ' + tip + ' vs direct ' + dip, ''));
 					else
-						push(checks, check('network', 'Traffic goes through the tunnel', 'fail',
-							length(tip) ? tip : 'request failed',
-							'A request through the SOCKS listener can fail even on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.'));
+						push(checks, check('network', 'Traffic takes the tunnel', 'fail',
+							length(tip) ? tip : 'request error',
+							'A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.'));
 				} else if (running && length(dev)) {
-					let via = sh_out('curl -fsS --max-time 8 --interface ' + shq(dev) + ' https://api.ipify.org');
-					let plain = sh_out('curl -fsS --max-time 8 https://api.ipify.org');
+					let via = run('curl -fsS --max-time 8 --interface ' + shell_quote(dev) + ' https://api.ipify.org', true);
+					let plain = run('curl -fsS --max-time 8 https://api.ipify.org', true);
 					let tip = trim(via.out);
 					let dip = trim(plain.out);
 
 					if (via.code == 0 && plain.code == 0 && tip == dip)
-						push(checks, check('network', 'Traffic goes through the tunnel', 'fail',
-							'same address both ways: ' + tip,
-							'The tunnel is up but traffic is not using it.'));
+						push(checks, check('network', 'Traffic takes the tunnel', 'fail',
+							'identical addresses via both routes: ' + tip,
+							'The tunnel is up, yet traffic is not going through it.'));
 					else if (via.code == 0 && plain.code == 0)
-						push(checks, check('network', 'Traffic goes through the tunnel', 'ok',
-							'tunnel ' + tip + ', direct ' + dip, ''));
+						push(checks, check('network', 'Traffic takes the tunnel', 'ok',
+							'tunnel ' + tip + ' vs direct ' + dip, ''));
 					else
-						push(checks, check('network', 'Traffic goes through the tunnel', 'fail',
-							length(tip) ? tip : 'request failed',
-							'A request bound to the device can fail even on a healthy tunnel, because the default route lives in the marked table. Judge by a LAN client instead.'));
+						push(checks, check('network', 'Traffic takes the tunnel', 'fail',
+							length(tip) ? tip : 'request error',
+							'A request bound to the device can fail on a healthy tunnel because the default route lives in the marked table. Judge by a LAN client instead.'));
 				}
 
 				let counts = { ok: 0, warn: 0, fail: 0, skip: 0 };
@@ -800,26 +794,26 @@ return {
 				let text = req.args?.text ?? '';
 
 				if (!length(trim(text)))
-					return { error: 'configuration text is empty' };
+					return { error: 'the configuration text is empty' };
 
 				if (access('/opt/trusttunnel_client/setup_wizard') == null)
-					return { error: 'setup_wizard is not installed; reinstall the trusttunnel-client package' };
+					return { error: 'setup_wizard is missing; reinstall the trusttunnel-client package' };
 
-				let settings = tmp_path('wizard');
+				let settings = scratch_path('wizard');
 				let input = null;
 				let r;
 
 				if (match(text, /^tt:\/\//)) {
-					r = sh('/opt/trusttunnel_client/setup_wizard --mode non-interactive --deeplink ' +
-						shq(text) + ' --settings ' + shq(settings));
+					r = run('/opt/trusttunnel_client/setup_wizard --mode non-interactive --deeplink ' +
+						shell_quote(text) + ' --settings ' + shell_quote(settings));
 				} else {
-					input = write_secret_tmp('config', text);
-					r = sh('/opt/trusttunnel_client/setup_wizard --mode non-interactive --endpoint_config ' +
-						shq(input) + ' --settings ' + shq(settings));
+					input = secret_file('config', text);
+					r = run('/opt/trusttunnel_client/setup_wizard --mode non-interactive --endpoint_config ' +
+						shell_quote(input) + ' --settings ' + shell_quote(settings));
 				}
 
 				// The wizard writes the settings file itself (the input
-				// side already went through write_secret_tmp); pin it to
+				// side already went through secret_file); pin it to
 				// 0600 like the input, because the endpoint password
 				// lands in it in the clear.
 				chmod(settings, 384); // 0600
@@ -841,7 +835,7 @@ return {
 						if (length(trim(line)))
 							push(msg, trim(line));
 					}
-					return { error: length(msg) ? join(msg, ' ') : 'setup_wizard failed' };
+					return { error: length(msg) ? join(' ', msg) : 'setup_wizard exited with an error' };
 				}
 
 				// Every [endpoint] field the server can hand out is parsed
@@ -908,7 +902,7 @@ return {
 				if (!length(res.hostname) && !length(res.username) &&
 				    !length(res.password) && !length(res.certificate) &&
 				    !length(res.addresses))
-					return { error: 'setup_wizard produced no recognisable endpoint fields' };
+					return { error: 'the wizard output contains no recognizable endpoint fields' };
 
 				return res;
 			}
