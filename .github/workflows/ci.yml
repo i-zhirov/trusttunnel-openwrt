@@ -260,3 +260,11 @@ jobs:
             fi
           done
           exit "$fail"
+
+      # The tree must never carry a file byte-identical to the upstream
+      # TrustTunnelOpenWrt repository (GPL-2.0): the check compares the
+      # content-addressed object names of every blob in the HEAD tree
+      # against a pinned manifest of upstream hashes (see
+      # tests/license-clean/check.sh for regeneration instructions).
+      - name: Check that no tree blob matches the upstream repository
+        run: sh tests/license-clean/check.sh
