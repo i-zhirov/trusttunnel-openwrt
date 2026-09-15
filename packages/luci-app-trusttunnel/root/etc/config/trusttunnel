@@ -1,13 +1,6 @@
-config main 'main'
-	option enabled '0'
-	option log_level 'info'
-	option mode 'tun'
-
-config proxy 'proxy'
-	option address '127.0.0.1:1080'
-	option username ''
-	option password ''
-
+# The connection to the TrustTunnel server: the client reads these fields
+# from the generated /var/etc/trusttunnel/client.toml, so the option names
+# mirror the server's own configuration schema.
 config endpoint 'endpoint'
 	option hostname ''
 	option username ''
@@ -22,6 +15,15 @@ config endpoint 'endpoint'
 	option client_random ''
 	option routing_profile 'Default'
 
+# Service behaviour: whether it starts on boot, its log level and the
+# delivery mode (tun wires kernel routing, proxy runs a SOCKS5 listener).
+config main 'main'
+	option enabled '0'
+	option log_level 'info'
+	option mode 'tun'
+
+# The kernel wiring for tun mode: the marked table, the fwmark and the
+# killswitch. These options are inert while main.mode is 'proxy'.
 config network 'network'
 	option mtu '1350'
 	option table '880'
@@ -30,10 +32,21 @@ config network 'network'
 	option include_router_traffic '0'
 	option lan_devices ''
 
+# The SOCKS5 listener the client binds in proxy mode; the credentials are
+# required for any address outside the loopback.
+config proxy 'proxy'
+	option address '127.0.0.1:1080'
+	option username ''
+	option password ''
+
+# Named rule sets; endpoint.routing_profile above assigns the active one
+# by name.
 config routing_profile
 	option name 'Default'
 	option mode 'vpn'
 
+# The legacy flat exclusion list; consulted only when no routing profile
+# is assigned.
 config domains 'domains'
 
 # UI-only section: it keys the Versions tab on the Settings page
