@@ -68,4 +68,9 @@ define Build/Compile
 	chmod 0644 $(PKG_BUILD_DIR)/root/usr/libexec/trusttunnel/records.sh
 endef
 
-# luci.mk's include above is what emits the package build.
+# luci.mk's include above is what emits the package build. The marker
+# below is load-bearing, not a signature: include/scan.mk discovers the
+# feed's packages by grepping Makefiles for `call BuildPackage`, and the
+# real call lives inside luci.mk — without the marker the feed scan
+# silently drops this package from the index.
+# call BuildPackage - OpenWrt buildroot signature
