@@ -27,7 +27,7 @@ mkdir -p "$sandbox"
 # shellcheck disable=SC1090
 . "$INIT"
 
-# --- changed_keys -------------------------------------------------------------
+# --- diff_keys -------------------------------------------------------------
 
 old="$sandbox/old.tsv"
 new="$sandbox/new.tsv"
@@ -38,8 +38,8 @@ endpoint.hostname	a.example
 domains.direct	bank.example
 EOF
 
-# Absence of changes is checked through classify_change below: the empty
-# output of changed_keys is indistinguishable from a never-called function,
+# Absence of changes is checked through class_of_diff below: the empty
+# output of diff_keys is indistinguishable from a never-called function,
 # and such an assert stays green even when there is no implementation at all.
 #
 # An added item of the exclusions list. A key repeats in records, so the
@@ -48,7 +48,7 @@ EOF
 # be lost.
 cp "$old" "$new"
 printf 'domains.direct\tbank2.example\n' >> "$new"
-assert_eq "domains.direct" "$(changed_keys "$old" "$new")" \
+assert_eq "domains.direct" "$(diff_keys "$old" "$new")" \
 	"an added list item is visible"
 
 # A removed item. The diff direction is symmetric: a disappearance must be
@@ -56,7 +56,7 @@ assert_eq "domains.direct" "$(changed_keys "$old" "$new")" \
 # be applied.
 cp "$old" "$new"
 grep -v 'bank.example' "$old" > "$new"
-assert_eq "domains.direct" "$(changed_keys "$old" "$new")" \
+assert_eq "domains.direct" "$(diff_keys "$old" "$new")" \
 	"a removed list item is visible"
 
 cp "$old" "$new"
@@ -64,81 +64,81 @@ cp "$old" "$new"
 # script and the next token as a file, so the edit fails on CI. awk behaves
 # identically on both, hence the temp file + mv.
 awk '{ gsub(/a\.example/, "b.example"); print }' "$new" > "$new.tmp" && mv "$new.tmp" "$new"
-assert_eq "endpoint.hostname" "$(changed_keys "$old" "$new")" \
+assert_eq "endpoint.hostname" "$(diff_keys "$old" "$new")" \
 	"a changed scalar value is visible"
 
 cp "$old" "$new"
 awk '{ gsub(/a\.example/, "b.example"); print }' "$new" > "$new.tmp" && mv "$new.tmp" "$new"
 printf 'network.mtu\t1400\n' >> "$new"
 assert_eq "endpoint.hostname network.mtu" \
-	"$(changed_keys "$old" "$new" | tr '\n' ' ' | sed 's/ $//')" \
+	"$(diff_keys "$old" "$new" | tr '\n' ' ' | sed 's/ $//')" \
 	"several changes are listed without repeats"
 
-# --- change_class -------------------------------------------------------------
+# --- class_for_key -------------------------------------------------------------
 
-assert_eq "reload" "$(change_class network.lan_devices)" \
+assert_eq "reload" "$(class_for_key network.lan_devices)" \
 	"the LAN interface list rebuilds only nft"
-assert_eq "reload" "$(change_class network.blackhole_on_down)" \
+assert_eq "reload" "$(class_for_key network.blackhole_on_down)" \
 	"killswitch rebuilds only nft"
-assert_eq "reload" "$(change_class network.include_router_traffic)" \
+assert_eq "reload" "$(class_for_key network.include_router_traffic)" \
 	"router traffic rebuilds only nft"
 
-assert_eq "restart" "$(change_class domains.direct)" \
+assert_eq "restart" "$(class_for_key domains.direct)" \
 	"exclusions go into client.toml — a client restart is needed"
-assert_eq "restart" "$(change_class routing_profile.name)" \
+assert_eq "restart" "$(class_for_key routing_profile.name)" \
 	"the assigned profile name goes into client.toml"
-assert_eq "restart" "$(change_class routing_profile.mode)" \
+assert_eq "restart" "$(class_for_key routing_profile.mode)" \
 	"the profile mode goes into client.toml"
-assert_eq "restart" "$(change_class routing_profile.vpn_rules)" \
+assert_eq "restart" "$(class_for_key routing_profile.vpn_rules)" \
 	"the vpn rules go into client.toml"
-assert_eq "restart" "$(change_class routing_profile.bypass_rules)" \
+assert_eq "restart" "$(class_for_key routing_profile.bypass_rules)" \
 	"the bypass rules go into client.toml"
-assert_eq "restart" "$(change_class endpoint.routing_profile)" \
+assert_eq "restart" "$(class_for_key endpoint.routing_profile)" \
 	"switching the assigned profile restarts the client"
-assert_eq "restart" "$(change_class endpoint.hostname)" \
+assert_eq "restart" "$(class_for_key endpoint.hostname)" \
 	"the server address requires a client restart"
-assert_eq "restart" "$(change_class endpoint.password)" \
+assert_eq "restart" "$(class_for_key endpoint.password)" \
 	"the password requires a client restart"
-assert_eq "restart" "$(change_class endpoint.certificate)" \
+assert_eq "restart" "$(class_for_key endpoint.certificate)" \
 	"the certificate requires a client restart"
-assert_eq "restart" "$(change_class network.mtu)" \
+assert_eq "restart" "$(class_for_key network.mtu)" \
 	"MTU goes into client.toml"
-assert_eq "restart" "$(change_class main.log_level)" \
+assert_eq "restart" "$(class_for_key main.log_level)" \
 	"the log level goes into client.toml"
 
 # A full restart with a real routing down is needed where otherwise the old
 # routing table or the old mark rule would remain hanging.
-assert_eq "restart_full" "$(change_class network.table)" \
+assert_eq "restart_full" "$(class_for_key network.table)" \
 	"changing the table number must tear down the old one"
-assert_eq "restart_full" "$(change_class network.fwmark)" \
+assert_eq "restart_full" "$(class_for_key network.fwmark)" \
 	"changing the mark must tear down the old rule"
-assert_eq "restart_full" "$(change_class main.enabled)" \
+assert_eq "restart_full" "$(class_for_key main.enabled)" \
 	"disabling the service must tear down routing"
-assert_eq "restart_full" "$(change_class main.mode)" \
+assert_eq "restart_full" "$(class_for_key main.mode)" \
 	"switching the operation mode must rebuild the routing state"
-assert_eq "restart" "$(change_class proxy.address)" \
+assert_eq "restart" "$(class_for_key proxy.address)" \
 	"the proxy address goes into client.toml"
-assert_eq "restart" "$(change_class proxy.username)" \
+assert_eq "restart" "$(class_for_key proxy.username)" \
 	"the proxy user name goes into client.toml"
-assert_eq "restart" "$(change_class proxy.password)" \
+assert_eq "restart" "$(class_for_key proxy.password)" \
 	"the proxy password goes into client.toml"
 
 # The main conservatism check: an unknown key yields the same behavior as
 # before the classifier existed.
-assert_eq "restart_full" "$(change_class network.something_new)" \
+assert_eq "restart_full" "$(class_for_key network.something_new)" \
 	"an unknown key gets a full apply, not a cheap one"
-assert_eq "restart_full" "$(change_class totally.unknown)" \
+assert_eq "restart_full" "$(class_for_key totally.unknown)" \
 	"an unknown section does too"
 
-# --- classify_change: the total over all changes -------------------------------
+# --- class_of_diff: the total over all changes -------------------------------
 
 cp "$old" "$new"
-assert_eq "noop" "$(classify_change "$old" "$new")" \
+assert_eq "noop" "$(class_of_diff "$old" "$new")" \
 	"no changes — do nothing"
 
 cp "$old" "$new"
 printf 'domains.direct\tbank2.example\n' >> "$new"
-assert_eq "restart" "$(classify_change "$old" "$new")" \
+assert_eq "restart" "$(class_of_diff "$old" "$new")" \
 	"only exclusions — client restart without tearing down routing"
 
 # The result is the maximum over all changed keys, not the first or the last:
@@ -146,18 +146,18 @@ assert_eq "restart" "$(classify_change "$old" "$new")" \
 cp "$old" "$new"
 printf 'domains.direct\tbank2.example\n' >> "$new"
 awk '{ gsub(/a\.example/, "b.example"); print }' "$new" > "$new.tmp" && mv "$new.tmp" "$new"
-assert_eq "restart" "$(classify_change "$old" "$new")" \
+assert_eq "restart" "$(class_of_diff "$old" "$new")" \
 	"exclusions together with the server address — restart"
 
 cp "$old" "$new"
 printf 'domains.direct\tbank2.example\n' >> "$new"
 printf 'network.table\t881\n' >> "$new"
-assert_eq "restart_full" "$(classify_change "$old" "$new")" \
+assert_eq "restart_full" "$(class_of_diff "$old" "$new")" \
 	"a table change overrides everything else"
 
 # --- Classifier completeness ---------------------------------------------------
 
-# Every schema key must be listed in change_class EXPLICITLY. Without this
+# Every schema key must be listed in class_for_key EXPLICITLY. Without this
 # check a new key in uci-export would silently fall into the "unknown" branch
 # and get a full restart: the setting would be applied, but the promised
 # seamlessness would quietly vanish for everyone who edits that setting.
@@ -252,7 +252,7 @@ for k in $keys; do
 	# it still needs classifying — apply_settings compares it via a separate
 	# file. The restart_full keys are exempt: they are the expensive actions
 	# that are chosen deliberately, not by falling into the unknown branch.
-	if [ "$(change_class "$k")" = "restart_full" ] \
+	if [ "$(class_for_key "$k")" = "restart_full" ] \
 			&& [ "$k" != "network.table" ] \
 			&& [ "$k" != "network.fwmark" ] \
 			&& [ "$k" != "main.enabled" ] \
