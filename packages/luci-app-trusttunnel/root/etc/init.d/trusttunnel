@@ -134,6 +134,10 @@ start_service() {
 	procd_set_param stdout 1
 	procd_set_param stderr 1
 	procd_set_param respawn 3600 5 0
+	# The pidfile is an explicit contract: the integration harness and the
+	# diagnostics read /var/run/trusttunnel.pid, and procd writes no
+	# pidfile unless one is configured.
+	procd_set_param pidfile /var/run/trusttunnel.pid
 	procd_close_instance
 
 	if [ "$_tun_since" -gt 0 ]; then
