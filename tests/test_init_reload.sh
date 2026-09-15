@@ -7,7 +7,7 @@
 # marked LAN traffic could slip out DIRECTLY — an ordinary settings save
 # itself opened the leak this package protects against.
 #
-# Now reload_service asks classify_change what exactly is required, and across
+# Now reload_service asks class_of_diff what exactly is required, and across
 # a restart the routing survives the stop+start cycle. Both decisions are
 # checked here and, more importantly, their rollbacks: a failure on the cheap
 # path must end in a full restart, and an interrupted start — in a real
@@ -17,70 +17,86 @@
 
 INIT="packages/luci-app-trusttunnel/root/etc/init.d/trusttunnel"
 
-sandbox="$TT_TEST_TMP/sandbox"
-bin="$sandbox/bin"
-mkdir -p "$bin" "$sandbox/lib" "$sandbox/out"
+lab="$TT_TEST_TMP/lab"
+bin="$lab/bin"
+mkdir -p "$bin" "$lab/lib" "$lab/out"
 
-TT_CALLS="$sandbox/calls"
-export TT_CALLS
+CALL_LOG="$lab/calls.log"
+export CALL_LOG
 
-# The stub scripts write their calls to a log: there is no procd, UCI or real
-# routing on the developer machine, so it is the only evidence to judge by.
-cat > "$sandbox/lib/routing" <<'EOF'
+# The stub scripts append their calls to a log: there is no procd, UCI or
+# real routing on the developer machine, so it is the only evidence to
+# judge by. The bodies are written with a quoted heredoc so the exported
+# variables resolve at stub runtime, not at write time.
+make_stub() {
+	_target=$1
+	cat > "$_target"
+	chmod +x "$_target"
+}
+
+make_stub "$lab/lib/routing" <<'EOF'
 #!/bin/sh
-echo "routing $1" >> "$TT_CALLS"
+echo "routing $1" >> "$CALL_LOG"
 [ "$1" = "up" ] && exit "${ROUTING_UP_RC:-0}"
 exit 0
 EOF
 
-cat > "$sandbox/lib/uci-export" <<'EOF'
+make_stub "$lab/lib/uci-export" <<'EOF'
 #!/bin/sh
 [ "${UCI_EXPORT_RC:-0}" = "0" ] || exit "$UCI_EXPORT_RC"
-cat "$TT_NEXT"
+cat "$NEXT_RECORDS"
 EOF
 
 # The certificate never lands in records (PEM is multi-line), so apply_config
 # compares it with a separate uci call.
-cat > "$bin/uci" <<'EOF'
+make_stub "$bin/uci" <<'EOF'
 #!/bin/sh
-cat "$TT_CERT_UCI" 2>/dev/null
+cat "$CERT_FROM_UCI" 2>/dev/null
 exit 0
 EOF
 
-chmod +x "$sandbox/lib/routing" "$sandbox/lib/uci-export" "$bin/uci"
 PATH="$bin:$PATH"
 export PATH
 
 # shellcheck disable=SC1090
 . "$INIT"
 
-# The paths are computed at the top level of the init script relative to /var,
-# so both are overridden here: the directory and the records file inside it.
-OUTDIR="$sandbox/out"
+# The paths are computed at the top level of the init script relative to
+# /var, so they are overridden here: the directory and the records file
+# inside it.
+OUTDIR="$lab/out"
 RECORDS="$OUTDIR/settings.tsv"
-LIBDIR="$sandbox/lib"
+LIBDIR="$lab/lib"
 
-TT_NEXT="$sandbox/next.tsv"
-TT_CERT_UCI="$sandbox/cert_uci"
-export TT_NEXT TT_CERT_UCI
-: > "$TT_CERT_UCI"
+NEXT_RECORDS="$lab/next.tsv"
+CERT_FROM_UCI="$lab/cert_uci"
+export NEXT_RECORDS CERT_FROM_UCI
+: > "$CERT_FROM_UCI"
 
 # Everything outside the scope of the check is replaced with logging stubs.
-# regen_config is stubbed out among others because the real one moves records
-# itself — and the test needs to see whether it got that far.
-restart() { echo "restart keep_routing=${_TT_KEEP_ROUTING:-0}" >> "$TT_CALLS"; }
+# regen_config is stubbed out among others because the real one moves
+# records itself — and the test needs to see whether it got that far.
+restart() { echo "restart keep_routing=${_TT_KEEP_ROUTING:-0}" >> "$CALL_LOG"; }
 regen_config() {
-	echo "regen_config" >> "$TT_CALLS"
+	echo "regen_config" >> "$CALL_LOG"
 	[ "${REGEN_RC:-0}" = "0" ] || return "$REGEN_RC"
-	cp "$TT_NEXT" "$RECORDS"
+	cp "$NEXT_RECORDS" "$RECORDS"
 }
 running() { return "${RUNNING_RC:-0}"; }
 logger() { :; }
 
-calls() { tr '\n' ' ' < "$TT_CALLS" | sed 's/ $//'; }
-no_call() { grep -F "$1" "$TT_CALLS" 2>/dev/null || true; }
+# The call log is read as one line for the assertions below.
+log_read() { tr '\n' ' ' < "$CALL_LOG" | sed 's/ $//'; }
 
-base_records() {
+assert_log() {
+	assert_contains "$(log_read)" "$1" "$2"
+}
+
+assert_no_log() {
+	assert_eq "" "$(grep -F "$1" "$CALL_LOG" 2>/dev/null || true)" "$2"
+}
+
+seed_records() {
 	cat <<'EOF'
 main.enabled	1
 endpoint.hostname	a.example
@@ -90,10 +106,10 @@ EOF
 }
 
 # Prepares the applied state and the presumed new one, clears the log.
-setup() {
-	base_records > "$RECORDS"
-	base_records > "$TT_NEXT"
-	: > "$TT_CALLS"
+reset_state() {
+	seed_records > "$RECORDS"
+	seed_records > "$NEXT_RECORDS"
+	: > "$CALL_LOG"
 	unset ROUTING_UP_RC REGEN_RC UCI_EXPORT_RC RUNNING_RC _TT_KEEP_ROUTING
 	export ROUTING_UP_RC REGEN_RC UCI_EXPORT_RC
 }
@@ -103,15 +119,15 @@ setup() {
 # An edit of the LAN interfaces never reaches client.toml, so there is no
 # reason to touch the client: regen_config, reload into the kernel and re-attach
 # the route to the LIVE device.
-setup
-printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
+reset_state
+printf 'network.lan_devices\tbr-lan br-guest\n' >> "$NEXT_RECORDS"
 apply_config
 
-assert_eq "" "$(no_call 'restart')" \
+assert_no_log 'restart' \
 	"an edit of the LAN interfaces does not restart the client"
-assert_contains "$(calls)" "routing up" \
+assert_log "routing up" \
 	"but the rules are reloaded into the kernel"
-assert_contains "$(calls)" "routing reattach" \
+assert_log "routing reattach" \
 	"and the route is re-attached to the live device"
 
 # The record of the applied state must keep up: the next apply compares with
@@ -122,65 +138,65 @@ assert_contains "$(cat "$RECORDS")" "br-guest" \
 # --- Proxy mode: no kernel routing ---------------------------------------------
 
 # In proxy mode the routing options are inert: a reload-class edit still
-# regen_configs the records, but nothing is loaded into the kernel.
-setup
+# regenerates the records, but nothing is loaded into the kernel.
+reset_state
 printf 'main.mode\tproxy\n' >> "$RECORDS"
-printf 'main.mode\tproxy\n' >> "$TT_NEXT"
-printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
+printf 'main.mode\tproxy\n' >> "$NEXT_RECORDS"
+printf 'network.lan_devices\tbr-lan br-guest\n' >> "$NEXT_RECORDS"
 apply_config
 
-assert_eq "" "$(no_call 'restart')" \
+assert_no_log 'restart' \
 	"in proxy mode a LAN-interfaces edit does not restart the client"
-assert_eq "" "$(no_call 'routing up')" \
+assert_no_log 'routing up' \
 	"in proxy mode no routing is loaded into the kernel"
-assert_contains "$(calls)" "regen_config" \
-	"in proxy mode the records are still regen_configd"
+assert_log "regen_config" \
+	"in proxy mode the records are still regenerated"
 
 # A mode switch rebuilds everything: the tun routing must come down with the
 # old mode before the client starts in the new one.
-setup
-printf 'main.mode\tproxy\n' >> "$TT_NEXT"
+reset_state
+printf 'main.mode\tproxy\n' >> "$NEXT_RECORDS"
 apply_config
 
-assert_contains "$(calls)" "restart keep_routing=0" \
+assert_log "restart keep_routing=0" \
 	"switching the operation mode tears the routing down completely"
 
 # --- Restart keeping routing --------------------------------------------------
 
-setup
+reset_state
 # `sed -i ''` is BSD-only: GNU sed treats the separate empty string as the
 # script and the next token as a file, so the edit fails on CI. awk behaves
 # identically on both, hence the temp file + mv.
-awk '{ gsub(/a\.example/, "b.example"); print }' "$TT_NEXT" > "$TT_NEXT.tmp" && mv "$TT_NEXT.tmp" "$TT_NEXT"
+awk '{ gsub(/a\.example/, "b.example"); print }' "$NEXT_RECORDS" > "$NEXT_RECORDS.tmp" && mv "$NEXT_RECORDS.tmp" "$NEXT_RECORDS"
 apply_config
 
-assert_contains "$(calls)" "restart keep_routing=1" \
+assert_log "restart keep_routing=1" \
 	"changing the server address restarts the client without tearing down routing"
 
-setup
-printf 'domains.direct\tbank.example\n' >> "$TT_NEXT"
+reset_state
+printf 'domains.direct\tbank.example\n' >> "$NEXT_RECORDS"
 apply_config
 
-assert_contains "$(calls)" "restart keep_routing=1" \
+assert_log "restart keep_routing=1" \
 	"a new exclusion restarts the client without tearing down routing"
 
-setup
-printf 'routing_profile.mode\tbypass\n' >> "$TT_NEXT"
+reset_state
+printf 'routing_profile.mode\tbypass\n' >> "$NEXT_RECORDS"
 apply_config
 
-assert_contains "$(calls)" "restart keep_routing=1" \
+assert_log "restart keep_routing=1" \
 	"a routing profile change restarts the client without tearing down routing"
 
 # A pure REORDER of a list is a change too: the multiset of key/value
 # pairs is identical, but the client measures the endpoint addresses in
 # order, so keeping the old config would silently diverge from what the
 # settings page shows.
-setup
+reset_state
 printf 'endpoint.address\t1.2.3.4:443\nendpoint.address\t[2001:db8::1]:443\n' >> "$RECORDS"
-printf 'endpoint.address\t[2001:db8::1]:443\nendpoint.address\t1.2.3.4:443\n' >> "$TT_NEXT"
+printf 'endpoint.address\t[2001:db8::1]:443\nendpoint.address\t1.2.3.4:443\n' >> "$NEXT_RECORDS"
 apply_config
 
-assert_contains "$(calls)" "restart keep_routing=1" \
+assert_log "restart keep_routing=1" \
 	"reordering the endpoint addresses restarts the client without tearing down routing"
 
 # --- Restart with a full teardown ---------------------------------------------
@@ -188,23 +204,23 @@ assert_contains "$(calls)" "restart keep_routing=1" \
 # The table number and the mark are the only values that tear routing down.
 # Keeping the old one and bringing up the new one would leave the old table
 # and the old rule hanging forever.
-setup
+reset_state
 # Not every sed understands \t as an escape in an s/// script (BSD does not),
 # while in an awk string it behaves the same everywhere, so the replacement
 # goes through awk.
 awk 'BEGIN { OFS = "\t" } $1 == "network.table" { $2 = "881" } { print }' \
-	"$TT_NEXT" > "$TT_NEXT.tmp" && mv "$TT_NEXT.tmp" "$TT_NEXT"
+	"$NEXT_RECORDS" > "$NEXT_RECORDS.tmp" && mv "$NEXT_RECORDS.tmp" "$NEXT_RECORDS"
 apply_config
 
-assert_contains "$(calls)" "restart keep_routing=0" \
+assert_log "restart keep_routing=0" \
 	"changing the table number tears routing down completely"
 
-setup
+reset_state
 awk 'BEGIN { OFS = "\t" } $1 == "main.enabled" { $2 = "0" } { print }' \
-	"$TT_NEXT" > "$TT_NEXT.tmp" && mv "$TT_NEXT.tmp" "$TT_NEXT"
+	"$NEXT_RECORDS" > "$NEXT_RECORDS.tmp" && mv "$NEXT_RECORDS.tmp" "$NEXT_RECORDS"
 apply_config
 
-assert_contains "$(calls)" "restart keep_routing=0" \
+assert_log "restart keep_routing=0" \
 	"disabling the service tears routing down completely"
 
 # --- Certificate ---------------------------------------------------------------
@@ -213,72 +229,72 @@ assert_contains "$(calls)" "restart keep_routing=0" \
 # separate comparison a certificate change would never be applied — records
 # does not change with it, and the cheap path would decide there is nothing
 # to do.
-setup
-printf -- '-----BEGIN CERTIFICATE-----\nnew\n-----END CERTIFICATE-----\n' > "$TT_CERT_UCI"
+reset_state
+printf -- '-----BEGIN CERTIFICATE-----\nnew\n-----END CERTIFICATE-----\n' > "$CERT_FROM_UCI"
 apply_config
 
-assert_contains "$(calls)" "restart" \
+assert_log "restart" \
 	"a certificate change restarts the client even though records did not change"
 
 # And vice versa: an unchanged certificate must not by itself cause a restart.
-setup
-printf -- '-----BEGIN CERTIFICATE-----\nsame\n-----END CERTIFICATE-----\n' > "$TT_CERT_UCI"
-cp "$TT_CERT_UCI" "$OUTDIR/endpoint.pem"
-printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
+reset_state
+printf -- '-----BEGIN CERTIFICATE-----\nsame\n-----END CERTIFICATE-----\n' > "$CERT_FROM_UCI"
+cp "$CERT_FROM_UCI" "$OUTDIR/endpoint.pem"
+printf 'network.lan_devices\tbr-lan br-guest\n' >> "$NEXT_RECORDS"
 apply_config
 
-assert_eq "" "$(no_call 'restart')" \
+assert_no_log 'restart' \
 	"an unchanged certificate does not block the cheap path"
 rm -f "$OUTDIR/endpoint.pem"
-: > "$TT_CERT_UCI"
+: > "$CERT_FROM_UCI"
 
 # --- Rollbacks -----------------------------------------------------------------
 
 # A failure on the cheap path must end in a full restart: at that moment the
 # rules in the kernel are in an unknown state, and leaving things as they are
 # would mean showing a working service on top of an under-loaded table.
-setup
-printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
+reset_state
+printf 'network.lan_devices\tbr-lan br-guest\n' >> "$NEXT_RECORDS"
 ROUTING_UP_RC=1
 apply_config
 
-assert_contains "$(calls)" "restart keep_routing=0" \
+assert_log "restart keep_routing=0" \
 	"a routing up failure rolls back to a full restart"
 
-setup
-printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
+reset_state
+printf 'network.lan_devices\tbr-lan br-guest\n' >> "$NEXT_RECORDS"
 REGEN_RC=1
 apply_config
 
-assert_contains "$(calls)" "restart keep_routing=0" \
+assert_log "restart keep_routing=0" \
 	"a regeneration failure rolls back to a full restart"
 
 # There is nothing to compare with — this is a plain start, not an apply on
 # top of a known state. /var on OpenWrt lives in tmpfs, so after a reboot
 # there is no record.
-setup
+reset_state
 rm -f "$RECORDS"
 apply_config
 
-assert_contains "$(calls)" "restart" \
+assert_log "restart" \
 	"with no applied-state record — the full path"
 
 # The service is not running: there is nothing to apply on top of.
-setup
-printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
+reset_state
+printf 'network.lan_devices\tbr-lan br-guest\n' >> "$NEXT_RECORDS"
 RUNNING_RC=1
 apply_config
 
-assert_contains "$(calls)" "restart" \
+assert_log "restart" \
 	"a stopped service is applied via the full path"
 unset RUNNING_RC
 
 # UCI export failed — there is nothing to compare with, no basis for a decision.
-setup
+reset_state
 UCI_EXPORT_RC=1
 apply_config
 
-assert_contains "$(calls)" "restart" \
+assert_log "restart" \
 	"a UCI export failure rolls back to a full restart"
 assert_eq "0" "$(ls "$OUTDIR" | grep -c 'settings.tsv.next' || true)" \
 	"and leaves no half-written file with a password behind"
@@ -287,18 +303,18 @@ assert_eq "0" "$(ls "$OUTDIR" | grep -c 'settings.tsv.next' || true)" \
 
 # The real stop_service is checked, not a stub: it is the one that decides
 # whether to call routing down.
-setup
+reset_state
 _TT_KEEP_ROUTING=1
 stop_service
 
-assert_eq "" "$(no_call 'routing down')" \
+assert_no_log 'routing down' \
 	"on a restart with keep-routing the routing is not torn down"
 
-setup
+reset_state
 _TT_KEEP_ROUTING=0
 stop_service
 
-assert_contains "$(calls)" "routing down" \
+assert_log "routing down" \
 	"a plain stop tears routing down as before"
 
 # An interrupted start. The "no teardown needed" reasoning rests on start
@@ -307,11 +323,11 @@ assert_contains "$(calls)" "routing down" \
 # pointing at a non-existent tunnel. Marked traffic would go into the
 # blackhole with the bypass off, and in the UI it would look like "no
 # internet".
-setup
+reset_state
 _TT_KEEP_ROUTING=1
 teardown_hanging_routing
 
-assert_contains "$(calls)" "routing down" \
+assert_log "routing down" \
 	"an interrupted start tears down the kept routing"
 assert_eq "0" "${_TT_KEEP_ROUTING}" \
 	"the flag is reset so a repeated call does not tear down twice"

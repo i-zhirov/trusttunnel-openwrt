@@ -17,7 +17,7 @@
 . "$(dirname "$0")/lib.sh"
 
 INIT="packages/luci-app-trusttunnel/root/etc/init.d/trusttunnel"
-UCI_EXPORT="packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/uci-export"
+SCHEMA_KEYS="tests/fixtures/schema-keys.txt"
 
 sandbox="$TT_TEST_TMP/sandbox"
 mkdir -p "$sandbox"
@@ -27,12 +27,12 @@ mkdir -p "$sandbox"
 # shellcheck disable=SC1090
 . "$INIT"
 
-# --- diff_keys -------------------------------------------------------------
+# --- diff_keys ----------------------------------------------------------------
 
-old="$sandbox/old.tsv"
-new="$sandbox/new.tsv"
+prev="$sandbox/prev.tsv"
+next="$sandbox/next.tsv"
 
-cat > "$old" <<'EOF'
+cat > "$prev" <<'EOF'
 main.enabled	1
 endpoint.hostname	a.example
 domains.direct	bank.example
@@ -46,32 +46,32 @@ EOF
 # comparison must count occurrences rather than look the key up: with a plain
 # comparison of string sets, adding a second value to an existing key would
 # be lost.
-cp "$old" "$new"
-printf 'domains.direct\tbank2.example\n' >> "$new"
-assert_eq "domains.direct" "$(diff_keys "$old" "$new")" \
+cp "$prev" "$next"
+printf 'domains.direct\tbank2.example\n' >> "$next"
+assert_eq "domains.direct" "$(diff_keys "$prev" "$next")" \
 	"an added list item is visible"
 
 # A removed item. The diff direction is symmetric: a disappearance must be
 # noticed just like an appearance, otherwise an unticked checkbox would not
 # be applied.
-cp "$old" "$new"
-grep -v 'bank.example' "$old" > "$new"
-assert_eq "domains.direct" "$(diff_keys "$old" "$new")" \
+cp "$prev" "$next"
+grep -v 'bank.example' "$prev" > "$next"
+assert_eq "domains.direct" "$(diff_keys "$prev" "$next")" \
 	"a removed list item is visible"
 
-cp "$old" "$new"
+cp "$prev" "$next"
 # `sed -i ''` is BSD-only: GNU sed treats the separate empty string as the
 # script and the next token as a file, so the edit fails on CI. awk behaves
 # identically on both, hence the temp file + mv.
-awk '{ gsub(/a\.example/, "b.example"); print }' "$new" > "$new.tmp" && mv "$new.tmp" "$new"
-assert_eq "endpoint.hostname" "$(diff_keys "$old" "$new")" \
+awk '{ gsub(/a\.example/, "b.example"); print }' "$next" > "$next.tmp" && mv "$next.tmp" "$next"
+assert_eq "endpoint.hostname" "$(diff_keys "$prev" "$next")" \
 	"a changed scalar value is visible"
 
-cp "$old" "$new"
-awk '{ gsub(/a\.example/, "b.example"); print }' "$new" > "$new.tmp" && mv "$new.tmp" "$new"
-printf 'network.mtu\t1400\n' >> "$new"
+cp "$prev" "$next"
+awk '{ gsub(/a\.example/, "b.example"); print }' "$next" > "$next.tmp" && mv "$next.tmp" "$next"
+printf 'network.mtu\t1400\n' >> "$next"
 assert_eq "endpoint.hostname network.mtu" \
-	"$(diff_keys "$old" "$new" | tr '\n' ' ' | sed 's/ $//')" \
+	"$(diff_keys "$prev" "$next" | tr '\n' ' ' | sed 's/ $//')" \
 	"several changes are listed without repeats"
 
 # --- class_for_key -------------------------------------------------------------
@@ -130,29 +130,29 @@ assert_eq "restart_full" "$(class_for_key network.something_new)" \
 assert_eq "restart_full" "$(class_for_key totally.unknown)" \
 	"an unknown section does too"
 
-# --- class_of_diff: the total over all changes -------------------------------
+# --- class_of_diff: the total over all changes ---------------------------------
 
-cp "$old" "$new"
-assert_eq "noop" "$(class_of_diff "$old" "$new")" \
+cp "$prev" "$next"
+assert_eq "noop" "$(class_of_diff "$prev" "$next")" \
 	"no changes — do nothing"
 
-cp "$old" "$new"
-printf 'domains.direct\tbank2.example\n' >> "$new"
-assert_eq "restart" "$(class_of_diff "$old" "$new")" \
+cp "$prev" "$next"
+printf 'domains.direct\tbank2.example\n' >> "$next"
+assert_eq "restart" "$(class_of_diff "$prev" "$next")" \
 	"only exclusions — client restart without tearing down routing"
 
 # The result is the maximum over all changed keys, not the first or the last:
 # a cheap edit next to an expensive one must not devalue it.
-cp "$old" "$new"
-printf 'domains.direct\tbank2.example\n' >> "$new"
-awk '{ gsub(/a\.example/, "b.example"); print }' "$new" > "$new.tmp" && mv "$new.tmp" "$new"
-assert_eq "restart" "$(class_of_diff "$old" "$new")" \
+cp "$prev" "$next"
+printf 'domains.direct\tbank2.example\n' >> "$next"
+awk '{ gsub(/a\.example/, "b.example"); print }' "$next" > "$next.tmp" && mv "$next.tmp" "$next"
+assert_eq "restart" "$(class_of_diff "$prev" "$next")" \
 	"exclusions together with the server address — restart"
 
-cp "$old" "$new"
-printf 'domains.direct\tbank2.example\n' >> "$new"
-printf 'network.table\t881\n' >> "$new"
-assert_eq "restart_full" "$(class_of_diff "$old" "$new")" \
+cp "$prev" "$next"
+printf 'domains.direct\tbank2.example\n' >> "$next"
+printf 'network.table\t881\n' >> "$next"
+assert_eq "restart_full" "$(class_of_diff "$prev" "$next")" \
 	"a table change overrides everything else"
 
 # --- Classifier completeness ---------------------------------------------------
@@ -162,94 +162,28 @@ assert_eq "restart_full" "$(class_of_diff "$old" "$new")" \
 # and get a full restart: the setting would be applied, but the promised
 # seamlessness would quietly vanish for everyone who edits that setting.
 #
-# The truth comes from uci-export itself, so the check never drifts apart from
-# the schema. The parse works like this: `scalar <section> "$o"` inside
-# `for o in ...` yields one key per loop word, `listopt <section> <option>` —
-# a single key.
-schema_keys() {
-	awk '
-		# The explicit marker in uci-export: the ASSIGNED routing profile is
-		# exported under the canonical prefix routing_profile.<option>, and
-		# the marker line lists the options so the completeness check stays
-		# in sync with them. Must come BEFORE the for-loop branches — this
-		# line does not match them, but the order keeps the intent clear.
-		/^# schema-keys: / {
-			line = $0
-			sub(/^# schema-keys: /, "", line)
-			n = split(line, a, /[ \t]+/)
-			for (i = 1; i <= n; i++) if (a[i] != "") print a[i]
-			next
-		}
-		# One-line loop: `for o in a b c; do scalar <section> "$o"; done`.
-		# This branch must stand BEFORE the general one: that one consumes
-		# the line whole via `next`, and without this check all main.* keys
-		# and both auto-update options would silently drop out of the parse —
-		# the completeness check would stay green without checking them.
-		/^for o in .*scalar/ {
-			line = $0
-			sub(/^for o in[ \t]+/, "", line)
-			idx = index(line, ";")
-			opts = substr(line, 1, idx - 1)
-			rest = substr(line, idx)
-			sec = ""
-			n = split(rest, r, /[ \t]+/)
-			for (i = 1; i <= n; i++) if (r[i] == "scalar") sec = r[i + 1]
-			m = split(opts, a, /[ \t]+/)
-			for (i = 1; i <= m; i++) if (a[i] != "") print sec "." a[i]
-			next
-		}
-		# Multi-line: options accumulate up to the line with `scalar`.
-		/^for o in/ {
-			# Loop words are gathered up to `;` or `do`; the body may sit
-			# on the same line or below after a `\` line continuation.
-			opts = ""
-			for (i = 4; i <= NF; i++) {
-				if ($i == ";" || $i == "do" || $i == ";do") break
-				if ($i == "\\") continue
-				opts = opts " " $i
-			}
-			collecting = 1
-			buf = opts
-			next
-		}
-		collecting && /^\t\t/ {
-			# Continuation of the option list on the next line.
-			line = $0
-			gsub(/\\/, "", line)
-			buf = buf " " line
-			next
-		}
-		collecting && /scalar/ {
-			sec = ""
-			for (i = 1; i <= NF; i++) if ($i == "scalar") sec = $(i + 1)
-			n = split(buf, a, /[ \t]+/)
-			for (i = 1; i <= n; i++) if (a[i] != "" && a[i] != "do") print sec "." a[i]
-			collecting = 0
-			next
-		}
-		/^listopt / { print $2 "." $3 }
-	' "$UCI_EXPORT" | sed 's/;$//' | sort -u
-}
-
-keys=$(schema_keys)
+# The key list is pinned by tests/fixtures/schema-keys.txt, which
+# tests/tools/dump-schema-keys.sh regenerates from uci-export's schema
+# declarations. Regenerate and commit the fixture together with a schema
+# change, so this check never drifts apart from the schema.
+keys=$(cat "$SCHEMA_KEYS")
 count=$(printf '%s\n' "$keys" | grep -c .)
 
-# A sanity check of the parse itself: if it breaks and returns nothing or a
+# A sanity check of the fixture itself: if it breaks and returns nothing or a
 # handful of keys, the completeness check would turn green without checking
-# anything. The schema at the time of writing has 25 keys; the threshold is
+# anything. The schema at the time of writing has 30 keys; the threshold is
 # deliberately lower so it does not fail on a legitimate addition or removal
-# of one, but higher than what a parse with a lost one-line-loop branch
-# yields.
+# of one, but higher than what a fixture that lost whole sections yields.
 if [ "$count" -lt 15 ]; then
-	_tt_fail "schema parse of uci-export found only $count keys — it is broken"
+	_tt_fail "schema fixture lists only $count keys — it is broken"
 else
-	_tt_pass "schema parse of uci-export yielded $count keys"
+	_tt_pass "schema fixture lists $count keys"
 fi
 
 missing=""
 for k in $keys; do
 	# certificate is intentionally absent from records (PEM is multi-line), but
-	# it still needs classifying — apply_settings compares it via a separate
+	# it still needs classifying — apply_config compares it via a separate
 	# file. The restart_full keys are exempt: they are the expensive actions
 	# that are chosen deliberately, not by falling into the unknown branch.
 	if [ "$(class_for_key "$k")" = "restart_full" ] \
