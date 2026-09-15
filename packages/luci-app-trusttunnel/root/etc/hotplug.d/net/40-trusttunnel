@@ -2,7 +2,6 @@
 # Net hotplug hook: reattach the tunnel route when the client recreates its
 # tun device. Runs once per net event; every event this hook does not act on
 # must exit 0.
-#
 # The hook only reacts to device-add events for the client's tun device: the
 # device must be a tun (sysfs tun_flags marker) and must not be persistent
 # (the IFF_PERSIST bit), because persistent tun devices are created manually
@@ -31,7 +30,7 @@ flags=$(cat "/sys/class/net/$dev/tun_flags" 2>/dev/null) || exit 0
 # records file there is nothing to attach.
 RECORDS=/var/etc/trusttunnel/settings.tsv
 OUTDIR=/var/etc/trusttunnel
-[ -f "$RECORDS" ] || exit 0
+[ ! -f "$RECORDS" ] && exit 0
 
 # The tun reattach dance is tun-mode only: in proxy mode the client binds a
 # SOCKS listener and no tun device or routing table exists to attach.
@@ -44,8 +43,10 @@ OUTDIR=/var/etc/trusttunnel
 # When it still exists in sysfs and the event names a different device, the
 # event is foreign: reattaching would tear the working tunnel off.
 cur=$(cat "$OUTDIR/device" 2>/dev/null)
-if [ -n "$cur" ] && [ -d "/sys/class/net/$cur" ] && [ "$cur" != "$dev" ]; then
-	exit 0
+if [ -n "$cur" ]; then
+	if [ -d "/sys/class/net/$cur" ] && [ "$cur" != "$dev" ]; then
+		exit 0
+	fi
 fi
 
 # Every guard passed: reattach the route to the event device. The log line is

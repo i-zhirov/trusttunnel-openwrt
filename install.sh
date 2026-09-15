@@ -1,7 +1,6 @@
 #!/bin/sh
 # Install of luci-app-trusttunnel for OpenWrt 22.03+.
 #   sh -c "$(wget -O - https://raw.githubusercontent.com/i-zhirov/trusttunnel-openwrt/main/install.sh)"
-#
 # Configures the trusttunnel package repository (apk on 25.12+, opkg on
 # 22.03-24.10), installs the LuCI application with its dependencies, then
 # refreshes rpcd and seeds the default routing profile. A running service is
@@ -17,7 +16,9 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 # --- Environment checks -------------------------------------------------------
 # The installer works only on OpenWrt: the release file also tells us the
 # version floor for the package manager.
-[ -f /etc/openwrt_release ] || die "this script is for OpenWrt only"
+if [ ! -f /etc/openwrt_release ]; then
+	die "this installer runs on OpenWrt only"
+fi
 # The release file exists only on OpenWrt — absent on the linter's machine.
 # shellcheck disable=SC1091
 . /etc/openwrt_release
@@ -139,17 +140,17 @@ fi
 # Remembered between the dependency install and the main package install: a
 # reinstall of a running service restarts it at the end; a stopped or fresh
 # service stays disabled.
-was_running=0
+_was_running=0
 if [ -x /etc/init.d/trusttunnel ]; then
 	if /etc/init.d/trusttunnel running >/dev/null 2>&1; then
-		was_running=1
+		_was_running=1
 	fi
 	say "== Stopping the service during the install"
 	/etc/init.d/trusttunnel stop >/dev/null 2>&1 || true
 fi
 
 # --- Main packages ------------------------------------------------------------
-say "== Installing the package"
+say "== Installing the TrustTunnel packages"
 if [ "$PM" = "apk" ]; then
 	apk add luci-app-trusttunnel
 	apk info -e trusttunnel-client >/dev/null 2>&1 || die "trusttunnel-client is not installed; the installation failed"
@@ -170,13 +171,13 @@ if [ -x /etc/uci-defaults/40-luci-trusttunnel ]; then
 	/etc/uci-defaults/40-luci-trusttunnel >/dev/null 2>&1 || say "warning: the default routing profile was not created; run /etc/uci-defaults/40-luci-trusttunnel manually"
 fi
 
-if [ "$was_running" = "1" ]; then
+if [ "$_was_running" = "1" ]; then
 	say "== Starting the service"
 	/etc/init.d/trusttunnel start >/dev/null 2>&1 || true
 fi
 
 say ""
-say "== Done"
+say "== Installation finished"
 say "The trusttunnel repository stays configured on this device, so the"
 if [ "$PM" = "apk" ]; then
 	say "packages are updated with: apk update && apk upgrade"

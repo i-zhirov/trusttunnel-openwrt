@@ -951,7 +951,7 @@ st_install() {
 	else
 		_tt_fail "install.sh exits 0 (got $_rc)"
 	fi
-	if grep -q "== Done" "$SCRATCH/install.out"; then
+	if grep -q "== Installation finished" "$SCRATCH/install.out"; then
 		_tt_pass "the closing banner is printed"
 	else
 		_tt_fail "the closing banner is missing from the install output"
@@ -1300,7 +1300,7 @@ st_lifecycle() {
 	# stays up.
 	docker exec "$ROUTER_CID" /etc/init.d/trusttunnel reload >/dev/null 2>&1
 	_log=$(docker exec "$ROUTER_CID" sh -c 'logread | grep "no changes needed" | tail -1' 2>/dev/null)
-	assert_contains "$_log" "no changes needed" "an unchanged reload is a noop"
+	assert_contains "$_log" "nothing to do" "an unchanged reload is a noop"
 	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" "the tunnel survives the noop reload"
 
