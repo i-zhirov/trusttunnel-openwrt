@@ -142,7 +142,7 @@ return view.extend({
 		};
 	},
 
-	renderVerdict: function(st) {
+	renderBanner: function(st) {
 		var v = this.verdict(st);
 
 		if (v.level === 'success')
@@ -170,7 +170,7 @@ return view.extend({
 		]);
 	},
 
-	renderFacts: function(st) {
+	renderFactRows: function(st) {
 		var rows = [];
 
 		if (this.verdict(st).level === 'success')
@@ -197,7 +197,7 @@ return view.extend({
 		return E('table', { 'class': 'table' }, rows);
 	},
 
-	handleAction: function(action, ev) {
+	runAction: function(action, ev) {
 		ui.showModal(_('Please wait'), E('p', { 'class': 'spinning' }, _('Running…')));
 
 		callService(action).then(function(res) {
@@ -216,7 +216,7 @@ return view.extend({
 	},
 
 	handlePreview: function(st) {
-		var self = this;
+		var me = this;
 		var name = (st && st.routing_profile) || '';
 
 		// The mode comes from the status: the records it reflects are the
@@ -327,14 +327,14 @@ return view.extend({
 	},
 
 	render: function(st) {
-		var self = this;
+		var me = this;
 
 		// The Preview rules button answers for the newest status the polls
 		// have seen, not the load-time snapshot.
-		self._lastStatus = st;
+		me._lastStatus = st;
 
-		var verdictBox = E('div', {}, this.renderVerdict(st));
-		var factsBox = E('div', {}, this.renderFacts(st));
+		var bannerBox = E('div', {}, this.renderBanner(st));
+		var factRows = E('div', {}, this.renderFactRows(st));
 
 		// The first log fetch only runs on the first poll tick and
 		// logread over RPC takes a while, so show a spinner in the log
@@ -344,17 +344,18 @@ return view.extend({
 		var logArea = E('div', {}, E('p', { 'class': 'spinning' }, _('Loading…')));
 		var logReady = false;
 
-		poll.add(function() {
-			return callStatus().then(function(s) {
-				self._lastStatus = s;
-				dom.content(verdictBox, self.renderVerdict(s));
-				dom.content(factsBox, self.renderFacts(s));
+		// The status and the client log are polled on the same cadence;
+		// the first log response swaps the spinner for the real box.
+		var refreshStatus = function() {
+			return callStatus().then(function(snap) {
+				me._lastStatus = snap;
+				dom.content(bannerBox, me.renderBanner(snap));
+				dom.content(factRows, me.renderFactRows(snap));
 			});
-		}, 10);
-
-		poll.add(function() {
-			return callLog(80).then(function(r) {
-				logBox.textContent = (r.lines || []).join('\n');
+		};
+		var refreshLog = function() {
+			return callLog(80).then(function(entry) {
+				logBox.textContent = (entry.lines || []).join('\n');
 
 				if (!logReady) {
 					logReady = true;
@@ -369,36 +370,43 @@ return view.extend({
 					dom.content(logArea, logBox);
 				}
 			});
-		}, 10);
+		};
+
+		poll.add(refreshStatus, 10);
+		poll.add(refreshLog, 10);
+
+		// The three service actions are declared as data and turned into
+		// buttons here, so the row stays a single place to extend.
+		var controls = [
+			{ verb: 'start', tone: 'apply', word: _('Enable') },
+			{ verb: 'stop', tone: 'reset', word: _('Disable') },
+			{ verb: 'restart', tone: 'action', word: _('Restart service') }
+		];
+		var controlRow = [];
+
+		controls.forEach(function(c, i) {
+			if (i)
+				controlRow.push(' ');
+
+			controlRow.push(E('button', {
+				'class': 'cbi-button cbi-button-' + c.tone,
+				'click': function(ev) { me.runAction(c.verb, ev); }
+			}, c.word));
+		});
 
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', { 'class': 'cbi-map-title' }, _('TrustTunnel')),
 			E('div', { 'class': 'cbi-section' }, [
-				verdictBox,
-				E('div', [
-					E('button', {
-						'class': 'cbi-button cbi-button-apply',
-						'click': function(ev) { self.handleAction('start', ev); }
-					}, _('Start')),
-					' ',
-					E('button', {
-						'class': 'cbi-button cbi-button-reset',
-						'click': function(ev) { self.handleAction('stop', ev); }
-					}, _('Stop')),
-					' ',
-					E('button', {
-						'class': 'cbi-button cbi-button-action',
-						'click': function(ev) { self.handleAction('restart', ev); }
-					}, _('Restart'))
-				])
+				bannerBox,
+				E('div', controlRow)
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', _('Now')),
-				factsBox,
+				factRows,
 				E('div', { 'style': 'margin-top:0.75em' }, [
 					E('button', {
 						'class': 'cbi-button cbi-button-action',
-						'click': function(ev) { self.handlePreview(self._lastStatus); }
+						'click': function(ev) { me.handlePreview(me._lastStatus); }
 					}, _('Preview rules'))
 				])
 			]),

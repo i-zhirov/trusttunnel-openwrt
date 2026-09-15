@@ -109,18 +109,18 @@ test('verdict and facts render immediately, without waiting for the poll', async
 test('Start/Stop/Restart call the service method with the right action', async ({ page }) => {
 	await openView(page, 'status');
 
-	await button(page, 'Start').click();
+	await button(page, 'Enable').click();
 	await waitForFrames(page, 'luci.trusttunnel', 'service', 1);
 	let frames = await framesFor(page, 'luci.trusttunnel', 'service');
 	expect(frames[0].args.action).toBe('start');
 	await expect(page.locator('#maincontent .alert-message')).toContainText('Done');
 
-	await button(page, 'Stop').click();
+	await button(page, 'Disable').click();
 	await waitForFrames(page, 'luci.trusttunnel', 'service', 2);
 	frames = await framesFor(page, 'luci.trusttunnel', 'service');
 	expect(frames[1].args.action).toBe('stop');
 
-	await button(page, 'Restart').click();
+	await button(page, 'Restart service').click();
 	await waitForFrames(page, 'luci.trusttunnel', 'service', 3);
 	frames = await framesFor(page, 'luci.trusttunnel', 'service');
 	expect(frames[2].args.action).toBe('restart');
@@ -130,7 +130,7 @@ test('service failure surfaces a warning notification', async ({ page }) => {
 	await stubSet(page, { service: { code: 0, output: 'boom', not_running: true } });
 	await openView(page, 'status');
 
-	await button(page, 'Start').click();
+	await button(page, 'Enable').click();
 	await expect(page.locator('#maincontent .alert-message.warning')).toContainText(
 		'The service did not start. The client log below says why.');
 });
