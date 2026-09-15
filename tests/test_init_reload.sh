@@ -1,5 +1,5 @@
 #!/bin/sh
-# Applying settings: apply_settings and keeping routing across a restart.
+# Applying settings: apply_config and keeping routing across a restart.
 #
 # WHY. Save & Apply lands in reload_service. It used to unconditionally call
 # restart, and any edit killed the client: the tunnel tore for a few seconds,
@@ -39,7 +39,7 @@ cat > "$sandbox/lib/uci-export" <<'EOF'
 cat "$TT_NEXT"
 EOF
 
-# The certificate never lands in records (PEM is multi-line), so apply_settings
+# The certificate never lands in records (PEM is multi-line), so apply_config
 # compares it with a separate uci call.
 cat > "$bin/uci" <<'EOF'
 #!/bin/sh
@@ -66,11 +66,11 @@ export TT_NEXT TT_CERT_UCI
 : > "$TT_CERT_UCI"
 
 # Everything outside the scope of the check is replaced with logging stubs.
-# regenerate is stubbed out among others because the real one moves records
+# regen_config is stubbed out among others because the real one moves records
 # itself — and the test needs to see whether it got that far.
 restart() { echo "restart keep_routing=${_TT_KEEP_ROUTING:-0}" >> "$TT_CALLS"; }
-regenerate() {
-	echo "regenerate" >> "$TT_CALLS"
+regen_config() {
+	echo "regen_config" >> "$TT_CALLS"
 	[ "${REGEN_RC:-0}" = "0" ] || return "$REGEN_RC"
 	cp "$TT_NEXT" "$RECORDS"
 }
@@ -101,11 +101,11 @@ setup() {
 # --- Cheap path -------------------------------------------------------------
 
 # An edit of the LAN interfaces never reaches client.toml, so there is no
-# reason to touch the client: regenerate, reload into the kernel and re-attach
+# reason to touch the client: regen_config, reload into the kernel and re-attach
 # the route to the LIVE device.
 setup
 printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
-apply_settings
+apply_config
 
 assert_eq "" "$(no_call 'restart')" \
 	"an edit of the LAN interfaces does not restart the client"
@@ -122,25 +122,25 @@ assert_contains "$(cat "$RECORDS")" "br-guest" \
 # --- Proxy mode: no kernel routing ---------------------------------------------
 
 # In proxy mode the routing options are inert: a reload-class edit still
-# regenerates the records, but nothing is loaded into the kernel.
+# regen_configs the records, but nothing is loaded into the kernel.
 setup
 printf 'main.mode\tproxy\n' >> "$RECORDS"
 printf 'main.mode\tproxy\n' >> "$TT_NEXT"
 printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
-apply_settings
+apply_config
 
 assert_eq "" "$(no_call 'restart')" \
 	"in proxy mode a LAN-interfaces edit does not restart the client"
 assert_eq "" "$(no_call 'routing up')" \
 	"in proxy mode no routing is loaded into the kernel"
-assert_contains "$(calls)" "regenerate" \
-	"in proxy mode the records are still regenerated"
+assert_contains "$(calls)" "regen_config" \
+	"in proxy mode the records are still regen_configd"
 
 # A mode switch rebuilds everything: the tun routing must come down with the
 # old mode before the client starts in the new one.
 setup
 printf 'main.mode\tproxy\n' >> "$TT_NEXT"
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart keep_routing=0" \
 	"switching the operation mode tears the routing down completely"
@@ -152,21 +152,21 @@ setup
 # script and the next token as a file, so the edit fails on CI. awk behaves
 # identically on both, hence the temp file + mv.
 awk '{ gsub(/a\.example/, "b.example"); print }' "$TT_NEXT" > "$TT_NEXT.tmp" && mv "$TT_NEXT.tmp" "$TT_NEXT"
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart keep_routing=1" \
 	"changing the server address restarts the client without tearing down routing"
 
 setup
 printf 'domains.direct\tbank.example\n' >> "$TT_NEXT"
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart keep_routing=1" \
 	"a new exclusion restarts the client without tearing down routing"
 
 setup
 printf 'routing_profile.mode\tbypass\n' >> "$TT_NEXT"
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart keep_routing=1" \
 	"a routing profile change restarts the client without tearing down routing"
@@ -178,7 +178,7 @@ assert_contains "$(calls)" "restart keep_routing=1" \
 setup
 printf 'endpoint.address\t1.2.3.4:443\nendpoint.address\t[2001:db8::1]:443\n' >> "$RECORDS"
 printf 'endpoint.address\t[2001:db8::1]:443\nendpoint.address\t1.2.3.4:443\n' >> "$TT_NEXT"
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart keep_routing=1" \
 	"reordering the endpoint addresses restarts the client without tearing down routing"
@@ -194,7 +194,7 @@ setup
 # goes through awk.
 awk 'BEGIN { OFS = "\t" } $1 == "network.table" { $2 = "881" } { print }' \
 	"$TT_NEXT" > "$TT_NEXT.tmp" && mv "$TT_NEXT.tmp" "$TT_NEXT"
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart keep_routing=0" \
 	"changing the table number tears routing down completely"
@@ -202,7 +202,7 @@ assert_contains "$(calls)" "restart keep_routing=0" \
 setup
 awk 'BEGIN { OFS = "\t" } $1 == "main.enabled" { $2 = "0" } { print }' \
 	"$TT_NEXT" > "$TT_NEXT.tmp" && mv "$TT_NEXT.tmp" "$TT_NEXT"
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart keep_routing=0" \
 	"disabling the service tears routing down completely"
@@ -215,7 +215,7 @@ assert_contains "$(calls)" "restart keep_routing=0" \
 # to do.
 setup
 printf -- '-----BEGIN CERTIFICATE-----\nnew\n-----END CERTIFICATE-----\n' > "$TT_CERT_UCI"
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart" \
 	"a certificate change restarts the client even though records did not change"
@@ -225,7 +225,7 @@ setup
 printf -- '-----BEGIN CERTIFICATE-----\nsame\n-----END CERTIFICATE-----\n' > "$TT_CERT_UCI"
 cp "$TT_CERT_UCI" "$OUTDIR/endpoint.pem"
 printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
-apply_settings
+apply_config
 
 assert_eq "" "$(no_call 'restart')" \
 	"an unchanged certificate does not block the cheap path"
@@ -240,7 +240,7 @@ rm -f "$OUTDIR/endpoint.pem"
 setup
 printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
 ROUTING_UP_RC=1
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart keep_routing=0" \
 	"a routing up failure rolls back to a full restart"
@@ -248,7 +248,7 @@ assert_contains "$(calls)" "restart keep_routing=0" \
 setup
 printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
 REGEN_RC=1
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart keep_routing=0" \
 	"a regeneration failure rolls back to a full restart"
@@ -258,7 +258,7 @@ assert_contains "$(calls)" "restart keep_routing=0" \
 # there is no record.
 setup
 rm -f "$RECORDS"
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart" \
 	"with no applied-state record — the full path"
@@ -267,7 +267,7 @@ assert_contains "$(calls)" "restart" \
 setup
 printf 'network.lan_devices\tbr-lan br-guest\n' >> "$TT_NEXT"
 RUNNING_RC=1
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart" \
 	"a stopped service is applied via the full path"
@@ -276,7 +276,7 @@ unset RUNNING_RC
 # UCI export failed — there is nothing to compare with, no basis for a decision.
 setup
 UCI_EXPORT_RC=1
-apply_settings
+apply_config
 
 assert_contains "$(calls)" "restart" \
 	"a UCI export failure rolls back to a full restart"
@@ -309,7 +309,7 @@ assert_contains "$(calls)" "routing down" \
 # internet".
 setup
 _TT_KEEP_ROUTING=1
-abort_restart_cleanup
+teardown_hanging_routing
 
 assert_contains "$(calls)" "routing down" \
 	"an interrupted start tears down the kept routing"

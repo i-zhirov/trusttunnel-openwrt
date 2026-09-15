@@ -1299,8 +1299,8 @@ st_lifecycle() {
 	# match the fresh export, so nothing is regenerated and the tunnel
 	# stays up.
 	docker exec "$ROUTER_CID" /etc/init.d/trusttunnel reload >/dev/null 2>&1
-	_log=$(docker exec "$ROUTER_CID" sh -c 'logread | grep "nothing to do" | tail -1' 2>/dev/null)
-	assert_contains "$_log" "nothing to do" "an unchanged reload is a noop"
+	_log=$(docker exec "$ROUTER_CID" sh -c 'logread | grep "no changes needed" | tail -1' 2>/dev/null)
+	assert_contains "$_log" "no changes needed" "an unchanged reload is a noop"
 	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" "the tunnel survives the noop reload"
 
