@@ -495,7 +495,7 @@ async function main() {
     // values land in pending UCI only (uci.set recorded, nothing else).
     settingsView.handleImport();
     const modal = ui.lastModal;
-    ok(modal && modal.title === 'Import endpoint configuration', 'settings: Import modal opens');
+    ok(modal && modal.title === 'Import server settings', 'settings: Import modal opens');
     let textarea = null, importBtn = null;
     walk(modal.children, n => {
         if (n.tag === 'textarea') textarea = n;
