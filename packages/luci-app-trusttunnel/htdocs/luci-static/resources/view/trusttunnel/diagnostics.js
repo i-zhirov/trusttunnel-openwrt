@@ -46,7 +46,7 @@ var verdictWord = function (verdict) {
 		return _('there are problems');
 	}
 
-	return _('not checked');
+	return _('not run yet');
 };
 
 var checkMark = {
@@ -59,66 +59,68 @@ var checkMark = {
 var groupTitle = {
 	config: _('Configuration'),
 	prereq: _('Prerequisites'),
-	service: _('Service'),
+	service: _('Service state'),
 	kernel: _('Kernel state'),
-	network: _('Network')
+	network: _('Connectivity')
 };
 
 var DIAG_TEXT = {
-	'Endpoint address': _('Endpoint address'),
-	'Credentials': _('Credentials'),
-	'TLS host name': _('TLS host name'),
-	'TrustTunnel client': _('TrustTunnel client'),
-	'tun device': _('tun device'),
-	'Enabled': _('Enabled'),
-	'Running': _('Running'),
+	'Server address': _('Server address'),
+	'Endpoint credentials': _('Endpoint credentials'),
+	'TLS SNI': _('TLS SNI'),
+	'Routing profile': _('Routing profile'),
+	'Client binary': _('Client binary'),
+	'TUN device': _('TUN device'),
+	'Service enabled': _('Service enabled'),
+	'Service running': _('Service running'),
 	'Tunnel device': _('Tunnel device'),
 	'Route attached to the device': _('Route attached to the device'),
-	'Tunnel carrier': _('Tunnel carrier'),
-	'MTU matches settings': _('MTU matches settings'),
-	'Routing profile': _('Routing profile'),
+	'Carrier state': _('Carrier state'),
+	'MTU matches config': _('MTU matches config'),
 	'SOCKS listener': _('SOCKS listener'),
 	'none — legacy full-tunnel mode': _('none — legacy full-tunnel mode'),
-	'request failed': _('request failed'),
-	'Routing rule': _('Routing rule'),
-	'Routing table': _('Routing table'),
-	'nftables table': _('nftables table'),
-	'Firewall zone': _('Firewall zone'),
-	'Endpoint reachable': _('Endpoint reachable'),
-	'Traffic goes through the tunnel': _('Traffic goes through the tunnel'),
-	'Fill in the address on the Settings page, or import the server config.': _('Fill in the address on the Settings page, or import the server config.'),
-	'Both the user name and the password are required.': _('Both the user name and the password are required.'),
-	'Without it the TLS session uses the bare address, which many servers reject.': _('Without it the TLS session uses the bare address, which many servers reject.'),
-	'Install kmod-tun.': _('Install kmod-tun.'),
-	'Turn on Enable on the Settings page, then press Start.': _('Turn on Enable on the Settings page, then press Start.'),
-	'Press Start and read the client log below.': _('Press Start and read the client log below.'),
-	'The device belongs to the client, not to this package. Read the client log below.': _('The device belongs to the client, not to this package. Read the client log below.'),
-	'The device exists but the client has not established the tunnel yet. This is the client side, not the routing — read the client log.': _('The device exists but the client has not established the tunnel yet. This is the client side, not the routing — read the client log.'),
-	'Restart the service so the client picks up the configured value.': _('Restart the service so the client picks up the configured value.'),
-	'Marked traffic falls into the killswitch instead of the tunnel. Restart the service.': _('Marked traffic falls into the killswitch instead of the tunnel. Restart the service.'),
-	'Run /etc/init.d/firewall reload — traffic into the tunnel is dropped without the zone.': _('Run /etc/init.d/firewall reload — traffic into the tunnel is dropped without the zone.'),
+	'request error': _('request error'),
+	'Marking rule': _('Marking rule'),
+	'Routing-table entry': _('Routing-table entry'),
+	'nft ruleset': _('nft ruleset'),
+	'Zone binding': _('Zone binding'),
+	'Server reachable': _('Server reachable'),
+	'Traffic takes the tunnel': _('Traffic takes the tunnel'),
+	'Set the address on the Settings page or import the server config.': _('Set the address on the Settings page or import the server config.'),
+	'The user name and the password must both be filled in.': _('The user name and the password must both be filled in.'),
+	'Without it the TLS session uses the plain address, which many servers reject.': _('Without it the TLS session uses the plain address, which many servers reject.'),
+	'Assign a routing profile on the Settings page to control what goes through the tunnel.': _('Assign a routing profile on the Settings page to control what goes through the tunnel.'),
+	'The client is a dependency of the package; reinstall trusttunnel-client.': _('The client is a dependency of the package; reinstall trusttunnel-client.'),
+	'Install the kmod-tun package.': _('Install the kmod-tun package.'),
+	'Enable the service on the Settings page, then press Start.': _('Enable the service on the Settings page, then press Start.'),
+	'Press Start and look at the client log below.': _('Press Start and look at the client log below.'),
 	'Set the listener address on the Settings page.': _('Set the listener address on the Settings page.'),
-	'The client binds the listener at start; a bind error or a port conflict keeps it down. Read the client log below.': _('The client binds the listener at start; a bind error or a port conflict keeps it down. Read the client log below.'),
-	'A request through the SOCKS listener can fail even on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.': _('A request through the SOCKS listener can fail even on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.'),
-	'Check the address, and that the router itself has internet access.': _('Check the address, and that the router itself has internet access.'),
-	'The tunnel is up but traffic is not using it.': _('The tunnel is up but traffic is not using it.'),
-	'A request bound to the device can fail even on a healthy tunnel, because the default route lives in the marked table. Judge by a LAN client instead.': _('A request bound to the device can fail even on a healthy tunnel, because the default route lives in the marked table. Judge by a LAN client instead.'),
-	'not set': _('not set'),
-	'not installed': _('not installed'),
-	'missing': _('missing'),
-	'not listening': _('not listening'),
-	'address not configured': _('address not configured'),
-	'the service is not running': _('the service is not running'),
-	'yes': _('yes'),
-	'no': _('no'),
-	'present': _('present'),
-	'absent': _('absent'),
-	'up': _('up'),
-	'no carrier': _('no carrier'),
-	'the client has not created one': _('the client has not created one'),
+	'The listener is bound by the client at start; a bind error or a port conflict keeps it down. See the client log below.': _('The listener is bound by the client at start; a bind error or a port conflict keeps it down. See the client log below.'),
+	'The tun device is created by the client, not by this package. See the client log below.': _('The tun device is created by the client, not by this package. See the client log below.'),
+	'Restart the service so the client applies the configured value.': _('Restart the service so the client applies the configured value.'),
+	'Marked traffic hits the blackhole route instead of the tunnel. Restart the service.': _('Marked traffic hits the blackhole route instead of the tunnel. Restart the service.'),
+	'Run /etc/init.d/firewall reload — without the zone, traffic into the tunnel is dropped.': _('Run /etc/init.d/firewall reload — without the zone, traffic into the tunnel is dropped.'),
+	'The device exists but the tunnel is not established yet; that is on the client, not the routing. See the client log.': _('The device exists but the tunnel is not established yet; that is on the client, not the routing. See the client log.'),
+	'Check the address and whether the router itself can reach the internet.': _('Check the address and whether the router itself can reach the internet.'),
+	'The tunnel is up, yet traffic is not going through it.': _('The tunnel is up, yet traffic is not going through it.'),
+	'A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.': _('A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.'),
+	'A request bound to the device can fail on a healthy tunnel because the default route lives in the marked table. Judge by a LAN client instead.': _('A request bound to the device can fail on a healthy tunnel because the default route lives in the marked table. Judge by a LAN client instead.'),
+	'unset': _('unset'),
+	'binary missing': _('binary missing'),
+	'not present': _('not present'),
+	'not bound': _('not bound'),
+	'address unset': _('address unset'),
+	'the service is stopped': _('the service is stopped'),
+	'on': _('on'),
+	'off': _('off'),
+	'found': _('found'),
+	'not found': _('not found'),
+	'link up': _('link up'),
+	'link down': _('link down'),
+	'the client has not created it yet': _('the client has not created it yet'),
 	'not attached': _('not attached'),
-	'loaded in fw4': _('loaded in fw4'),
-	'not in the live ruleset': _('not in the live ruleset'),
+	'in the fw4 ruleset': _('in the fw4 ruleset'),
+	'missing from the fw4 ruleset': _('missing from the fw4 ruleset'),
 	'/dev/net/tun present': _('present')
 };
 
@@ -426,7 +428,7 @@ return view.extend({
 					'click': ui.createHandlerFn(this, function () {
 						handleDiagnose(diagnoseBox);
 					})
-				}, _('Check again')),
+				}, _('Re-run checks')),
 				' ',
 				E('button', {
 					'class': 'cbi-button cbi-button-neutral',
@@ -448,7 +450,7 @@ return view.extend({
 					'click': ui.createHandlerFn(this, function () {
 						handleCheckDomain(domainInput, domainBox);
 					})
-				}, _('Check')),
+				}, _('Run checks')),
 				domainBox
 			]),
 
@@ -462,7 +464,7 @@ return view.extend({
 					'click': ui.createHandlerFn(this, function () {
 						handlePing(pingBox);
 					})
-				}, _('Ping')),
+				}, _('Ping server')),
 				pingBox
 			]),
 
@@ -476,7 +478,7 @@ return view.extend({
 					'click': ui.createHandlerFn(this, function () {
 						handleProbe(probeBox);
 					})
-				}, _('Compare')),
+				}, _('Compare addresses')),
 				probeBox
 			])
 		]);

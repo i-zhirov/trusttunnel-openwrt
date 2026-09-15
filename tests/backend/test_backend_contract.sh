@@ -206,9 +206,9 @@ check_goldens "$LAB_STOPPED" "$BASE/goldens/stopped"
 # --- Phase D: the proxy state (SOCKS listener, no kernel routing) ----------
 # The same rootfs, but the records declare proxy mode and the routing stub
 # reports an empty kernel state. The original curl stub answers identically
-# on both legs, pinning the "same address both ways" failure branch of the
-# proxy tunnel check; nothing is bound on the listener port, so the SOCKS
-# listener check fails.
+# on both legs, pinning the "identical addresses via both routes" failure
+# branch of the proxy tunnel check; nothing is bound on the listener port,
+# so the SOCKS listener check fails.
 PROXY_RECORDS='main.enabled	1
 main.mode	proxy
 proxy.address	0.0.0.0:1080

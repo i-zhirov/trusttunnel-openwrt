@@ -19,8 +19,8 @@ const HEALTHY = JSON.parse(fs.readFileSync(path.join(GOLDENS, 'healthy/diagnose.
 
 const GROUP_ORDER = [ 'config', 'prereq', 'service', 'kernel', 'network' ];
 const GROUP_TITLE = {
-	config: 'Configuration', prereq: 'Prerequisites', service: 'Service',
-	kernel: 'Kernel state', network: 'Network'
+	config: 'Configuration', prereq: 'Prerequisites', service: 'Service state',
+	kernel: 'Kernel state', network: 'Connectivity'
 };
 
 // Groups with at least one fail/warn check are rendered up front; the rest
@@ -66,7 +66,7 @@ test('checks are grouped in the fixed order, problems first', async ({ page }) =
 		await expect(h4.nth(i)).toHaveText(visible[i]);
 
 	// A failing check renders its label and detail through DIAG_TEXT.
-	await expect(page.locator('#view')).toContainText('Install kmod-tun.');
+	await expect(page.locator('#view')).toContainText('Install the kmod-tun package.');
 
 	// The passed checks are hidden until the toggle is pressed.
 	const hidden = page.locator('#view div[style*="display:none"]');
@@ -93,11 +93,11 @@ test('healthy diagnose shows the warn banner', async ({ page }) => {
 	await expect(page.locator('#view .alert-message.warning')).toContainText('works, with remarks');
 });
 
-test('Check again re-runs the diagnose chain', async ({ page }) => {
+test('Re-run checks re-runs the diagnose chain', async ({ page }) => {
 	await openView(page, 'diagnostics');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
-	await button(page, 'Check again').click();
+	await button(page, 'Re-run checks').click();
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 2);
 });
 
@@ -105,8 +105,8 @@ test('domain check renders the verdict table', async ({ page }) => {
 	await openView(page, 'diagnostics');
 
 	await page.locator('#view input[placeholder="youtube.com"]').fill('telegram.org');
-	// exact:true — "Check again" contains "Check" as a substring
-	await page.getByRole('button', { name: 'Check', exact: true }).click();
+	// exact:true — "Re-run checks" contains "Run checks" as a substring
+	await page.getByRole('button', { name: 'Run checks', exact: true }).click();
 	await waitForFrames(page, 'luci.trusttunnel', 'check_domain', 1);
 
 	const frames = await framesFor(page, 'luci.trusttunnel', 'check_domain');
@@ -120,7 +120,7 @@ test('domain check renders the verdict table', async ({ page }) => {
 test('ping renders loss and round-trip times', async ({ page }) => {
 	await openView(page, 'diagnostics');
 
-	await button(page, 'Ping').click();
+	await button(page, 'Ping server').click();
 	await waitForFrames(page, 'luci.trusttunnel', 'ping', 1);
 
 	await expect(page.locator('#view')).toContainText('1.2.3.4');
@@ -131,7 +131,7 @@ test('ping renders loss and round-trip times', async ({ page }) => {
 test('address compare renders the tunnel and direct addresses', async ({ page }) => {
 	await openView(page, 'diagnostics');
 
-	await button(page, 'Compare').click();
+	await button(page, 'Compare addresses').click();
 	await waitForFrames(page, 'luci.trusttunnel', 'probe', 1);
 
 	await expect(page.locator('#view')).toContainText('Through the tunnel');

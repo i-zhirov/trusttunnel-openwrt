@@ -233,12 +233,12 @@ const canned = {
             verdict: 'ok',
             counts: { ok: 17, warn: 0, fail: 0, skip: 0 },
             checks: [
-                { group: 'config', label: 'Endpoint address', status: 'ok',
+                { group: 'config', label: 'Server address', status: 'ok',
                   detail: 'kz.hexbrains.com:443', hint: '' },
-                { group: 'config', label: 'Credentials', status: 'ok',
+                { group: 'config', label: 'Endpoint credentials', status: 'ok',
                   detail: 'user iceman', hint: '' },
-                { group: 'kernel', label: 'Routing rule', status: 'ok',
-                  detail: 'present', hint: '' }
+                { group: 'kernel', label: 'Marking rule', status: 'ok',
+                  detail: 'found', hint: '' }
             ]
         };
     },
@@ -255,7 +255,7 @@ const canned = {
             domain: domain, normalized: domain,
             verdict: domain === 'legacy.example' ? 'direct' : 'tunnel',
             reason: domain === 'legacy.example'
-                ? 'listed in the "do not bypass" list; the client sends it out by SNI'
+                ? 'listed in the "do not bypass" list; the client matches it by SNI'
                 : 'assigned profile in VPN mode'
         };
     },
@@ -547,21 +547,21 @@ async function main() {
     eq(diagTree.tag, 'div', 'diagnostics: root is a div');
     eq(diagTree.children.length, 5, 'diagnostics: root has h2 + 4 sections');
     const diagButtons = findButtons(diagTree).map(b => String(b.children[0]));
-    for (const label of ['Check again', 'Check', 'Ping', 'Compare'])
+    for (const label of ['Re-run checks', 'Run checks', 'Ping server', 'Compare addresses'])
         ok(diagButtons.indexOf(label) !== -1, 'diagnostics: ' + label + ' button present');
     // the diagnose call resolves asynchronously; let the microtasks run
     await Promise.resolve();
     await Promise.resolve();
     ok(hasText(diagTree, 'everything checks out'), 'diagnostics: verdict banner renders');
-    ok(hasText(diagTree, 'Endpoint address'), 'diagnostics: the checks table renders');
+    ok(hasText(diagTree, 'Server address'), 'diagnostics: the checks table renders');
     // run the Ping tool
-    const pingBtn = findButtons(diagTree).find(b => String(b.children[0]) === 'Ping');
+    const pingBtn = findButtons(diagTree).find(b => String(b.children[0]) === 'Ping server');
     await click(pingBtn);
     await Promise.resolve();
     ok(hasText(diagTree, 'kz.hexbrains.com') && hasText(diagTree, '95'),
         'diagnostics: the ping tool renders results');
     // run the Compare tool
-    const cmpBtn = findButtons(diagTree).find(b => String(b.children[0]) === 'Compare');
+    const cmpBtn = findButtons(diagTree).find(b => String(b.children[0]) === 'Compare addresses');
     await click(cmpBtn);
     await Promise.resolve();
     await Promise.resolve();
