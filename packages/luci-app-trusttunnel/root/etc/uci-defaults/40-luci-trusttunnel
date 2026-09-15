@@ -59,7 +59,7 @@ config_foreach _dedup_forwarding forwarding
 if [ -n "$_removed" ]; then
 	uci commit firewall
 	/etc/init.d/firewall reload >/dev/null 2>&1
-	logger -t trusttunnel "removed duplicate firewall zones left by an earlier version"
+	logger -t trusttunnel "cleaned up duplicate trusttunnel firewall zones"
 fi
 
 # Create the zone and its forwarding when no trusttunnel zone exists.
@@ -85,15 +85,15 @@ if [ -n "$_zone_sec" ]; then
 	# _devs comes from config_get, which shellcheck cannot trace.
 	config_get _devs "$_zone_sec" device
 	# shellcheck disable=SC2154
-	case " $_devs " in
-		*" tun+ "*)
-			;;
-		*)
-			uci -q delete "firewall.$_zone_sec.device"
-			uci add_list "firewall.$_zone_sec.device"='tun+'
-			_migrated=1
-			;;
-	esac
+	_has_wildcard=0
+	for _d in $_devs; do
+		[ "$_d" = "tun+" ] && _has_wildcard=1
+	done
+	if [ "$_has_wildcard" = "0" ]; then
+		uci -q delete "firewall.$_zone_sec.device"
+		uci add_list "firewall.$_zone_sec.device"='tun+'
+		_migrated=1
+	fi
 	# After a dedup there is nothing left to repair here: the pass kept
 	# the first trusttunnel zone and deleted the rest, so the surviving
 	# zone is exactly the one the migration block above just bound to
@@ -154,5 +154,7 @@ fi
 # enabled flag is only consulted inside start_service) and clear the LuCI
 # caches.
 /etc/init.d/trusttunnel enable >/dev/null 2>&1
-rm -f /tmp/luci-indexcache /tmp/luci-modulecache/* 2>/dev/null
+for _luci_cache in /tmp/luci-indexcache /tmp/luci-modulecache; do
+	rm -rf "$_luci_cache" 2>/dev/null
+done
 exit 0

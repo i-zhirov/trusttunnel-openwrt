@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
-#
 # luci-app-trusttunnel: LuCI support for the TrustTunnel full-tunnel client.
 include $(TOPDIR)/rules.mk
 
@@ -17,7 +16,7 @@ PKG_NAME:=luci-app-trusttunnel
 PKG_VERSION:=$(strip $(shell v="$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')"; [ -n "$$v" ] && printf '%s' "$$v" || printf '%s' 1.0.26))
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
-PKG_MAINTAINER:=TrustTunnelOpenWrt contributors
+PKG_MAINTAINER:=Ilia Zhirov <i.zhirov@adguard.com>
 
 LUCI_TITLE:=LuCI support for TrustTunnel (full tunnel)
 LUCI_DESCRIPTION:=Runs the TrustTunnel client on OpenWrt and routes LAN traffic through the tunnel with a killswitch and a LuCI interface.
@@ -59,13 +58,14 @@ include $(TOPDIR)/feeds/luci/luci.mk
 # — with no log line at all. records.sh is sourced with `.`, not executed,
 # so it stays 0644.
 define Build/Compile
-	chmod 0755 $(PKG_BUILD_DIR)/root/etc/init.d/trusttunnel
-	chmod 0755 $(PKG_BUILD_DIR)/root/etc/uci-defaults/40-luci-trusttunnel
-	chmod 0755 $(PKG_BUILD_DIR)/root/etc/hotplug.d/net/40-trusttunnel
-	chmod 0755 $(PKG_BUILD_DIR)/root/usr/libexec/trusttunnel/gen-config
-	chmod 0755 $(PKG_BUILD_DIR)/root/usr/libexec/trusttunnel/routing
-	chmod 0755 $(PKG_BUILD_DIR)/root/usr/libexec/trusttunnel/uci-export
+	chmod 0755 \
+		$(PKG_BUILD_DIR)/root/etc/init.d/trusttunnel \
+		$(PKG_BUILD_DIR)/root/etc/uci-defaults/40-luci-trusttunnel \
+		$(PKG_BUILD_DIR)/root/etc/hotplug.d/net/40-trusttunnel \
+		$(PKG_BUILD_DIR)/root/usr/libexec/trusttunnel/gen-config \
+		$(PKG_BUILD_DIR)/root/usr/libexec/trusttunnel/routing \
+		$(PKG_BUILD_DIR)/root/usr/libexec/trusttunnel/uci-export
 	chmod 0644 $(PKG_BUILD_DIR)/root/usr/libexec/trusttunnel/records.sh
 endef
 
-# call BuildPackage - OpenWrt buildroot signature
+# luci.mk's include above is what emits the package build.

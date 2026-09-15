@@ -314,7 +314,7 @@ EOF
         "duplicated: the third forwarding is removed"
     assert_contains "$ucd_out" "RELOADS=2" \
         "duplicated: one reload for the dedup and one for the tun+ migration"
-    assert_eq "1" "$(ucd_grep_count 'removed duplicate firewall zones left by an earlier version' "$ucd_out")" \
+    assert_eq "1" "$(ucd_grep_count 'cleaned up duplicate trusttunnel firewall zones' "$ucd_out")" \
         "duplicated: the dedup log line appears exactly once"
     assert_eq "1" "$(ucd_grep_count 'firewall zone migrated from tt0 to the tun+ wildcard' "$ucd_out")" \
         "duplicated: the migration log line appears exactly once"

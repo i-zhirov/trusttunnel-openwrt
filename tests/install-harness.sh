@@ -226,7 +226,7 @@ sc_openwrt_hidden() {
     run_scenario "chunk1: /etc/openwrt_release missing -> die" "$IMG_OPKG" 1 "" hidden "" "" as_openwrt_hidden
 }
 as_openwrt_hidden() {
-    assert_grep "$SCRATCH/run.out" "this script is for OpenWrt only" "die message names OpenWrt only"
+    assert_grep "$SCRATCH/run.out" "this installer runs on OpenWrt only" "die message names OpenWrt only"
 }
 
 sc_no_pm() {
