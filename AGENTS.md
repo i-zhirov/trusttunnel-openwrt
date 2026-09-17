@@ -413,6 +413,15 @@ absent, so the plain suite runs anywhere.
   `TT_GUI_REF` to override) into `tests/gui/.cache`, installs the pinned
   `@playwright/test` into `tests/gui/node_modules`, then runs stub +
   specs inside the image. Both cache dirs are gitignored.
+- `tests/gui/dev.sh` — the manual development loop: starts the same stub
+  on the host (no docker, no build, no release) against the same pinned
+  luci-base cache, prints the three view URLs and the `/__stub` cheat
+  sheet, and serves the resources with no-cache headers so an edit +
+  plain reload is the whole cycle. Router state is faked live through the
+  control endpoint (e.g. `curl -X POST -d '{"set":{"status":{"running":false,"enabled":true}}}' http://127.0.0.1:8123/__stub`;
+  `{"reset":true}` restores the goldens). The luci-base pin and fetch
+  live in `tests/gui/lib-luci.sh`, shared with `run.sh` so the dev loop
+  and the test suite can never drift.
 - The luci-base pin matters: the loader, `dom.create()`'s argument
   handling (`E()` reads only `arguments[2]` — children must be arrays,
   and a DOM node as the second argument is treated as the attribute

@@ -147,7 +147,9 @@ jobs:
             tests/integration/restricted-feeds.sh \
             tests/install-harness.sh \
             tests/backend/test_backend_contract.sh \
-            tests/gui/run.sh
+            tests/gui/run.sh \
+            tests/gui/dev.sh \
+            tests/gui/lib-luci.sh
           docker run --rm -v "$PWD:/src" -w /src koalaman/shellcheck:v0.11.0 -s sh --severity=error "$@"
 
       # A syntax error in the init script would take the service down at
