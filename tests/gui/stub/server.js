@@ -29,6 +29,10 @@
 //        --app <repo>/packages/luci-app-trusttunnel/htdocs
 //        --luci <luci-base>/htdocs
 //        --goldens <repo>/tests/backend/goldens
+//
+// For a manual development loop (no docker, no build) run tests/gui/dev.sh:
+// it starts this server on the host against the same pinned luci-base cache
+// and prints the view URLs plus the /__stub cheat sheet.
 
 const http = require('http');
 const fs = require('fs');
@@ -385,7 +389,10 @@ function serveStatic(res, rel) {
 			const data = fs.readFileSync(file);
 			const ext = path.extname(file);
 			const types = { '.js': 'application/javascript', '.json': 'application/json', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
-			res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream' });
+			// no-cache so the manual dev loop (dev.sh) picks view edits up
+			// on a plain reload; the specs run in fresh browser contexts,
+			// so the header is inert for them.
+			res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
 			res.end(data);
 			return;
 		}
