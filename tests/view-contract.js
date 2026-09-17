@@ -153,7 +153,8 @@ const ALLOWLIST = [
 	/^.+ with MTU \d+$/,                                  // dev + ' with MTU ' + dev_mtu
 	/^device \d+ vs configured \d+$/,                     // 'device ' + dev_mtu + ' vs configured ' + mtu_cfg
 	/^default via .+$/,                                   // 'default via ' + dev
-	/^tunnel .+ vs direct .+$/                            // 'tunnel ' + tip + ' vs direct ' + dip
+	/^tunnel .+ vs direct .+$/,                           // 'tunnel ' + tip + ' vs direct ' + dip
+	/^tunnel .+ \(router traffic is tunneled by config\)$/, // 'tunnel ' + tip + ' (router traffic is tunneled by config)' — include_router_traffic=1 marks the plain probe too
 ];
 
 const seen = new Set();

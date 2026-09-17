@@ -760,15 +760,27 @@ return {
 							length(tip) ? tip : 'request error',
 							'A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.'));
 				} else if (running && length(dev)) {
+					// include_router_traffic=1 extends the output chain to
+					// router-originated traffic, so the plain probe follows
+					// the tunnel too: identical addresses are then the
+					// EXPECTED healthy state, not a failure — the direct
+					// path cannot be sampled from the router at all while
+					// the config tunnels everything it originates. Only
+					// with the option off do identical addresses mean the
+					// unmarked leg leaked into the tunnel path.
+					let router_traffic = first(rec, 'network.include_router_traffic', '0') == '1';
 					let via = run('curl -fsS --max-time 8 --interface ' + shell_quote(dev) + ' https://api.ipify.org', true);
 					let plain = run('curl -fsS --max-time 8 https://api.ipify.org', true);
 					let tip = trim(via.out);
 					let dip = trim(plain.out);
 
-					if (via.code == 0 && plain.code == 0 && tip == dip)
+					if (via.code == 0 && plain.code == 0 && tip == dip && router_traffic)
+						push(checks, check('network', 'Traffic takes the tunnel', 'ok',
+							'tunnel ' + tip + ' (router traffic is tunneled by config)', ''));
+					else if (via.code == 0 && plain.code == 0 && tip == dip)
 						push(checks, check('network', 'Traffic takes the tunnel', 'fail',
 							'identical addresses via both routes: ' + tip,
-							'The tunnel is up, yet traffic is not going through it.'));
+							'The direct probe followed the tunnel — the marking rules may still carry the output chain from an include_router_traffic=1 configuration, or the router shares its public address with the endpoint. Reload the service, or judge by a LAN client.'));
 					else if (via.code == 0 && plain.code == 0)
 						push(checks, check('network', 'Traffic takes the tunnel', 'ok',
 							'tunnel ' + tip + ' vs direct ' + dip, ''));
