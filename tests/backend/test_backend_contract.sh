@@ -6,6 +6,10 @@
 # Five phases, five golden sets:
 #   goldens/*.json           — the baked stub rootfs state (no tun device:
 #                              /dev/net/tun shadowed, tun device check fails)
+#   goldens/router-off/*.json — the baked state with include_router_traffic
+#                              flipped to 0: the plain probe must be direct,
+#                              so identical addresses pin the failure branch
+#                              and its stale-output-chain hint
 #   goldens/healthy/*.json   — after creating a real tun device in a
 #                              privileged container and restoring the
 #                              healthy stubs (device present paths)
@@ -114,6 +118,16 @@ trap 'docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" "$LAB_STOPPED" "$LAB_PROXY" "$LAB
 # --- Phase A: the baked rootfs state (no tun device) ---------------------
 docker run --rm -d --name "$LAB_BAKED" -v "$(pwd)":/ws tt-backend-rootfs sleep 300 >/dev/null || tt_skip "cannot start the lab container"
 check_goldens "$LAB_BAKED" "$BASE/goldens"
+
+# --- Phase A2: the baked state with router traffic NOT tunneled -----------
+# The baked records enable include_router_traffic, so the identical-address
+# stub state pins the OK branch (both probes are tunneled by config). With
+# the option flipped off the plain probe must be direct — the same
+# identical-address stub then pins the failure branch and its hint (the
+# stale-output-chain wording). The records file is swapped in place: the
+# backend re-reads it on every call.
+docker exec "$LAB_BAKED" sh -c "sed -i 's/^network.include_router_traffic\t1$/network.include_router_traffic\t0/' /var/etc/trusttunnel/settings.tsv" >/dev/null 2>&1
+check_goldens "$LAB_BAKED" "$BASE/goldens/router-off"
 
 # --- Phase B: a real tun device + healthy stubs --------------------------
 docker run --rm --privileged -d --name "$LAB_HEALTHY" -v "$(pwd)":/ws tt-backend-rootfs sleep 300 >/dev/null || tt_skip "cannot start the healthy lab container"
