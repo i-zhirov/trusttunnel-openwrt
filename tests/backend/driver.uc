@@ -14,7 +14,7 @@ if (type(out) == 'object' && type(out.checks) == 'array') {
 		if (c.label == 'Carrier state') {
 			c.status = 'warn';
 			c.detail = 'link down';
-			c.hint = "The device exists but the tunnel is not established yet; that is on the client, not the routing. See the client log.";
+			c.hint = "The device exists but the tunnel is not established yet; that is on the client, not the routing. Open the Client log tab.";
 		}
 	}
 	// The counts are computed by the backend before this normalization:
