@@ -450,7 +450,7 @@ const server = http.createServer((req, res) => {
 		return;
 	}
 
-	const viewMatch = /^\/cgi-bin\/luci\/admin\/services\/trusttunnel\/(status|settings|diagnostics)$/.exec(url.pathname);
+	const viewMatch = /^\/cgi-bin\/luci\/admin\/services\/trusttunnel\/(status|settings|diagnostics|log)$/.exec(url.pathname);
 	if (req.method === 'GET' && viewMatch) {
 		res.writeHead(200, { 'Content-Type': 'text/html; charset=UTF-8' });
 		res.end(shell(viewMatch[1]));

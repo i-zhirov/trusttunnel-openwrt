@@ -623,7 +623,7 @@ return {
 					push(checks, check('service', 'Service running', 'ok', 'on', ''));
 				else
 					push(checks, check('service', 'Service running', 'fail', 'off',
-						'Press Start and look at the client log below.'));
+						'Press Start and open the Client log tab.'));
 
 				// --- Kernel ---
 
@@ -646,16 +646,16 @@ return {
 						push(checks, check('kernel', 'SOCKS listener', 'ok', 'bound at ' + paddr, ''));
 					else
 						push(checks, check('kernel', 'SOCKS listener', 'fail', 'not bound',
-							'The listener is bound by the client at start; a bind error or a port conflict keeps it down. See the client log below.'));
+							'The listener is bound by the client at start; a bind error or a port conflict keeps it down. Open the Client log tab.'));
 				} else {
 					let dev_sys = length(dev) ? '/sys/class/net/' + dev : '';
 
 					if (!length(dev)) {
 						push(checks, check('kernel', 'Tunnel device', running ? 'fail' : 'skip', 'the client has not created it yet',
-							'The tun device is created by the client, not by this package. See the client log below.'));
+							'The tun device is created by the client, not by this package. Open the Client log tab.'));
 					} else if (access(dev_sys) == null) {
 						push(checks, check('kernel', 'Tunnel device', 'fail', 'the client has not created it yet',
-							'The tun device is created by the client, not by this package. See the client log below.'));
+							'The tun device is created by the client, not by this package. Open the Client log tab.'));
 					} else {
 						let dev_mtu = trim(readfile(dev_sys + '/mtu') ?? '');
 						push(checks, check('kernel', 'Tunnel device', 'ok',
@@ -681,7 +681,7 @@ return {
 							push(checks, check('kernel', 'Carrier state', 'ok', 'link up', ''));
 						else
 							push(checks, check('kernel', 'Carrier state', 'warn', 'link down',
-								'The device exists but the tunnel is not established yet; that is on the client, not the routing. See the client log.'));
+								'The device exists but the tunnel is not established yet; that is on the client, not the routing. Open the Client log tab.'));
 					}
 
 					if (rs.rule)

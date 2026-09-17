@@ -33,7 +33,7 @@ packages/
   luci-app-trusttunnel/       The LuCI app package (feed-style root/ tree)
     Makefile                  OpenWrt package metadata
     htdocs/luci-static/resources/view/trusttunnel/
-      settings.js status.js diagnostics.js   LuCI client-side views
+      settings.js status.js log.js diagnostics.js   LuCI client-side views
     root/etc/config/trusttunnel              Default UCI config
     root/etc/init.d/trusttunnel              procd service script
     root/etc/uci-defaults/40-luci-trusttunnel  First-boot setup
@@ -220,9 +220,13 @@ file compiles under the pinned ucode.
 - `status.js` — verdict banner, facts (state/mode/server/proxy address),
   Start/Stop/Restart buttons, a rules preview for the assigned profile
   (or the legacy `domains.direct` list without one) that checks each
-  effective rule via `check_domain`, client log; polls every 10s. The
-  verdict is mode-aware: the "working" gate is `device_up` in tun mode
-  and `listener_up` in proxy mode.
+  effective rule via `check_domain`; polls every 10s. The verdict is
+  mode-aware: the "working" gate is `device_up` in tun mode and
+  `listener_up` in proxy mode.
+- `log.js` — a tail of the system-log lines written by the client and
+  the service (the `log` RPC), fetched during `load()` so the first
+  paint already shows it, then refreshed in place by a 10 s poll; the
+  status verdicts and the backend diagnose hints point users here.
 - `settings.js` — a single tabbed `form.Map` whose sections become tabs
   (General, Server, Proxy, Routing profiles, Advanced, Versions), plus
   the Import… modal that calls `import_config` and applies results to

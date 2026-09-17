@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Runtime test for the LuCI views: executes status.js, settings.js and
-// diagnostics.js against mocks that replicate the CURRENT LuCI runtime
+// Runtime test for the LuCI views: executes status.js, log.js, settings.js
+// and diagnostics.js against mocks that replicate the CURRENT LuCI runtime
 // contracts, and asserts the rendered output.
 //
 // Why this exists: the views were written against the pre-rewrite LuCI
@@ -78,12 +78,18 @@ function E() {
     let attr = arguments[1];
     let data = arguments[2];               // ONLY the third argument!
     // Real DOM.create() fallback: a non-object (or array) second argument
-    // is the data, not attributes — the views rely on it (E('h3', 'Now')).
+    // is the data, not attributes — the views rely on it (E('h3', 'Client log')).
     if (!(attr instanceof Object) || Array.isArray(attr)) {
         data = attr;
         attr = null;
     }
     const node = { tag: html, attrs: attr || {}, children: [], addEventListener: function () {} };
+    // Real DOM: assigning textContent replaces the children with a text
+    // node — the log view fills its <pre> that way.
+    Object.defineProperty(node, 'textContent', {
+        get: function () { return this.children.join(''); },
+        set: function (v) { this.children = [ String(v) ]; }
+    });
     if (data !== undefined && data !== null)
         append(node, data);
     return node;
@@ -210,6 +216,10 @@ form.Map.prototype.render = function () {
 };
 
 // --- rpc --------------------------------------------------------------------
+// The log lines are mutable so the log view test can prove the poll
+// refreshes the tail in place.
+let logLines = [ 'line one', 'line two' ];
+
 const canned = {
     status: function () {
         return {
@@ -224,7 +234,9 @@ const canned = {
         };
     },
     service: function () { return { code: 0 }; },
-    log: function () { return { lines: ['line one', 'line two'] }; },
+    // Mutable on purpose: the log view test changes the lines between
+    // renders to prove the poll refreshes the tail in place.
+    log: function () { return { lines: logLines.slice() }; },
     versions: function () {
         return { package: '1.0.20-r1', client_package: '1.0.49-r1', client: '1.0.49' };
     },
@@ -374,19 +386,18 @@ async function main() {
         };
         dump(statusTree, 0);
     }
-    ok(hasText(statusTree, 'Client log'), 'status: client log section present');
-    // The log is fetched over RPC on the first poll tick, so the initial
-    // render shows a spinner in its place.
-    ok(hasText(statusTree, 'Loading'), 'status: the client log shows a loading indicator before the first fetch');
+    ok(hasText(statusTree, 'Current state'), 'status: the facts section has a Current state heading');
+    // The client log is its own view now (log.js); the status page only
+    // polls the verdict and the facts.
+    ok(!hasText(statusTree, 'Client log'), 'status: the client log moved to its own view');
     // The verdict and facts boxes render their content immediately
     // (E('div', {}, node) passes the node as a child — the bare
-    // two-argument form treats it as attributes), and the polls refresh
+    // two-argument form treats it as attributes), and the poll refreshes
     // them in place. Run a poll cycle and assert the rendered facts,
     // exactly like the live page.
     for (const task of pollTasks)
         await task();
     await Promise.resolve();
-    ok(!hasText(statusTree, 'Loading'), 'status: the loading indicator is gone once the log arrives');
     ok(hasText(statusTree, 'State'), 'status: facts table has a State row');
     ok(hasText(statusTree, 'working'), 'status: State row says working');
     ok(hasText(statusTree, 'Server'), 'status: facts table has a Server row');
@@ -430,6 +441,29 @@ async function main() {
         'status: legacy preview explains the full-tunnel mode');
     ok(await waitText(legacyBox, 'legacy.example'),
         'status: legacy preview lists the do-not-bypass rules');
+
+    // ===== log.js =====
+    console.log('== log.js');
+    const logView = loadView('log.js');
+    const logData = await logView.load();
+    const logTasksBefore = pollTasks.length;
+    const logTree = logView.render(logData);
+    ok(hasText(logTree, 'Client log'), 'log: section heading present');
+    // The tail is fetched during load(), so the first paint already
+    // shows the log — no spinner state on a page whose whole purpose is
+    // the log.
+    ok(hasText(logTree, 'line one') && hasText(logTree, 'line two'),
+        'log: the tail renders on the first paint');
+    ok(!hasText(logTree, 'Loading'), 'log: no loading indicator on first paint');
+    // The poll refreshes the text in place.
+    const logTasks = pollTasks.slice(logTasksBefore);
+    logLines = [ 'line three', 'line four' ];
+    for (const task of logTasks)
+        await task();
+    await Promise.resolve();
+    ok(hasText(logTree, 'line three') && hasText(logTree, 'line four'),
+        'log: the poll refreshes the tail in place');
+    ok(!hasText(logTree, 'line one'), 'log: the refreshed content replaced the old lines');
 
     // ===== settings.js =====
     console.log('== settings.js');

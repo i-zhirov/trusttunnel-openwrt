@@ -345,8 +345,9 @@ an IP address, an `IP:port` pair, or a CIDR range.
 
 ## Diagnostics
 
-Two of the three pages under **Services → TrustTunnel** are described
-here: Status and Diagnostics (Settings is covered under Configuration).
+Three of the four pages under **Services → TrustTunnel** are described
+here: Status, Client log and Diagnostics (Settings is covered under
+Configuration).
 
 ### Status page
 
@@ -354,14 +355,20 @@ here: Status and Diagnostics (Settings is covered under Configuration).
   the service is enabled but not running; the service runs but the
   tunnel (or, in proxy mode, the SOCKS listener) is not up yet
   ("connecting"); or the tunnel works — with the assigned profile named.
-- **Now**: a State row ("working" only when everything is), a Mode row —
-  the assigned profile and which half of its rules goes through the
-  tunnel, or "Everything through VPN" without a profile — the server
-  host name, and in proxy mode the listener address. Start / Stop /
-  Restart buttons. A **Preview rules** button shows how each rule of the
-  assigned profile is treated right now — or the legacy "do not bypass"
-  list when no profile is assigned. The state facts and the client-log
-  tail refresh every ten seconds.
+- **Current state**: a State row ("working" only when everything is), a
+  Mode row — the assigned profile and which half of its rules goes
+  through the tunnel, or "Everything through VPN" without a profile —
+  the server host name, and in proxy mode the listener address. Start /
+  Stop / Restart buttons. A **Preview rules** button shows how each rule
+  of the assigned profile is treated right now — or the legacy "do not
+  bypass" list when no profile is assigned. The state facts refresh
+  every ten seconds.
+
+### Client log page
+
+A tail of the system-log lines written by the client and the service,
+refreshed every ten seconds. The status verdicts point here when
+something is wrong.
 
 ### Diagnostics page
 
