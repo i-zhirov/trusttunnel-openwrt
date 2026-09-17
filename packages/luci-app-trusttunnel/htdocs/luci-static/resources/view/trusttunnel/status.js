@@ -21,13 +21,6 @@ var callService = rpc.declare({
 	expect: {}
 });
 
-var callLog = rpc.declare({
-	object: 'luci.trusttunnel',
-	method: 'log',
-	params: [ 'lines' ],
-	expect: {}
-});
-
 var callCheckDomain = rpc.declare({
 	object: 'luci.trusttunnel',
 	method: 'check_domain',
@@ -82,7 +75,7 @@ return view.extend({
 				return {
 					level: 'danger',
 					head: _('The service is not running'),
-					detail: _('Press Start and read the client log below.')
+					detail: _('Press Start and open the Client log tab.')
 				};
 
 			return {
@@ -98,14 +91,14 @@ return view.extend({
 			return {
 				level: 'warning',
 				head: host ? _('Connecting to %s').format(host) : _('Connecting to the server'),
-				detail: _('The client is running but the SOCKS listener is not up yet. If this persists, the client log below says why.')
+				detail: _('The client is running but the SOCKS listener is not up yet. If this persists, open the Client log tab.')
 			};
 
 		if (st.mode !== 'proxy' && !st.device_up)
 			return {
 				level: 'warning',
 				head: host ? _('Connecting to %s').format(host) : _('Connecting to the server'),
-				detail: _('The client is running but the tunnel is not established yet. If this persists, the client log below says why.')
+				detail: _('The client is running but the tunnel is not established yet. If this persists, open the Client log tab.')
 			};
 
 		if (st.routing_profile && st.routing_mode === 'bypass')
@@ -204,7 +197,7 @@ return view.extend({
 			ui.hideModal();
 
 			if (res.not_running)
-				ui.addNotification(null, E('p', _('The service did not start. The client log below says why.')), 'warning');
+				ui.addNotification(null, E('p', _('The service did not start. Open the Client log tab to see why.')), 'warning');
 			else if (res.code !== 0)
 				ui.addNotification(null, E('pre', res.output || _('Command failed')), 'warning');
 			else
@@ -336,16 +329,8 @@ return view.extend({
 		var bannerBox = E('div', {}, this.renderBanner(st));
 		var factRows = E('div', {}, this.renderFactRows(st));
 
-		// The first log fetch only runs on the first poll tick and
-		// logread over RPC takes a while, so show a spinner in the log
-		// section until the first response lands. Later polls only
-		// refresh the text — no spinner flash on every 10 s tick.
-		var logBox = E('pre', { 'style': 'max-height:22em;overflow:auto;margin:0' });
-		var logArea = E('div', {}, E('p', { 'class': 'spinning' }, _('Loading…')));
-		var logReady = false;
-
-		// The status and the client log are polled on the same cadence;
-		// the first log response swaps the spinner for the real box.
+		// The status box is polled in place; the log moved to its own
+		// view (trusttunnel/log.js), which runs its own poll.
 		var refreshStatus = function() {
 			return callStatus().then(function(snap) {
 				me._lastStatus = snap;
@@ -353,27 +338,8 @@ return view.extend({
 				dom.content(factRows, me.renderFactRows(snap));
 			});
 		};
-		var refreshLog = function() {
-			return callLog(80).then(function(entry) {
-				logBox.textContent = (entry.lines || []).join('\n');
-
-				if (!logReady) {
-					logReady = true;
-					dom.content(logArea, logBox);
-				}
-			}).catch(function() {
-				// A failed first fetch must not leave the spinner
-				// spinning forever: swap in the empty box, the next
-				// poll retries.
-				if (!logReady) {
-					logReady = true;
-					dom.content(logArea, logBox);
-				}
-			});
-		};
 
 		poll.add(refreshStatus, 10);
-		poll.add(refreshLog, 10);
 
 		// The three service actions are declared as data and turned into
 		// buttons here, so the row stays a single place to extend.
@@ -401,7 +367,7 @@ return view.extend({
 				E('div', controlRow)
 			]),
 			E('div', { 'class': 'cbi-section' }, [
-				E('h3', _('Now')),
+				E('h3', _('Current state')),
 				factRows,
 				E('div', { 'style': 'margin-top:0.75em' }, [
 					E('button', {
@@ -409,10 +375,6 @@ return view.extend({
 						'click': function(ev) { me.handlePreview(me._lastStatus); }
 					}, _('Preview rules'))
 				])
-			]),
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', _('Client log')),
-				logArea
 			])
 		]);
 	}

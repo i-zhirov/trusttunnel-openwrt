@@ -2,8 +2,8 @@
 
 // Status view (status.js): verdict banner for each status shape, facts
 // table, the Start/Stop/Restart actions, the rule preview modal for the
-// effective profile (and the legacy do-not-bypass list), and the two 10 s
-// polls.
+// effective profile (and the legacy do-not-bypass list), and the 10 s
+// status poll. (The client log lives on its own view: log.spec.js.)
 
 const { test, expect } = require('@playwright/test');
 const {
@@ -132,7 +132,7 @@ test('service failure surfaces a warning notification', async ({ page }) => {
 
 	await button(page, 'Enable').click();
 	await expect(page.locator('#maincontent .alert-message.warning')).toContainText(
-		'The service did not start. The client log below says why.');
+		'The service did not start. Open the Client log tab to see why.');
 });
 
 test('Preview rules checks the assigned profile rule by rule', async ({ page }) => {
@@ -187,14 +187,13 @@ test('Preview rules without a profile shows the do-not-bypass list', async ({ pa
 	await expect(modal).toContainText('legacy.example');
 });
 
-test('the 10 s polls refresh the verdict and fetch the client log', async ({ page }) => {
+test('the 10 s poll refreshes the verdict in place', async ({ page }) => {
 	await page.clock.install();
 	await openView(page, 'status', { clock: true });
 
 	// The initial render does one status call (from load()). Registering
 	// the first poll callback restarts Poll with an immediate tick-0 step,
-	// so the status poll fires once right away — but the log callback is
-	// only queued after that step, so it waits for tick 10.
+	// so the status poll fires once right away.
 	const before = (await framesFor(page, 'luci.trusttunnel', 'status')).length;
 	expect(before).toBe(2);
 
@@ -202,34 +201,11 @@ test('the 10 s polls refresh the verdict and fetch the client log', async ({ pag
 	// .finally) before fast-forwarding, or tick 10 will skip it.
 	await page.waitForTimeout(300);
 
-	// 11 s of interval steps reach tick 10, firing both callbacks again.
+	// 11 s of interval steps reach tick 10, firing the callback again.
 	// runFor (not fastForward) also fires the intermediate rAFs, which the
-	// RPC batch flush depends on.
+	// RPC batch flush depends on. The status page no longer fetches the
+	// client log — that is the log view's poll (log.spec.js).
 	await page.clock.runFor(11500);
 	await waitForFrames(page, 'luci.trusttunnel', 'status', before + 1);
-	await waitForFrames(page, 'luci.trusttunnel', 'log', 1);
-
-	const logFrames = await framesFor(page, 'luci.trusttunnel', 'log');
-	expect(logFrames[0].args.lines).toBe(80);
-
-	await expect(page.locator('#view pre')).toContainText('client started');
-});
-
-test('the client log shows a loading indicator until the first fetch', async ({ page }) => {
-	await page.clock.install();
-	await openView(page, 'status', { clock: true });
-
-	// The first log fetch only fires at poll tick 10, so right after the
-	// initial render the log section shows a spinner, not the log box.
-	await expect(page.locator('#view .spinning')).toContainText('Loading');
-	await expect(page.locator('#view pre')).toHaveCount(0);
-
-	// Tick past 10 s: the first fetch replaces the spinner with the box
-	// and later polls only refresh the text.
-	await page.waitForTimeout(300);
-	await page.clock.runFor(11500);
-	await waitForFrames(page, 'luci.trusttunnel', 'log', 1);
-
-	await expect(page.locator('#view .spinning')).toHaveCount(0);
-	await expect(page.locator('#view pre')).toContainText('client started');
+	expect((await framesFor(page, 'luci.trusttunnel', 'log')).length).toBe(0);
 });

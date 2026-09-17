@@ -8,10 +8,10 @@
 
 const { expect } = require('@playwright/test');
 
-const VIEWS = [ 'status', 'settings', 'diagnostics' ];
+const VIEWS = [ 'status', 'settings', 'diagnostics', 'log' ];
 const VIEW_URL = view => '/cgi-bin/luci/admin/services/trusttunnel/' + view;
 
-// All three views render a .cbi-map root after their load()/render() cycle.
+// All views render a .cbi-map root after their load()/render() cycle.
 // With a fake clock installed (page.clock.install()), the rAF-batched RPC
 // flush needs a small time advance before the view can render; 100 ms is
 // far below the 1 s poll step, so no poll callback fires during open.
