@@ -8,7 +8,7 @@ Guidance for AI agents and human contributors working in this repository.
 set for the [TrustTunnel](https://github.com/TrustTunnel/TrustTunnel) client:
 
 - `luci-app-trusttunnel` — a noarch LuCI application: a procd service, a
-  UCI-backed config, an rpcd ucode backend, three LuCI views, plus
+  UCI-backed config, an rpcd ucode backend, four LuCI views, plus
   firewall/routing integration.
 - `trusttunnel-client` — a per-architecture packaging of the vendor's
   prebuilt, statically-linked client binaries into `/opt/trusttunnel_client`.
@@ -61,6 +61,38 @@ There is no `docs/` directory; user documentation lives in `README.md` and
 is tracked in the root on purpose (see `.gitignore` comment). The private
 halves of the signing keys are GitHub secrets, never committed.
 
+## Router-side scripts (`install.sh` / `uninstall.sh`)
+
+The installer: probes the environment (OpenWrt release, CPU family via
+`uname -m`, package manager) and refuses unsupported hardware before
+anything is changed; points the package manager at the signed
+repositories — apk: `/etc/apk/repositories.d/trusttunnel.list` (the
+`packages.adb` index URL) plus `/etc/apk/keys/trusttunnel.pub`; opkg: a
+`src/gz trusttunnel` line in `/etc/opkg/customfeeds.conf` plus the feed
+key under both the stable name and the usign fingerprint in
+`/etc/opkg/keys/`; installs `kmod-tun ip-full nftables curl ca-bundle`
+and then `luci-app-trusttunnel` (pulling `trusttunnel-client` as a
+dependency); restarts `rpcd`; runs `/etc/uci-defaults/40-luci-trusttunnel`
+immediately (idempotent, so the boot-time run changes nothing); and
+restores the previous service state — a first install leaves the service
+disabled. Re-running it updates the packages, the client binary and the
+signing keys; `/etc/config/trusttunnel` is left alone (conffile).
+
+The uninstaller: halts and disables the service; removes both packages in
+one call (for opkg the dependents must come first in the list); tears down
+the repository configuration and the signing keys; deletes
+`/opt/trusttunnel_client`, `/usr/share/trusttunnel`,
+`/var/cache/trusttunnel` and `/var/etc/trusttunnel`; cleans the leftovers
+of earlier package versions (the stored lists, the `update_lists` cron
+line, any leftover dnsmasq include); prompts for the firewall zone
+(default: remove) and the settings file (default: keep — a reinstall
+keeps it); restarts `rpcd` and wipes the LuCI caches; and checks the
+kernel for leftover routing state (the nft table, the rule for table 880,
+routes in table 880) — anything still present means the service did not
+stop cleanly, and a reboot will clear it. Flags: `-y` answers every
+prompt with yes, `-c` keeps `/etc/config/trusttunnel` unprompted. Shared
+dependencies stay installed on purpose.
+
 ## Core architecture: the data flow
 
 Everything on the router is driven by one UCI config, one derived TSV file,
@@ -69,7 +101,7 @@ one generated client config, and one routing helper. The chain is:
 ```
 /etc/config/trusttunnel            (UCI: main, endpoint, network,
         |                               routing_profile*, domains)
-        | uci-export                (dumps 26 fixed keys to TSV)
+        | uci-export                (dumps 30 fixed keys to TSV)
         v
 /var/etc/trusttunnel/settings.tsv  (the "records"; consumed everywhere)
         | records.sh                (sourced accessor library: tt_get,
@@ -261,7 +293,7 @@ file compiles under the pinned ucode.
 
 - `PKG_VERSION` comes from `git describe --tags --abbrev=0` (tag `vX.Y.Z`
   → version `X.Y.Z`), falling back to the last released version (currently
-  `1.0.20`). The fallback must track the latest release — the release
+  `1.0.26`). The fallback must track the latest release — the release
   workflow fails a tag build whose artifact does not carry the tag.
 - `LUCI_DEPENDS:=+trusttunnel-client +luci-base +ip-full +nftables +curl
   +ucode-mod-math`. **Do not add `kmod-tun` or `ca-bundle` here**: they
@@ -324,7 +356,7 @@ absent, so the plain suite runs anywhere.
   sed-rewrites the script's hardcoded paths into a scratch tree, stubs
   init/routing/logger, and covers filters | guards | attach | invariants.
 - `tests/test_views_runtime.sh` + `tests/views_runtime.js` — executes the
-  three views against mocks that replicate the CURRENT LuCI runtime
+  four views against mocks that replicate the CURRENT LuCI runtime
   contracts (`uci.load()` resolving with the package-name list, no plain
   `form.Section`, `E()` reading only `arguments[2]`) and asserts the
   rendered output. Needs node (skips, exit 77, without it). This is the
@@ -583,7 +615,7 @@ package managers rely on. No branch ever holds packages.
   and backend strings shown in the Diagnostics view go through the
   `DIAG_TEXT` map in `diagnostics.js`. The Russian translations are
   parked in the separate translations repository for later
-  reintroduction (see README, Localisation).
+  reintroduction.
 - **Hardcoded paths** (keep consistent): `/etc/config/trusttunnel`,
   `/etc/init.d/trusttunnel`, `/opt/trusttunnel_client`,
   `/usr/libexec/trusttunnel/{uci-export,gen-config,routing,records.sh}`,
