@@ -102,10 +102,11 @@ tabs:
 
 - **General**: a read-only service line, the **operation mode** switch
   (TUN routes the whole LAN; Proxy runs a SOCKS5 listener instead), the
-  service switch ("start on boot") — the service runs only while it is
-  on — the log level, and the routing-profile selector that assigns the
-  profile to the server. After Save & Apply, start the service with the
-  Start button on the Status page.
+  service switch ("start on boot") — the service starts at boot only
+  while it is on; the Start button on the Status page runs it on demand
+  even while it is off — the log level, and the routing-profile selector
+  that assigns the profile to the server. After Save & Apply, start the
+  service with the Start button on the Status page.
 - **Server**: the endpoint the client dials, split into **Connection**
   and **Security** inner tabs. The **Import…** button takes what your
   server produces — the text of a config file, or a `tt://` link — and
@@ -301,9 +302,12 @@ untouched.
   (`logread -e trusttunnel`). A missing `ca-bundle` refuses the start
   unless a certificate is pinned or verification is skipped; a missing
   `/opt/trusttunnel_client/trusttunnel_client` means the client package is
-  not installed — run install.sh. The service also refuses to start while
-  `main.enabled` is off: the "start on boot" switch is the service switch,
-  not only a boot preference.
+  not installed — run install.sh. The automatic starts (boot, WAN up, a
+  config reload) refuse while `main.enabled` is off: the "start on boot"
+  switch is the service switch, not only a boot preference. The Start
+  button on the Status page is an explicit start — it runs the tunnel on
+  demand even while the switch is off, and the tunnel stays off at the
+  next boot.
 - **Handshakes fail on a freshly flashed router.** The client validates
   the server certificate against the wall clock; the service waits up to
   30 seconds for the clock to catch up and logs a warning when it stays
@@ -400,7 +404,7 @@ the service starts or settings are applied — they must not be edited.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `enabled` | `0` | The service switch: the service starts at boot when it is on, and a start is refused while it is off |
+| `enabled` | `0` | The service switch: the service starts at boot when it is on. An explicit Start from the Status page runs it even while it is off — but it stays off at the next boot, and the automatic starts (boot, WAN up, config reload) are still refused |
 | `mode` | `tun` | The operation mode: `tun` routes the whole LAN through the client automatically; `proxy` runs a SOCKS5 listener instead (see the `proxy` section) |
 | `log_level` | `info` | `info`, `debug` or `trace`; the last two are noisy, leave them on only while investigating something |
 

@@ -187,11 +187,14 @@ Subcommands: `dump | up | attach | reattach | detach | down | status`.
 
 procd service, `USE_PROCD=1`, `START=95`, `STOP=10`. Notable behaviors:
 
-- `start_service` checks `main.enabled`, the client binary, the trust
-  store, regenerates records + config, waits for a default route and for
-  the clock to catch up, runs `routing up` (tun mode only), then starts
-  the client with `procd` and attaches an already-existing tun device
-  (tun mode only).
+- `start_service` checks `main.enabled` — the gate applies to the
+  automatic starts only: the rpcd backend's explicit `start`/`restart`
+  (the Status page buttons) sets `TT_START_NOW=1`, which bypasses it, so
+  the tunnel runs on demand while "start on boot" is off (and stays off
+  at the next boot). Then the client binary, the trust store, records +
+  config regeneration, a wait for a default route and for the clock to
+  catch up, `routing up` (tun mode only), the client with `procd` and an
+  attach of an already-existing tun device (tun mode only).
 - `reload_service` → `apply_settings`: classifies the diff between the
   current records and the new export (`changed_keys` →
   `classify_change`), producing `noop | reload | restart | restart_full`,
