@@ -294,10 +294,12 @@ file compiles under the pinned ucode.
 
 ### `luci-app-trusttunnel/Makefile`
 
-- `PKG_VERSION` comes from `git describe --tags --abbrev=0` (tag `vX.Y.Z`
-  → version `X.Y.Z`), falling back to the last released version (currently
-  `1.0.26`). The fallback must track the latest release — the release
-  workflow fails a tag build whose artifact does not carry the tag.
+- `PKG_VERSION` is a plain constant in the Makefile — the version is set
+  by the release PR itself, not derived from a git tag (the release
+  workflow fails a build whose artifact does not carry `PKG_VERSION`,
+  and its version gate refuses a version not strictly higher than the
+  last released one). Keep it a literal `PKG_VERSION:=X.Y.Z` assignment:
+  the release workflow reads it with `sed`.
 - `LUCI_DEPENDS:=+trusttunnel-client +luci-base +ip-full +nftables +curl
   +ucode-mod-math`. **Do not add `kmod-tun` or `ca-bundle` here**: they
   belong on `trusttunnel-client`'s own DEPENDS and arrive transitively.
@@ -476,8 +478,9 @@ Every step is a contract gate; the tree must pass all of them. Locally
 reproducible equivalents:
 
 - Executable bits of shipped scripts must be `100755` in the index.
-- Tag pushes must not regress the release: new tag's commit must be newer
-  than the previous tag's.
+- Release versioning is PR-gated: the release pipeline's version gate
+  fails a packages/** PR or main push whose app `PKG_VERSION` is not
+  strictly higher than the last released version.
 - `sh tests/run.sh` (includes the node-gated views runtime test, which
   skips without node).
 - `docker build -q -t tt-ucode-gate -f tests/backend/Dockerfile
@@ -514,8 +517,13 @@ same harness against the release's own artifacts.
 
 ## Release pipeline (`.github/workflows/release.yml`)
 
-Triggered by `v*` tag pushes (also builds a GitHub release) and
-`workflow_dispatch` (repos + site only; plain branch CI never publishes).
+Releases are PR-based: the app `PKG_VERSION` in the Makefile IS the
+version, and a release is any PR that bumps it. The workflow runs a
+preview on `packages/**` pull requests — the version gate, the SDK
+builds and the integration verification, never publishing (no secrets,
+so fork PRs are covered) — and publishes on main pushes and
+`workflow_dispatch`: the merge creates the `vX.Y.Z` tag and the GitHub
+release, the repositories and the site.
 
 - `build` — `luci-app-trusttunnel` via `openwrt/gh-action-sdk@v7` on
   25.12.5 (apk) and 22.03.7 (ipk). The SDK is pinned with `VERSION_PATH`
@@ -526,7 +534,8 @@ Triggered by `v*` tag pushes (also builds a GitHub release) and
   `feeds.conf.default` (update them together with the SDK bump).
   `FEED_DIR` must be an absolute path and must contain `.git` (luci.mk
   findrev derives the version from it). `fail-fast: false`; artifact file
-  names must match the tag.
+  names must match the Makefile's `PKG_VERSION` (the assertion runs on
+  every event, PR preview included).
 - `build-client` — the client package per subtarget arch (the full matrix
   is in the workflow; the ipk list is the apk list minus
   `aarch64_cortex-a76`). apk files get an `-<arch>` suffix and an
@@ -576,7 +585,9 @@ Triggered by `v*` tag pushes (also builds a GitHub release) and
   - verification: installs the built repos into fresh rootfs containers
     exactly as `install.sh` sets them up (25.12.0 apk; 23.05.6 and 24.10.8
     opkg) and runs the client `--version`.
-  - GitHub release upload (tag pushes only, single writer).
+  - GitHub release upload (`gh release create`, once per released
+    version, from the merge run; re-publishes skip it, dispatch runs
+    never create releases, single writer).
   - GitHub Pages site assembly: `repo-site/` templates + generated index
     pages — the releases index and the per-tree pages (each tree page
     lists its architectures, linking straight to the feed pages), the
@@ -635,10 +646,12 @@ package managers rely on. No branch ever holds packages.
 - **Keys**: `key-build.pub` / `opkg-key.pub` are public; never commit
   private keys. Repo signing keys rotate — run `install.sh` again on a
   router to refresh them.
-- **Version discipline**: `PKG_VERSION` fallback in the app Makefile must
-  equal the last released version; tags drive release contents; the CI
-  rejects tags older than the previous tag and packages that do not match
-  the tag.
+- **Version discipline**: the app Makefile's `PKG_VERSION` is the single
+  source of truth for release contents; every release PR must bump it
+  strictly above the last released version (the release pipeline's
+  version gate enforces this on packages/** PRs and main pushes), and
+  the pipeline fails a build whose artifact does not carry `PKG_VERSION`.
+  Tags are outputs of the pipeline, never inputs.
 - **Do not rebuild goldens casually**: backend behavior changes require
   updating the golden set in `tests/backend/goldens/` and its `healthy/`
   and proxy-mode variants, and the `driver.uc` normalizations must stay
@@ -656,7 +669,8 @@ package managers rely on. No branch ever holds packages.
 - **Verify a backend change**: `sh tests/backend/test_backend_contract.sh`
   (build the `tt-ucode-gate` image first if missing), plus the ucode
   import/compile gates from ci.yml.
-- **Release**: bump client vendor version/hashes if needed, ensure the
-  Makefile fallback equals the previous release, tag `vX.Y.Z` (tag must
-  point to a commit newer than the previous tag), push; the release
-  workflow builds, signs, verifies and publishes.
+- **Release**: bump `PKG_VERSION` in the app Makefile (strictly above
+  the last release), bump the client vendor version/hashes if needed,
+  open a PR — its preview runs the version gate, the SDK builds and the
+  integration verification; merging it builds, signs, verifies, creates
+  the `vX.Y.Z` tag + GitHub release and publishes.

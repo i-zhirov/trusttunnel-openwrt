@@ -3,11 +3,12 @@
 # The packages are built from THIS tree on purpose: the suite verifies the
 # tree under test, so the packages it installs must come from the same
 # commit the PR proposes — the published release artifacts describe the
-# last tag and would silently test stale code (a released package
+# last release and would silently test stale code (a released package
 # predating a fix fails the tunnel assertions for no reason). The LuCI
 # app is a noarch packaging of this tree's own root/ files anyway, so
-# there is no separate "pre-built binary" to reuse; the release workflow
-# also runs only on tags, so PR CI has nothing to consume from it.
+# there is no separate "pre-built binary" to reuse; the release
+# pipeline's own preview also runs on packages/** PRs, but this workflow
+# covers every PR, not just release ones.
 #
 # One x86-64 build per package manager (apk on 25.12, ipk on 22.03) feeds
 # the harness for both variants: the real install.sh inside a dockerized
