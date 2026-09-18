@@ -91,7 +91,12 @@ start_service() {
 	config_load trusttunnel
 	config_get_bool enabled main enabled 0
 	# shellcheck disable=SC2154 # assigned by config_get_bool above
-	if [ "$enabled" != "1" ]; then
+	# main.enabled means "start on boot": it gates the automatic starts
+	# (boot, the wan-up trigger, a config reload), but an EXPLICIT start
+	# from the Status page (TT_START_NOW, set by the rpcd backend's
+	# service method) must run the tunnel now even while the service is
+	# disabled for boot.
+	if [ "$enabled" != "1" ] && [ "${TT_START_NOW:-0}" != "1" ]; then
 		logger -t trusttunnel "service is disabled in the configuration; not starting"
 		teardown_hanging_routing
 		return 0

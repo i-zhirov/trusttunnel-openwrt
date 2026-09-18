@@ -363,7 +363,17 @@ return {
 				    action != 'restart' && action != 'reload')
 					return { error: 'unknown action' };
 
-				let r = run('/etc/init.d/trusttunnel ' + action);
+				// An explicit start (or restart) from the Status page
+				// runs the tunnel NOW even while main.enabled is off:
+				// the switch gates the automatic starts only. The marker
+				// env var is how start_service tells an explicit request
+				// apart from the boot, the wan-up trigger and the
+				// config-reload paths.
+				let cmd = (action == 'start' || action == 'restart')
+					? 'TT_START_NOW=1 /etc/init.d/trusttunnel ' + action
+					: '/etc/init.d/trusttunnel ' + action;
+
+				let r = run(cmd);
 
 				// A start is only a start once the service answers
 				// "running": procd forks the client asynchronously, so the
