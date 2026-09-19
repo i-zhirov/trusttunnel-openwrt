@@ -581,9 +581,15 @@ async function main() {
     eq(diagTree.tag, 'div', 'diagnostics: root is a div');
     eq(diagTree.children.length, 5, 'diagnostics: root has h2 + 4 sections');
     const diagButtons = findButtons(diagTree).map(b => String(b.children[0]));
-    for (const label of ['Re-run checks', 'Run checks', 'Ping server', 'Compare addresses'])
+    for (const label of ['Run checks', 'Ping server', 'Compare addresses'])
         ok(diagButtons.indexOf(label) !== -1, 'diagnostics: ' + label + ' button present');
-    // the diagnose call resolves asynchronously; let the microtasks run
+    // the chain runs on demand: rendering alone must not call diagnose
+    ok(hasText(diagTree, 'not run yet'), 'diagnostics: nothing runs until Run checks is pressed');
+    ok(rpcCalls.indexOf('diagnose') === -1, 'diagnostics: no diagnose call on render');
+    // run the chain: the diagnose call resolves asynchronously; let the
+    // microtasks run
+    const diagRunBtn = findButtons(diagTree).find(b => String(b.children[0]) === 'Run checks');
+    await click(diagRunBtn);
     await Promise.resolve();
     await Promise.resolve();
     ok(hasText(diagTree, 'everything checks out'), 'diagnostics: verdict banner renders');

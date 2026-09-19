@@ -418,7 +418,11 @@ return view.extend({
 			handleCheckDomain(domainInput, domainBox);
 		});
 
-		handleDiagnose(diagnoseBox);
+		// The chain walk is slow (it pings and probes) and touches the
+		// network; it runs only when the user presses Run checks. The
+		// 'not run yet' word comes from verdictWord(), the same phrasing
+		// the banner would use for a run that produced no verdict.
+		dom.content(diagnoseBox, E('p', verdictWord('')));
 
 		// Children as an ARRAY: current LuCI's E() (DOM.create) reads only
 		// arguments[2], so variadic children are silently dropped — this
@@ -435,7 +439,7 @@ return view.extend({
 					'click': ui.createHandlerFn(this, function () {
 						handleDiagnose(diagnoseBox);
 					})
-				}, _('Re-run checks')),
+				}, _('Run checks')),
 				' ',
 				E('button', {
 					'class': 'cbi-button cbi-button-neutral',

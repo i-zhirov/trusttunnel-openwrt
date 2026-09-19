@@ -38,8 +38,19 @@ test.beforeEach(async ({ page }) => {
 	await stubReset(page);
 });
 
+test('opening the view does not run the checks', async ({ page }) => {
+	await openView(page, 'diagnostics');
+
+	// The chain runs on demand only: no diagnose frame until the button is
+	// pressed, and the box explains that nothing ran yet.
+	expect(await framesFor(page, 'luci.trusttunnel', 'diagnose')).toHaveLength(0);
+	await expect(page.locator('#view')).toContainText('not run yet');
+});
+
 test('diagnose renders the verdict banner with counts', async ({ page }) => {
 	await openView(page, 'diagnostics');
+
+	await button(page, 'Run checks').click();
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
 	await expect(page.locator('#view .alert-message.danger')).toContainText('there are problems');
@@ -50,6 +61,8 @@ test('diagnose renders the verdict banner with counts', async ({ page }) => {
 
 test('checks are grouped in the fixed order, problems first', async ({ page }) => {
 	await openView(page, 'diagnostics');
+
+	await button(page, 'Run checks').click();
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
 	// The baked diagnose has fails/warns; the passed checks are hidden
@@ -76,6 +89,8 @@ test('checks are grouped in the fixed order, problems first', async ({ page }) =
 
 test('toggle reveals the passed checks', async ({ page }) => {
 	await openView(page, 'diagnostics');
+
+	await button(page, 'Run checks').click();
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
 	await button(page, 'Show the checks that passed').click();
@@ -88,16 +103,20 @@ test('toggle reveals the passed checks', async ({ page }) => {
 test('healthy diagnose shows the warn banner', async ({ page }) => {
 	await stubSet(page, { diagnose: HEALTHY });
 	await openView(page, 'diagnostics');
+
+	await button(page, 'Run checks').click();
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
 	await expect(page.locator('#view .alert-message.warning')).toContainText('works, with remarks');
 });
 
-test('Re-run checks re-runs the diagnose chain', async ({ page }) => {
+test('Run checks re-runs the diagnose chain', async ({ page }) => {
 	await openView(page, 'diagnostics');
+
+	await button(page, 'Run checks').click();
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
-	await button(page, 'Re-run checks').click();
+	await button(page, 'Run checks').click();
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 2);
 });
 
@@ -105,8 +124,9 @@ test('domain check renders the verdict table', async ({ page }) => {
 	await openView(page, 'diagnostics');
 
 	await page.locator('#view input[placeholder="youtube.com"]').fill('telegram.org');
-	// exact:true — "Re-run checks" contains "Run checks" as a substring
-	await page.getByRole('button', { name: 'Run checks', exact: true }).click();
+	// Both the diagnose and the domain section carry a "Run checks"
+	// button, so scope the click to the domain section (the second one).
+	await page.locator('#view .cbi-section').nth(1).getByRole('button', { name: 'Run checks' }).click();
 	await waitForFrames(page, 'luci.trusttunnel', 'check_domain', 1);
 
 	const frames = await framesFor(page, 'luci.trusttunnel', 'check_domain');
