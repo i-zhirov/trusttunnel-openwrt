@@ -33,7 +33,8 @@ packages/
   luci-app-trusttunnel/       The LuCI app package (feed-style root/ tree)
     Makefile                  OpenWrt package metadata
     htdocs/luci-static/resources/view/trusttunnel/
-      settings.js status.js log.js diagnostics.js   LuCI client-side views
+      settings.js status.js log.js diagnostics.js tools.js versions.js
+                                                                        LuCI client-side views
     root/etc/config/trusttunnel              Default UCI config
     root/etc/init.d/trusttunnel              procd service script
     root/etc/uci-defaults/40-luci-trusttunnel  First-boot setup
@@ -263,18 +264,15 @@ file compiles under the pinned ucode.
   paint already shows it, then refreshed in place by a 10 s poll; the
   status verdicts and the backend diagnose hints point users here.
 - `settings.js` — a single tabbed `form.Map` whose sections become tabs
-  (General, Server, Proxy, Routing profiles, Advanced, Versions), plus
-  the Import… modal that calls `import_config` and applies results to
+  (General, Server, Proxy, Routing profiles, Advanced), plus the
+  Import… modal that calls `import_config` and applies results to
   pending UCI (nothing is written until Save & Apply). The endpoint
   section splits into Connection and Security inner tabs
   (`s.tab`/`s.taboption`) — map-level tabs key panes by the UCI section
   type, so two sections of the same type would collide. The General tab
   carries the operation-mode picker (`main.mode`), the Proxy tab the
   SOCKS5 listener settings (address + optional user/pass pair, validated
-  both-or-neither). The Versions tab is a `NamedSection` of the UI-only
-  `about` section type: it carries no UCI options, its DummyValue rows
-  read the `versions` RPC result, and uci-defaults creates the section
-  on installs that predate it. Extra tools: a read-only service line on
+  both-or-neither). Extra tools: a read-only service line on
   General (via the `status` RPC), a Test connection modal on Server
   (`ping`), and a per-profile rule preview (`check_domain`) whose
   verdicts only apply to the assigned profile. The routing profile
@@ -292,6 +290,10 @@ file compiles under the pinned ucode.
 - `tools.js` — the ad-hoc helpers that moved off the Diagnostics page:
   the domain verdict check, the endpoint ping and the tunnel-vs-direct
   address comparison. Each tool runs only on demand.
+- `versions.js` — the Versions tab (moved out of the Settings page): a
+  read-only page listing the installed TrustTunnel package, client
+  package and client binary versions from the `versions` RPC. A missing
+  package shows "not installed", a failed RPC "unavailable".
 
 ## Packages and versioning
 

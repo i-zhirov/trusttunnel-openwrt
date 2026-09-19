@@ -8,7 +8,7 @@
 
 const { expect } = require('@playwright/test');
 
-const VIEWS = [ 'status', 'settings', 'diagnostics', 'tools', 'log' ];
+const VIEWS = [ 'status', 'settings', 'diagnostics', 'tools', 'log', 'versions' ];
 const VIEW_URL = view => '/cgi-bin/luci/admin/services/trusttunnel/' + view;
 
 // All views render a .cbi-map root after their load()/render() cycle.

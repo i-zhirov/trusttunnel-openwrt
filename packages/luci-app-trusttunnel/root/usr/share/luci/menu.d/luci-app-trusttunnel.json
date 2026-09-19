@@ -24,6 +24,11 @@
 		"title": "Client log",
 		"order": 40
 	},
+	"admin/services/trusttunnel/versions": {
+		"action": { "path": "trusttunnel/versions", "type": "view" },
+		"title": "Versions",
+		"order": 45
+	},
 	"admin/services/trusttunnel": {
 		"action": { "type": "firstchild" },
 		"title": "TrustTunnel",

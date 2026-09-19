@@ -18,15 +18,15 @@ test.beforeEach(async ({ page }) => {
 test('renders the tabs in order', async ({ page }) => {
 	await openView(page, 'settings');
 
-	// Six map-level tabs, keyed by the UCI section type...
+	// Five map-level tabs, keyed by the UCI section type (the Versions
+	// tab moved out to its own page)...
 	const tabs = page.locator('#view .cbi-map > .cbi-tabmenu li a');
-	await expect(tabs).toHaveCount(6);
+	await expect(tabs).toHaveCount(5);
 	await expect(tabs.nth(0)).toHaveText('General');
 	await expect(tabs.nth(1)).toHaveText('Server');
 	await expect(tabs.nth(2)).toHaveText('Proxy');
 	await expect(tabs.nth(3)).toHaveText('Routing profiles');
 	await expect(tabs.nth(4)).toHaveText('Advanced');
-	await expect(tabs.nth(5)).toHaveText('Versions');
 
 	// ...and the endpoint section splits into its own inner tabs (map
 	// tabs key panes by section type, so two endpoint sections would
@@ -84,26 +84,6 @@ test('fields render the loaded UCI state', async ({ page }) => {
 		.toHaveText('TUN — route the whole LAN');
 	await expect(page.locator('[id="widget.cbid.trusttunnel.proxy.address"]'))
 		.toHaveValue('127.0.0.1:1080');
-});
-
-test('the Versions tab reports the installed package versions', async ({ page }) => {
-	await openView(page, 'settings');
-
-	// The Versions pane is the UI-only 'about' section (map-level tabs
-	// are keyed by the UCI section type). The values come from the
-	// versions.json golden, served byte-identically to the backend
-	// contract test.
-	await page.locator('#view .cbi-map > .cbi-tabmenu li a', { hasText: 'Versions' }).click();
-	const pane = page.locator('#view .cbi-section[data-tab="about"]');
-	await expect(pane).toHaveAttribute('data-tab-active', 'true');
-
-	await expect(pane.locator('.cbi-value')).toHaveCount(3);
-	await expect(pane).toContainText('TrustTunnel package');
-	await expect(pane).toContainText('1.0.15-r1');
-	await expect(pane).toContainText('Client package');
-	await expect(pane).toContainText('1.0.49-1');
-	await expect(pane).toContainText('Client binary');
-	await expect(pane).toContainText('1.1.5');
 });
 
 test('import applies the parsed fields to the pending save', async ({ page }) => {
