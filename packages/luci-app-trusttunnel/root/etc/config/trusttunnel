@@ -1,7 +1,10 @@
-# The connection to the TrustTunnel server: the client reads these fields
+# The connection to a TrustTunnel server: the client reads these fields
 # from the generated /var/etc/trusttunnel/client.toml, so the option names
-# mirror the server's own configuration schema.
+# mirror the server's own configuration schema. More servers are saved as
+# additional endpoint sections; every one of them carries a unique `name`
+# option, and main.endpoint below selects the ACTIVE one by that name.
 config endpoint 'endpoint'
+	option name 'Default'
 	option hostname ''
 	option username ''
 	option password ''
@@ -17,10 +20,12 @@ config endpoint 'endpoint'
 
 # Service behaviour: whether it starts on boot, its log level and the
 # delivery mode (tun wires kernel routing, proxy runs a SOCKS5 listener).
+# main.endpoint names the ACTIVE server among the endpoint sections.
 config main 'main'
 	option enabled '0'
 	option log_level 'info'
 	option mode 'tun'
+	option endpoint 'Default'
 
 # The kernel wiring for tun mode: the marked table, the fwmark and the
 # killswitch. These options are inert while main.mode is 'proxy'.
@@ -39,8 +44,8 @@ config proxy 'proxy'
 	option username ''
 	option password ''
 
-# Named rule sets; endpoint.routing_profile above assigns the active one
-# by name.
+# Named rule sets; the ACTIVE endpoint's routing_profile option assigns
+# the one in use by name, so each saved server can carry its own profile.
 config routing_profile
 	option name 'Default'
 	option mode 'vpn'

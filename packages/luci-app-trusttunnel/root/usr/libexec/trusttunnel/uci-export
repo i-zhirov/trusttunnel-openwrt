@@ -2,11 +2,17 @@
 # uci-export: dump the trusttunnel UCI config as the records TSV.
 #
 # Every line is "section.option<TAB>value"; list options repeat the key
-# once per value. The emitted key set — 30 keys, fixed order — is the
+# once per value. The emitted key set — 31 keys, fixed order — is the
 # canonical schema the init script's change classifier and the records
 # accessor library consume, so nothing outside it is ever printed:
 # foreign sections or options in the UCI config must not leak into the
 # records.
+#
+# The endpoint sections are repeatable: each saved server is one section,
+# distinguished by its `name` option, and main.endpoint selects the ACTIVE
+# one by that name. Only the ACTIVE server's fields are exported, under
+# the canonical endpoint.* keys — the other servers' records, including
+# their credentials, never reach the TSV or the generated client.toml.
 #
 # Two hard constraints, both behavioral:
 # - "set -u" must NOT be used: /lib/functions.sh reads uninitialized
@@ -45,8 +51,33 @@ _emit_one() {
 	printf '%s\t%s\n' "$_KEY" "$1"
 }
 
+# config_foreach callback: record the endpoint section whose name matches
+# the active server reference (main.endpoint); other sections are skipped.
+# shellcheck disable=SC2317,SC2154
+find_server() {
+	_sec=$1
+	_name=""
+	config_get _name "$_sec" name
+	[ "$_name" = "$server_want" ] || return 0
+	server_sec="$_sec"
+}
+
+# The active server is resolved by NAME through main.endpoint, the same
+# mechanism the assigned routing profile uses below. An empty or stale
+# reference exports no endpoint records at all — the service then refuses
+# to start (gen-config requires the endpoint fields), which is the honest
+# state for a config that names no server. The guard is load-bearing:
+# without it an unnamed endpoint section (empty `name` option) would match
+# the empty reference and leak its fields into the records.
+server_want=$(uci -q get trusttunnel.main.endpoint 2>/dev/null) || server_want=""
+server_sec=""
+if [ -n "$server_want" ]; then
+	config_foreach find_server endpoint
+fi
+
 # config_foreach callback: record the routing_profile section whose name
-# matches the assigned profile; other sections are skipped.
+# matches the ACTIVE server's assigned profile; other sections are
+# skipped.
 # shellcheck disable=SC2317,SC2154
 find_profile() {
 	_sec=$1
@@ -56,28 +87,41 @@ find_profile() {
 	profile_sec="$_sec"
 }
 
-# The assigned profile is resolved by NAME, so an empty or stale reference
-# exports no profile records at all. The guard is load-bearing: without it
-# an unnamed profile section (empty `name` option) would match the empty
-# reference and leak its mode/rules into the records.
-profile_want=$(uci -q get trusttunnel.endpoint.routing_profile 2>/dev/null) || profile_want=""
+# The assigned profile is resolved by NAME from the ACTIVE server's own
+# routing_profile option, so an empty or stale reference exports no
+# profile records at all. The guard is load-bearing: without it an unnamed
+# profile section (empty `name` option) would match the empty reference
+# and leak its mode/rules into the records.
+profile_want=""
+if [ -n "$server_sec" ]; then
+	config_get profile_want "$server_sec" routing_profile
+fi
 profile_sec=""
 if [ -n "$profile_want" ]; then
 	config_foreach find_profile routing_profile
 fi
 
-# schema-keys: routing_profile.name routing_profile.mode routing_profile.vpn_rules routing_profile.bypass_rules
-
 for o in enabled log_level mode; do scalar main "$o"; done
 
-for o in hostname username password protocol anti_dpi post_quantum skip_verification has_ipv6 \
-		custom_sni client_random routing_profile; do
-	scalar endpoint "$o"
-done
+# The ACTIVE server's fields, under the canonical endpoint.* keys. The
+# values are read from the section resolved above — never from the literal
+# "endpoint" name, which is just one of several endpoint sections.
+# schema-keys: endpoint.name endpoint.hostname endpoint.username endpoint.password endpoint.protocol endpoint.anti_dpi endpoint.post_quantum endpoint.skip_verification endpoint.has_ipv6 endpoint.custom_sni endpoint.client_random endpoint.routing_profile endpoint.address endpoint.dns_upstream
+if [ -n "$server_sec" ]; then
+	for o in name hostname username password protocol anti_dpi post_quantum \
+			skip_verification has_ipv6 custom_sni client_random routing_profile; do
+		config_get _val "$server_sec" "$o"
+		[ -n "$_val" ] || continue
+		printf '%s\t%s\n' "endpoint.$o" "$_val"
+	done
 
-listopt endpoint address
-listopt endpoint dns_upstream
+	for o in address dns_upstream; do
+		_KEY="endpoint.$o"
+		config_list_foreach "$server_sec" "$o" _emit_one
+	done
+fi
 
+# schema-keys: routing_profile.name routing_profile.mode routing_profile.vpn_rules routing_profile.bypass_rules
 if [ -n "$profile_sec" ]; then
 	for o in name mode; do
 		config_get _val "$profile_sec" "$o"

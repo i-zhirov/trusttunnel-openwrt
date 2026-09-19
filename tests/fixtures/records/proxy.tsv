@@ -1,5 +1,6 @@
 main.enabled	1
 main.mode	proxy
+endpoint.name	Default
 proxy.address	0.0.0.0:1080
 proxy.username	lanuser
 proxy.password	lanpass
