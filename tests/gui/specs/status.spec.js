@@ -1,13 +1,13 @@
 'use strict';
 
 // Status view (status.js): verdict banner for each status shape, facts
-// table, the Start/Stop/Restart actions, the rule preview modal for the
+// table, the Start/Stop actions, the rule preview modal for the
 // effective profile (and the legacy do-not-bypass list), and the 10 s
 // status poll. (The client log lives on its own view: log.spec.js.)
 
 const { test, expect } = require('@playwright/test');
 const {
-	openView, stubReset, stubSet, framesFor, waitForFrames, installClock, button
+	openView, stubReset, stubSet, framesFor, waitForFrames, installClock, clickButton
 } = require('../helpers');
 
 // The fields the view's verdict()/renderFacts() read.
@@ -106,31 +106,30 @@ test('verdict and facts render immediately, without waiting for the poll', async
 		'Profile Default — VPN, everything except the bypass rules is tunneled');
 });
 
-test('Start/Stop/Restart call the service method with the right action', async ({ page }) => {
+test('Start/Stop call the service method with the right action', async ({ page }) => {
 	await openView(page, 'status');
 
-	await button(page, 'Enable').click();
+	// The restart verb is deliberately not offered: from the UI it is
+	// stop + start, so it would duplicate Start.
+	await expect(page.locator('#view button', { hasText: 'Restart service' })).toHaveCount(0);
+
+	await clickButton(page, 'Start');
 	await waitForFrames(page, 'luci.trusttunnel', 'service', 1);
 	let frames = await framesFor(page, 'luci.trusttunnel', 'service');
 	expect(frames[0].args.action).toBe('start');
 	await expect(page.locator('#maincontent .alert-message')).toContainText('Done');
 
-	await button(page, 'Disable').click();
+	await clickButton(page, 'Stop');
 	await waitForFrames(page, 'luci.trusttunnel', 'service', 2);
 	frames = await framesFor(page, 'luci.trusttunnel', 'service');
 	expect(frames[1].args.action).toBe('stop');
-
-	await button(page, 'Restart service').click();
-	await waitForFrames(page, 'luci.trusttunnel', 'service', 3);
-	frames = await framesFor(page, 'luci.trusttunnel', 'service');
-	expect(frames[2].args.action).toBe('restart');
 });
 
 test('service failure surfaces a warning notification', async ({ page }) => {
 	await stubSet(page, { service: { code: 0, output: 'boom', not_running: true } });
 	await openView(page, 'status');
 
-	await button(page, 'Enable').click();
+	await clickButton(page, 'Start');
 	await expect(page.locator('#maincontent .alert-message.warning')).toContainText(
 		'The service did not start. Open the Client log tab to see why.');
 });
@@ -141,7 +140,7 @@ test('Preview rules checks the assigned profile rule by rule', async ({ page }) 
 	// golden for bank.example verdicts 'direct'.
 	await openView(page, 'status');
 
-	await button(page, 'Preview rules').click();
+	await clickButton(page, 'Preview rules');
 	const modal = page.locator('#modal_overlay .modal');
 	await expect(modal).toContainText('Rule preview — Default');
 	await expect(modal).toContainText(
@@ -174,7 +173,7 @@ test('Preview rules without a profile shows the do-not-bypass list', async ({ pa
 	});
 	await openView(page, 'status');
 
-	await button(page, 'Preview rules').click();
+	await clickButton(page, 'Preview rules');
 	const modal = page.locator('#modal_overlay .modal');
 	await expect(modal).toContainText('Rule preview');
 	await expect(modal).toContainText('No routing profile is assigned');

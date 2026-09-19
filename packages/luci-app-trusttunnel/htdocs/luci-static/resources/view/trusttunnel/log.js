@@ -3,6 +3,7 @@
 'require view';
 'require poll';
 'require rpc';
+'require ui';
 
 var callLog = rpc.declare({
 	object: 'luci.trusttunnel',
@@ -11,7 +12,44 @@ var callLog = rpc.declare({
 	expect: {}
 });
 
+// The on-screen tail is 80 lines; the export fetches the whole ring
+// buffer the system log keeps for the client and the service.
+var EXPORT_LINES = 5000;
+
+// A file name for the export: trusttunnel-client-20260919-105400.log.
+var exportFileName = function() {
+	var d = new Date();
+	var p = function(n) { return (n < 10 ? '0' : '') + n; };
+
+	return 'trusttunnel-client-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
+		'-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()) + '.log';
+};
+
+// Download the exported tail as a text file. The browser keeps the
+// download attribute of the generated anchor, so no server round-trip
+// and no extra backend surface are needed.
+var exportLog = function() {
+	return callLog(EXPORT_LINES).then(function(res) {
+		var text = (res.lines || []).join('\n') + '\n';
+		var url = URL.createObjectURL(new Blob([ text ], { type: 'text/plain' }));
+		var a = E('a', { 'href': url, 'download': exportFileName() });
+
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+		URL.revokeObjectURL(url);
+	}).catch(function(e) {
+		ui.addNotification(null, E('p', e.message || String(e)), 'danger');
+	});
+};
+
 return view.extend({
+	// Nothing to save on this page: without the nulls LuCI renders the
+	// default Save & Apply bar, which would sit here dead.
+	handleSaveApply: null,
+	handleSave: null,
+	handleReset: null,
+
 	// Fetch the tail once during load so the first paint already shows
 	// the log; the poll keeps it fresh afterwards.
 	load: function() {
@@ -36,7 +74,13 @@ return view.extend({
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', _('Client log')),
 				E('p', { 'class': 'cbi-section-descr' }, _('The last lines the client and the service wrote to the system log, refreshed every ten seconds.')),
-				logBox
+				logBox,
+				E('div', { 'style': 'margin-top:0.75em' }, [
+					E('button', {
+						'class': 'cbi-button cbi-button-action',
+						'click': function(ev) { exportLog(); }
+					}, _('Export client logs'))
+				])
 			])
 		]);
 	}

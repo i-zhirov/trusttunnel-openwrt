@@ -35,7 +35,9 @@ const VIEW_DIR = 'packages/luci-app-trusttunnel/htdocs/luci-static/resources/vie
 const BACKEND = 'packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel';
 const ACL = 'packages/luci-app-trusttunnel/root/usr/share/rpcd/acl.d/luci-app-trusttunnel.json';
 const GOLDENS = ['tests/backend/goldens/diagnose.json', 'tests/backend/goldens/healthy/diagnose.json',
-	'tests/backend/goldens/proxy/diagnose.json', 'tests/backend/goldens/proxy-healthy/diagnose.json'];
+	'tests/backend/goldens/proxy/diagnose.json', 'tests/backend/goldens/proxy-healthy/diagnose.json',
+	'tests/backend/goldens/bypass/diagnose.json', 'tests/backend/goldens/bypass-rule/diagnose.json',
+	'tests/backend/goldens/bypass-rule-off/diagnose.json'];
 
 let failures = 0;
 
@@ -155,6 +157,9 @@ const ALLOWLIST = [
 	/^default via .+$/,                                   // 'default via ' + dev
 	/^tunnel .+ vs direct .+$/,                           // 'tunnel ' + tip + ' vs direct ' + dip
 	/^tunnel .+ \(router traffic is tunneled by config\)$/, // 'tunnel ' + tip + ' (router traffic is tunneled by config)' — include_router_traffic=1 marks the plain probe too
+	/^tunnel reaches .+$/,                                // 'tunnel reaches ' + target — bypass-mode reachability probe
+	/^no response from .+ through the tunnel$/,           // 'no response from ' + target + ' through the tunnel'
+	/^The profile sends .+ through the tunnel; a failing probe means the tunnel or the server cannot reach it\. Open the Client log tab\.$/, // the reachability-probe hint, target embedded
 ];
 
 const seen = new Set();

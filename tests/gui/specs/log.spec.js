@@ -7,7 +7,7 @@
 
 const { test, expect } = require('@playwright/test');
 const {
-	openView, stubReset, stubSet, framesFor, waitForFrames
+	openView, stubReset, stubSet, framesFor, waitForFrames, clickButton
 } = require('../helpers');
 
 test.beforeEach(async ({ page }) => {
@@ -50,4 +50,28 @@ test('the 10 s poll refreshes the log in place', async ({ page }) => {
 
 	await expect(page.locator('#view pre')).toContainText('second line');
 	await expect(page.locator('#view pre')).toContainText('first line');
+});
+
+test('Export client logs downloads the full tail', async ({ page }) => {
+	await page.clock.install();
+	await stubSet(page, { log: { lines: [ 'first line', 'second line' ] } });
+	await openView(page, 'log', { clock: true });
+
+	// The export fetches the whole ring buffer, not the 80-line
+	// on-screen tail, and saves it as a timestamped text file.
+	const downloadPromise = page.waitForEvent('download');
+	await clickButton(page, 'Export client logs');
+	const download = await downloadPromise;
+
+	expect(download.suggestedFilename()).toMatch(/^trusttunnel-client-\d{8}-\d{6}\.log$/);
+
+	const frames = await framesFor(page, 'luci.trusttunnel', 'log');
+	expect(frames.filter(f => f.args.lines === 5000).length).toBe(1);
+
+	const stream = await download.createReadStream();
+	let text = '';
+	for await (const chunk of stream)
+		text += chunk;
+	expect(text).toContain('first line');
+	expect(text).toContain('second line');
 });

@@ -14,10 +14,20 @@
 		"title": "Diagnostics",
 		"order": 30
 	},
+	"admin/services/trusttunnel/tools": {
+		"action": { "path": "trusttunnel/tools", "type": "view" },
+		"title": "Tools",
+		"order": 35
+	},
 	"admin/services/trusttunnel/log": {
 		"action": { "path": "trusttunnel/log", "type": "view" },
 		"title": "Client log",
 		"order": 40
+	},
+	"admin/services/trusttunnel/versions": {
+		"action": { "path": "trusttunnel/versions", "type": "view" },
+		"title": "Versions",
+		"order": 45
 	},
 	"admin/services/trusttunnel": {
 		"action": { "type": "firstchild" },

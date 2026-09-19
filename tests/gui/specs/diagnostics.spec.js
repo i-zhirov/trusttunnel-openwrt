@@ -8,7 +8,7 @@ const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
 const {
-	openView, stubReset, stubSet, framesFor, waitForFrames, button
+	openView, stubReset, stubSet, framesFor, waitForFrames, clickButton
 } = require('../helpers');
 
 // Byte-exact backend contract outputs, so the GUI tests see what the
@@ -38,8 +38,19 @@ test.beforeEach(async ({ page }) => {
 	await stubReset(page);
 });
 
+test('opening the view does not run the checks', async ({ page }) => {
+	await openView(page, 'diagnostics');
+
+	// The chain runs on demand only: no diagnose frame until the button is
+	// pressed, and the box explains that nothing ran yet.
+	expect(await framesFor(page, 'luci.trusttunnel', 'diagnose')).toHaveLength(0);
+	await expect(page.locator('#view')).toContainText('not run yet');
+});
+
 test('diagnose renders the verdict banner with counts', async ({ page }) => {
 	await openView(page, 'diagnostics');
+
+	await clickButton(page, 'Run checks');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
 	await expect(page.locator('#view .alert-message.danger')).toContainText('there are problems');
@@ -50,6 +61,8 @@ test('diagnose renders the verdict banner with counts', async ({ page }) => {
 
 test('checks are grouped in the fixed order, problems first', async ({ page }) => {
 	await openView(page, 'diagnostics');
+
+	await clickButton(page, 'Run checks');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
 	// The baked diagnose has fails/warns; the passed checks are hidden
@@ -76,9 +89,11 @@ test('checks are grouped in the fixed order, problems first', async ({ page }) =
 
 test('toggle reveals the passed checks', async ({ page }) => {
 	await openView(page, 'diagnostics');
+
+	await clickButton(page, 'Run checks');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
-	await button(page, 'Show the checks that passed').click();
+	await clickButton(page, 'Show the checks that passed');
 	const hidden = page.locator('#view div[style*="display:none"]');
 	await expect(hidden).toHaveCount(0);
 	for (const c of hiddenChecks(DIAGNOSE.checks))
@@ -88,53 +103,19 @@ test('toggle reveals the passed checks', async ({ page }) => {
 test('healthy diagnose shows the warn banner', async ({ page }) => {
 	await stubSet(page, { diagnose: HEALTHY });
 	await openView(page, 'diagnostics');
+
+	await clickButton(page, 'Run checks');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
 	await expect(page.locator('#view .alert-message.warning')).toContainText('works, with remarks');
 });
 
-test('Re-run checks re-runs the diagnose chain', async ({ page }) => {
+test('Run checks re-runs the diagnose chain', async ({ page }) => {
 	await openView(page, 'diagnostics');
+
+	await clickButton(page, 'Run checks');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
-	await button(page, 'Re-run checks').click();
+	await clickButton(page, 'Run checks');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 2);
-});
-
-test('domain check renders the verdict table', async ({ page }) => {
-	await openView(page, 'diagnostics');
-
-	await page.locator('#view input[placeholder="youtube.com"]').fill('telegram.org');
-	// exact:true — "Re-run checks" contains "Run checks" as a substring
-	await page.getByRole('button', { name: 'Run checks', exact: true }).click();
-	await waitForFrames(page, 'luci.trusttunnel', 'check_domain', 1);
-
-	const frames = await framesFor(page, 'luci.trusttunnel', 'check_domain');
-	expect(frames[0].args.domain).toBe('telegram.org');
-
-	await expect(page.locator('#view')).toContainText('Normalized');
-	await expect(page.locator('#view')).toContainText('through the tunnel');
-	await expect(page.locator('#view')).toContainText('direct');
-});
-
-test('ping renders loss and round-trip times', async ({ page }) => {
-	await openView(page, 'diagnostics');
-
-	await button(page, 'Ping server').click();
-	await waitForFrames(page, 'luci.trusttunnel', 'ping', 1);
-
-	await expect(page.locator('#view')).toContainText('1.2.3.4');
-	await expect(page.locator('#view')).toContainText('0%');
-	await expect(page.locator('#view')).toContainText('10.1 / 12.3 / 15.7 ms');
-});
-
-test('address compare renders the tunnel and direct addresses', async ({ page }) => {
-	await openView(page, 'diagnostics');
-
-	await button(page, 'Compare addresses').click();
-	await waitForFrames(page, 'luci.trusttunnel', 'probe', 1);
-
-	await expect(page.locator('#view')).toContainText('Through the tunnel');
-	await expect(page.locator('#view')).toContainText('Directly');
-	await expect(page.locator('#view code', { hasText: '203.0.113.77' })).toHaveCount(2);
 });

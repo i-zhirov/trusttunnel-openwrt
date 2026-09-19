@@ -33,7 +33,8 @@ packages/
   luci-app-trusttunnel/       The LuCI app package (feed-style root/ tree)
     Makefile                  OpenWrt package metadata
     htdocs/luci-static/resources/view/trusttunnel/
-      settings.js status.js log.js diagnostics.js   LuCI client-side views
+      settings.js status.js log.js diagnostics.js tools.js versions.js
+                                                                        LuCI client-side views
     root/etc/config/trusttunnel              Default UCI config
     root/etc/init.d/trusttunnel              procd service script
     root/etc/uci-defaults/40-luci-trusttunnel  First-boot setup
@@ -218,8 +219,7 @@ First-boot / reinstall setup: dedups the `trusttunnel` firewall zone and
 forwarding, creates them when missing (zone bound to `tun+`, `lan →
 trusttunnel` forwarding), migrates old concrete `tt0` bindings to `tun+`,
 seeds the Default routing profile (migrating `domains.direct` into its
-bypass rules), creates the UI-only `about` section that keys the Versions
-tab on the Settings page, registers the rc.d link and clears LuCI caches.
+bypass rules), registers the rc.d link and clears LuCI caches.
 Idempotent; also run immediately by `install.sh`.
 
 ### rpcd backend (`/usr/share/rpcd/ucode/luci.trusttunnel`)
@@ -253,28 +253,30 @@ file compiles under the pinned ucode.
 ### LuCI views
 
 - `status.js` — verdict banner, facts (state/mode/server/proxy address),
-  Start/Stop/Restart buttons, a rules preview for the assigned profile
+  Start/Stop buttons and a rules preview for the assigned profile
   (or the legacy `domains.direct` list without one) that checks each
-  effective rule via `check_domain`; polls every 10s. The verdict is
-  mode-aware: the "working" gate is `device_up` in tun mode and
-  `listener_up` in proxy mode.
+  effective rule via `check_domain`; polls every 10s. There is no
+  restart button: from the UI it is stop + start, and the
+  routing-preserving restart is internal to the settings apply path.
+  The verdict is mode-aware: the "working" gate is `device_up` in tun
+  mode and `listener_up` in proxy mode.
 - `log.js` — a tail of the system-log lines written by the client and
   the service (the `log` RPC), fetched during `load()` so the first
   paint already shows it, then refreshed in place by a 10 s poll; the
-  status verdicts and the backend diagnose hints point users here.
+  status verdicts and the backend diagnose hints point users here. The
+  Export client logs button re-fetches the whole ring buffer (5000
+  lines) and downloads it as a timestamped text file via a Blob —
+  purely client-side, no backend or ACL surface.
 - `settings.js` — a single tabbed `form.Map` whose sections become tabs
-  (General, Server, Proxy, Routing profiles, Advanced, Versions), plus
-  the Import… modal that calls `import_config` and applies results to
+  (General, Server, Proxy, Routing profiles, Advanced), plus the
+  Import… modal that calls `import_config` and applies results to
   pending UCI (nothing is written until Save & Apply). The endpoint
   section splits into Connection and Security inner tabs
   (`s.tab`/`s.taboption`) — map-level tabs key panes by the UCI section
   type, so two sections of the same type would collide. The General tab
   carries the operation-mode picker (`main.mode`), the Proxy tab the
   SOCKS5 listener settings (address + optional user/pass pair, validated
-  both-or-neither). The Versions tab is a `NamedSection` of the UI-only
-  `about` section type: it carries no UCI options, its DummyValue rows
-  read the `versions` RPC result, and uci-defaults creates the section
-  on installs that predate it. Extra tools: a read-only service line on
+  both-or-neither). Extra tools: a read-only service line on
   General (via the `status` RPC), a Test connection modal on Server
   (`ping`), and a per-profile rule preview (`check_domain`) whose
   verdicts only apply to the assigned profile. The routing profile
@@ -285,10 +287,17 @@ file compiles under the pinned ucode.
   result is no data source.
 - `diagnostics.js` — renders the diagnose checks grouped and ordered
   (config → prereq → service → kernel → network), problems first with a
-  toggle for the rest, plus domain-check, ping and address-compare tools
-  and a Copy report button that serializes the last run into a textarea.
+  toggle for the rest, plus a Copy report button that serializes the last
+  run into a textarea. The chain runs only on demand (Run checks).
   Backend strings are translated through the `DIAG_TEXT` map; new
   backend strings must be added there to be translatable.
+- `tools.js` — the ad-hoc helpers that moved off the Diagnostics page:
+  the domain verdict check, the endpoint ping and the tunnel-vs-direct
+  address comparison. Each tool runs only on demand.
+- `versions.js` — the Versions tab (moved out of the Settings page): a
+  read-only page listing the installed TrustTunnel package, client
+  package and client binary versions from the `versions` RPC. A missing
+  package shows "not installed", a failed RPC "unavailable".
 
 ## Packages and versioning
 
