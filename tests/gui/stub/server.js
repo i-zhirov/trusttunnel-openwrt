@@ -57,9 +57,13 @@ const VIEW_DIR = 'luci-static/resources/view/trusttunnel';
 
 const defaultUci = {
 	trusttunnel: {
-		main: { '.type': 'main', enabled: '0', log_level: 'info', mode: 'tun' },
+		main: {
+			'.type': 'main', enabled: '0', log_level: 'info', mode: 'tun',
+			endpoint: 'Default'
+		},
 		endpoint: {
-			'.type': 'endpoint', hostname: 'vpn.example.com', username: 'alice',
+			'.type': 'endpoint', name: 'Default', hostname: 'vpn.example.com',
+			username: 'alice',
 			password: 'secret', protocol: 'http2', anti_dpi: '0', post_quantum: '1',
 			skip_verification: '0', certificate: '', has_ipv6: '1',
 			custom_sni: '', client_random: '',
@@ -67,6 +71,17 @@ const defaultUci = {
 			// always carries at least one endpoint address.
 			address: [ '203.0.113.10:443' ],
 			routing_profile: 'Default'
+		},
+		// A second saved server: the endpoint sections are repeatable and
+		// main.endpoint names the ACTIVE one (the Default server above).
+		cfg02: {
+			'.type': 'endpoint', '.anonymous': true, name: 'Backup',
+			hostname: 'backup.example.com', username: 'bob', password: 'bobpass',
+			protocol: 'http2', anti_dpi: '0', post_quantum: '1',
+			skip_verification: '0', certificate: '', has_ipv6: '1',
+			custom_sni: '', client_random: '',
+			address: [ '198.51.100.20:443' ],
+			routing_profile: ''
 		},
 		network: {
 			'.type': 'network', mtu: '1350', table: '880', fwmark: '0x9527',
@@ -202,7 +217,19 @@ function resolveUci(method, a) {
 		return {};
 	case 'delete':
 		state.uci[a.config] = state.uci[a.config] || {};
-		delete state.uci[a.config][a.section];
+		// rpcd's uci.delete takes an optional options list: with one it
+		// removes only those options (LuCI's save canonicalizes options
+		// at their defaults and empty optionals this way), without it the
+		// whole section. The option form must not nuke the section.
+		if (Array.isArray(a.options) && a.options.length) {
+			const sec = state.uci[a.config][a.section];
+			if (sec)
+				for (const k of a.options)
+					delete sec[k];
+		}
+		else {
+			delete state.uci[a.config][a.section];
+		}
 		return {};
 	case 'order':
 		return {};

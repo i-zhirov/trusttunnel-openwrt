@@ -28,13 +28,19 @@ test('renders the tabs in order', async ({ page }) => {
 	await expect(tabs.nth(4)).toHaveText('Advanced');
 	await expect(tabs.nth(5)).toHaveText('Versions');
 
-	// ...and the endpoint section splits into its own inner tabs (map
-	// tabs key panes by section type, so two endpoint sections would
-	// collide; section-level tabs use their own names).
-	const innerTabs = page.locator('#view .cbi-section[data-tab="endpoint"] .cbi-tabmenu li a');
+	// ...and every saved server splits into its own Connection/Security
+	// inner tabs (map tabs key panes by section type, so two endpoint
+	// sections would collide; section-level tabs use their own names).
+	// The tab menu is inserted before each server's node — the first menu
+	// belongs to the Default server.
+	const innerTabs = page.locator('#view .cbi-section[data-tab="endpoint"] > .cbi-tabmenu').first().locator('li a');
 	await expect(innerTabs).toHaveCount(2);
 	await expect(innerTabs.nth(0)).toHaveText('Connection');
 	await expect(innerTabs.nth(1)).toHaveText('Security');
+
+	// The second saved server gets its own tab bar too.
+	const backupTabs = page.locator('#view .cbi-section[data-tab="endpoint"] > .cbi-tabmenu').nth(1).locator('li a');
+	await expect(backupTabs).toHaveCount(2);
 });
 
 test('switching tabs activates the corresponding pane', async ({ page }) => {
@@ -47,8 +53,9 @@ test('switching tabs activates the corresponding pane', async ({ page }) => {
 	await expect(page.locator('#view .cbi-section[data-tab="main"]'))
 		.not.toHaveAttribute('data-tab-active', 'true');
 
-	// Inner tabs of the endpoint section.
-	await page.locator('#view .cbi-section[data-tab="endpoint"] .cbi-tabmenu li a', { hasText: 'Security' }).click();
+	// Inner tabs of the Default server (the first tab menu).
+	await page.locator('#view .cbi-section[data-tab="endpoint"] > .cbi-tabmenu').first()
+		.locator('li a', { hasText: 'Security' }).click();
 	await expect(page.locator('[id="container.trusttunnel.endpoint.security"]'))
 		.toHaveAttribute('data-tab-active', 'true');
 	await expect(page.locator('[id="container.trusttunnel.endpoint.connection"]'))
@@ -59,8 +66,10 @@ test('fields render the loaded UCI state', async ({ page }) => {
 	await openView(page, 'settings');
 
 	// Flag widgets put the checkbox inside the option wrapper; Value and
-	// ListValue inputs carry the `widget.`-prefixed id.
+	// ListValue inputs carry the `widget.`-prefixed id. The Default server
+	// is the section named 'endpoint', so its field ids are unchanged.
 	await expect(page.locator('[id="cbid.trusttunnel.main.enabled"] input[type="checkbox"]')).not.toBeChecked();
+	await expect(page.locator('[id="widget.cbid.trusttunnel.endpoint.name"]')).toHaveValue('Default');
 	await expect(page.locator('[id="widget.cbid.trusttunnel.endpoint.hostname"]')).toHaveValue('vpn.example.com');
 	await expect(page.locator('[id="widget.cbid.trusttunnel.endpoint.username"]')).toHaveValue('alice');
 	await expect(page.locator('[id="widget.cbid.trusttunnel.endpoint.password"]')).toHaveAttribute('type', 'password');
@@ -72,10 +81,20 @@ test('fields render the loaded UCI state', async ({ page }) => {
 	await expect(page.locator('[id="widget.cbid.trusttunnel.network.mtu"]')).toHaveValue('1350');
 	await expect(page.locator('[id="widget.cbid.trusttunnel.network.fwmark"]')).toHaveValue('0x9527');
 
-	// The Default profile seeded by uci-defaults shows up in the select
-	// on the General tab, alongside the "None" fallback entry.
-	const profile = page.locator('[id="widget.cbid.trusttunnel.main.routing_profile"]');
-	await expect(profile.locator('option')).toHaveCount(2);
+	// The second saved server renders its own field set.
+	await expect(page.locator('[id="widget.cbid.trusttunnel.cfg02.name"]')).toHaveValue('Backup');
+	await expect(page.locator('[id="widget.cbid.trusttunnel.cfg02.hostname"]')).toHaveValue('backup.example.com');
+
+	// The active-server picker on the General tab lists every saved
+	// server; the Default profile shows up in the per-server profile
+	// select, alongside the "None" fallback entry.
+	const active = page.locator('[id="widget.cbid.trusttunnel.main.endpoint"]');
+	await expect(active.locator('option')).toHaveCount(2);
+	await expect(active.locator('option[value="Default"]')).toHaveText('Default');
+	await expect(active.locator('option[value="Backup"]')).toHaveText('Backup');
+
+	const profile = page.locator('[id="widget.cbid.trusttunnel.endpoint.routing_profile"]');
+	await expect(profile.locator('option[value=""]')).toHaveText('None — everything through the tunnel');
 	await expect(profile.locator('option[value="Default"]')).toHaveText('Default');
 
 	// The operation mode picker defaults to TUN and the Proxy tab carries
@@ -220,13 +239,47 @@ test('routing profile name uniqueness validator rejects duplicates', async ({ pa
 	await openView(page, 'settings');
 
 	// Add a second profile and give it the same name as the seeded one.
-	// (the section's Add button, not the DynamicList "+" buttons)
+	// (the section's Add button, not the DynamicList "+" buttons; scoped
+	// to the routing_profile tab — the server sections carry name fields
+	// too)
 	await page.locator('#view .cbi-section[data-tab="routing_profile"] button[title="Add"]').click();
-	const nameInputs = page.locator('#view input[id^="widget.cbid.trusttunnel."][id$=".name"]');
+	const nameInputs = page.locator('#view .cbi-section[data-tab="routing_profile"] input[id$=".name"]');
 	await expect(nameInputs).toHaveCount(2);
 	await nameInputs.last().fill('Default');
 	await button(page, 'Save').click();
 
 	await expect(page.locator('#modal_overlay .modal')).toContainText(
 		'Another profile already has this name');
+});
+
+test('server name uniqueness validator rejects duplicates', async ({ page }) => {
+	await openView(page, 'settings');
+
+	// Add a second server and give it the same name as the active one.
+	await page.locator('#view .cbi-section[data-tab="endpoint"] button[title="Add"]').click();
+	const nameInputs = page.locator('#view .cbi-section[data-tab="endpoint"] input[id$=".name"]');
+	await expect(nameInputs).toHaveCount(3);
+	await nameInputs.last().fill('Default');
+	await button(page, 'Save').click();
+
+	await expect(page.locator('#modal_overlay .modal')).toContainText(
+		'Another server already has this name');
+});
+
+test('switching the active server stages main.endpoint', async ({ page }) => {
+	await openView(page, 'settings');
+
+	// The General-tab picker selects the ACTIVE server by name.
+	await page.locator('[id="widget.cbid.trusttunnel.main.endpoint"]').selectOption('Backup');
+
+	await page.locator('#view .cbi-page-actions .cbi-dropdown').first().click();
+	await waitForFrames(page, 'uci', 'set', 1);
+	await waitForFrames(page, 'http', '/admin/uci/apply_rollback', 1);
+
+	const sets = await framesFor(page, 'uci', 'set');
+	expect(sets[0].args.config).toBe('trusttunnel');
+	expect(sets[0].args.section).toBe('main');
+	expect(sets[0].args.values.endpoint).toBe('Backup');
+
+	await waitForFrames(page, 'http', '/admin/uci/confirm', 1);
 });

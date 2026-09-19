@@ -108,12 +108,18 @@ const dom = {
 // the configuration object. The data lives in state.values; sections()
 // and get() read it.
 const uciData = {
-    main:     { '.type': 'main', '.name': 'main', enabled: '1', log_level: 'info', mode: 'tun' },
-    endpoint: { '.type': 'endpoint', '.name': 'endpoint',
+    main:     { '.type': 'main', '.name': 'main', enabled: '1', log_level: 'info', mode: 'tun',
+                endpoint: 'Default' },
+    endpoint: { '.type': 'endpoint', '.name': 'endpoint', name: 'Default',
                 hostname: 'kz.hexbrains.com', address: ['kz.hexbrains.com:443'],
                 username: 'iceman', password: 'secret', protocol: 'http2',
                 anti_dpi: '0', post_quantum: '1', skip_verification: '0',
                 has_ipv6: '1', routing_profile: 'Test' },
+    cfg3:     { '.type': 'endpoint', '.name': 'cfg3', name: 'Backup',
+                hostname: 'backup.example.com', address: ['backup.example.com:443'],
+                username: 'backup', password: 'backuppass', protocol: 'http2',
+                anti_dpi: '0', post_quantum: '1', skip_verification: '0',
+                has_ipv6: '1', routing_profile: '' },
     network:  { '.type': 'network', '.name': 'network', mtu: '1350', table: '880',
                 fwmark: '0x9527', blackhole_on_down: '1', include_router_traffic: '0' },
     proxy:    { '.type': 'proxy', '.name': 'proxy', address: '127.0.0.1:1080',
@@ -309,7 +315,11 @@ const ui = {
     showModal: function (title, children) { ui.lastModal = { title: title, children: children }; },
     hideModal: function () {},
     addNotification: function () {},
-    createHandlerFn: function (self, fn) { return fn; }
+    createHandlerFn: function (self, fn) {
+        if (typeof fn === 'string')
+            fn = self[fn];
+        return fn.bind(self);
+    }
 };
 
 const pollTasks = [];
@@ -487,10 +497,11 @@ async function main() {
         if (s.type === 'routing_profile')
             profileSecs.push(s);
     ok(profileSecs.length === 1, 'settings: a routing_profile section is created');
-    // The endpoint section is split into inner tabs: map-level tabs key
-    // their panes by the UCI section type, so two sections of the same
-    // type would collide; section-level tabs use their own names. The
-    // routing profile picker lives on the General (main) tab.
+    // The endpoint sections are repeatable and split into inner tabs:
+    // map-level tabs key their panes by the UCI section type, so two
+    // sections of the same type would collide; section-level tabs use
+    // their own names. Every server carries a unique name, its own
+    // routing profile and its own DNS upstreams.
     const endpointSec = form_lastMap.sections.find(s => s.type === 'endpoint');
     ok(endpointSec && endpointSec.tabs.length === 2 &&
         endpointSec.tabs[0].name === 'connection' && endpointSec.tabs[1].name === 'security',
@@ -498,11 +509,18 @@ async function main() {
     ok(endpointSec && endpointSec.options.length > 0 &&
         endpointSec.options.every(o => o.tab === 'connection' || o.tab === 'security'),
         'settings: every endpoint option lives on an inner tab');
-    const rpSec = form_lastMap.sections.find(s =>
-        s.options.some(o => o.name === 'routing_profile'));
-    const rpOpt = rpSec && rpSec.options.find(o => o.name === 'routing_profile');
+    ok(endpointSec && endpointSec.options.some(o => o.name === 'name'),
+        'settings: every server carries a unique name field');
+    const rpOpt = endpointSec && endpointSec.options.find(o => o.name === 'routing_profile');
     ok(rpOpt && rpOpt.values.indexOf('Default') !== -1 && rpOpt.values.indexOf('Test') !== -1,
         'settings: the routing profile select lists Default and Test');
+    ok(rpOpt && rpOpt.values.indexOf('') !== -1,
+        'settings: the routing profile select offers the none option');
+    ok(endpointSec && endpointSec.options.some(o => o.name === 'dns_upstream'),
+        'settings: the DNS upstreams live in the server form');
+    const advSec = form_lastMap.sections.find(s => s.type === 'network');
+    ok(advSec && !advSec.options.some(o => o.name === 'dns_upstream'),
+        'settings: the Advanced tab no longer writes the endpoint DNS list');
     // The Versions tab is a NamedSection of the UI-only 'about' type
     // (map-level tabs key panes by the section type, so the section must
     // exist for the tab to render its rows).
@@ -514,11 +532,15 @@ async function main() {
         'settings: the Versions section carries the three version rows');
     ok(hasText(settingsTree, 'Versions'), 'settings: the Versions tab title renders');
 
-    // The operation mode picker lives on the General tab and the SOCKS
-    // listener settings on their own Proxy tab.
+    // The operation mode picker and the ACTIVE server picker live on the
+    // General tab, the SOCKS listener settings on their own Proxy tab.
     const mainSec = form_lastMap.sections.find(s => s.type === 'main');
     ok(mainSec && mainSec.options.some(o => o.name === 'mode'),
         'settings: the operation mode picker exists on General');
+    const actOpt = mainSec && mainSec.options.find(o => o.name === 'endpoint');
+    ok(actOpt && actOpt.values.indexOf('Default') !== -1 &&
+        actOpt.values.indexOf('Backup') !== -1,
+        'settings: the active server picker lists every saved server');
     const proxySec = form_lastMap.sections.find(s => s.type === 'proxy');
     ok(proxySec && proxySec.options.some(o => o.name === 'address') &&
         proxySec.options.some(o => o.name === 'username') &&
@@ -526,7 +548,10 @@ async function main() {
         'settings: the proxy section exposes address and authentication');
 
     // Import flow: open the modal, paste a config, press Import, verify the
-    // values land in pending UCI only (uci.set recorded, nothing else).
+    // values land in pending UCI only (uci.set recorded, nothing else). The
+    // handler is invoked without a section id here (the button always
+    // passes one), so it falls back to the ACTIVE server — in the mock the
+    // section named Default, whose id is 'endpoint'.
     settingsView.handleImport();
     const modal = ui.lastModal;
     ok(modal && modal.title === 'Import server settings', 'settings: Import modal opens');
@@ -543,9 +568,28 @@ async function main() {
     // uci.set records [sid, opt, val]
     const importSet = uciSets.find(c => c[0] === 'endpoint' && c[1] === 'hostname');
     ok(importSet && importSet[2] === 'import.example.com',
-        'settings: Import applies the hostname to pending UCI');
+        'settings: Import applies the hostname to the active server');
     ok(uciSets.some(c => c[0] === 'endpoint' && c[1] === 'address'),
-        'settings: Import applies the address list to pending UCI');
+        'settings: Import applies the address list to the active server');
+
+    // With several saved servers the import lands in the server whose
+    // Import button was pressed: the handler receives that server's
+    // section id and must not touch the active one. The canned import
+    // result is fixed, so only the target section is asserted.
+    uciSets.length = 0;
+    settingsView.handleImport(null, 'cfg3');
+    let m2 = ui.lastModal, ta2 = null, btn2 = null;
+    walk(m2.children, n => {
+        if (n.tag === 'textarea') ta2 = n;
+        if (n.tag === 'button' && hasText(n, 'Import')) btn2 = n;
+    });
+    ta2.value = 'hostname = "other.example.com"\naddresses = ["other.example.com:443"]\n';
+    await click(btn2);
+    await Promise.resolve();
+    ok(uciSets.some(c => c[0] === 'cfg3' && c[1] === 'hostname'),
+        'settings: the import targets the server instance that owns the button');
+    ok(!uciSets.some(c => c[0] === 'endpoint'),
+        'settings: the other servers are left untouched');
 
     // A pending import_config shows a loading state: the Import button is
     // disabled and spins until the backend answers, then applies the
