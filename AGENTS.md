@@ -285,10 +285,13 @@ file compiles under the pinned ucode.
   result is no data source.
 - `diagnostics.js` — renders the diagnose checks grouped and ordered
   (config → prereq → service → kernel → network), problems first with a
-  toggle for the rest, plus domain-check, ping and address-compare tools
-  and a Copy report button that serializes the last run into a textarea.
+  toggle for the rest, plus a Copy report button that serializes the last
+  run into a textarea. The chain runs only on demand (Run checks).
   Backend strings are translated through the `DIAG_TEXT` map; new
   backend strings must be added there to be translatable.
+- `tools.js` — the ad-hoc helpers that moved off the Diagnostics page:
+  the domain verdict check, the endpoint ping and the tunnel-vs-direct
+  address comparison. Each tool runs only on demand.
 
 ## Packages and versioning
 

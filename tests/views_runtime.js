@@ -352,6 +352,12 @@ function findButtons(node) {
     return out;
 }
 
+function findInputs(node) {
+    const out = [];
+    walk(node, n => { if (n.tag === 'input') out.push(n); });
+    return out;
+}
+
 function click(buttonNode) {
 	return Promise.resolve(buttonNode.attrs.click && buttonNode.attrs.click());
 }
@@ -576,12 +582,12 @@ async function main() {
     console.log('== diagnostics.js');
     const diagView = loadView('diagnostics.js');
     const diagTree = diagView.render();
-    // the render returns E('div', cbi-map, [h2, 4 sections]) — the variadic
+    // the render returns E('div', cbi-map, [h2, 1 section]) — the variadic
     // regression would drop everything after the h2 (children.length === 1)
     eq(diagTree.tag, 'div', 'diagnostics: root is a div');
-    eq(diagTree.children.length, 5, 'diagnostics: root has h2 + 4 sections');
+    eq(diagTree.children.length, 2, 'diagnostics: root has h2 + 1 section');
     const diagButtons = findButtons(diagTree).map(b => String(b.children[0]));
-    for (const label of ['Run checks', 'Ping server', 'Compare addresses'])
+    for (const label of ['Run checks', 'Copy report'])
         ok(diagButtons.indexOf(label) !== -1, 'diagnostics: ' + label + ' button present');
     // the chain runs on demand: rendering alone must not call diagnose
     ok(hasText(diagTree, 'not run yet'), 'diagnostics: nothing runs until Run checks is pressed');
@@ -594,19 +600,36 @@ async function main() {
     await Promise.resolve();
     ok(hasText(diagTree, 'everything checks out'), 'diagnostics: verdict banner renders');
     ok(hasText(diagTree, 'Server address'), 'diagnostics: the checks table renders');
+
+    // ===== tools.js =====
+    console.log('== tools.js');
+    const toolsView = loadView('tools.js');
+    const toolsTree = toolsView.render();
+    eq(toolsTree.tag, 'div', 'tools: root is a div');
+    eq(toolsTree.children.length, 4, 'tools: root has h2 + 3 sections');
+    const toolsButtons = findButtons(toolsTree).map(b => String(b.children[0]));
+    for (const label of ['Run checks', 'Ping server', 'Compare addresses'])
+        ok(toolsButtons.indexOf(label) !== -1, 'tools: ' + label + ' button present');
+    ok(hasText(toolsTree, 'Check a domain') && hasText(toolsTree, 'Ping the server') &&
+        hasText(toolsTree, 'Compare the external address'),
+        'tools: the three tool sections render');
+    // run the domain check tool (fill the input first, then press Run)
+    const domainInput = findInputs(toolsTree).find(i => i.attrs && i.attrs.placeholder === 'youtube.com');
+    domainInput.value = 'telegram.org';
+    const domainBtn = findButtons(toolsTree).find(b => String(b.children[0]) === 'Run checks');
+    await click(domainBtn);
+    ok(await waitText(toolsTree, 'assigned profile in VPN mode'),
+        'tools: the domain check renders the verdict');
     // run the Ping tool
-    const pingBtn = findButtons(diagTree).find(b => String(b.children[0]) === 'Ping server');
+    const pingBtn = findButtons(toolsTree).find(b => String(b.children[0]) === 'Ping server');
     await click(pingBtn);
-    await Promise.resolve();
-    ok(hasText(diagTree, 'kz.hexbrains.com') && hasText(diagTree, '95'),
-        'diagnostics: the ping tool renders results');
+    ok(await waitText(toolsTree, 'kz.hexbrains.com') && hasText(toolsTree, '95'),
+        'tools: the ping tool renders results');
     // run the Compare tool
-    const cmpBtn = findButtons(diagTree).find(b => String(b.children[0]) === 'Compare addresses');
+    const cmpBtn = findButtons(toolsTree).find(b => String(b.children[0]) === 'Compare addresses');
     await click(cmpBtn);
-    await Promise.resolve();
-    await Promise.resolve();
-    ok(hasText(diagTree, '104.238.24.115') && hasText(diagTree, '178.46.214.219'),
-        'diagnostics: the address compare tool renders both egresses');
+    ok(await waitText(toolsTree, '104.238.24.115') && hasText(toolsTree, '178.46.214.219'),
+        'tools: the address compare tool renders both egresses');
 
     // ===== summary =====
     console.log('== ' + total + ' assertions, ' + failed + ' failed');
