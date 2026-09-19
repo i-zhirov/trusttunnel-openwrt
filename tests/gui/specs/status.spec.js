@@ -1,7 +1,7 @@
 'use strict';
 
 // Status view (status.js): verdict banner for each status shape, facts
-// table, the Start/Stop/Restart actions, the rule preview modal for the
+// table, the Start/Stop actions, the rule preview modal for the
 // effective profile (and the legacy do-not-bypass list), and the 10 s
 // status poll. (The client log lives on its own view: log.spec.js.)
 
@@ -106,31 +106,30 @@ test('verdict and facts render immediately, without waiting for the poll', async
 		'Profile Default — VPN, everything except the bypass rules is tunneled');
 });
 
-test('Start/Stop/Restart call the service method with the right action', async ({ page }) => {
+test('Start/Stop call the service method with the right action', async ({ page }) => {
 	await openView(page, 'status');
 
-	await clickButton(page, 'Enable');
+	// The restart verb is deliberately not offered: from the UI it is
+	// stop + start, so it would duplicate Start.
+	await expect(page.locator('#view button', { hasText: 'Restart service' })).toHaveCount(0);
+
+	await clickButton(page, 'Start');
 	await waitForFrames(page, 'luci.trusttunnel', 'service', 1);
 	let frames = await framesFor(page, 'luci.trusttunnel', 'service');
 	expect(frames[0].args.action).toBe('start');
 	await expect(page.locator('#maincontent .alert-message')).toContainText('Done');
 
-	await clickButton(page, 'Disable');
+	await clickButton(page, 'Stop');
 	await waitForFrames(page, 'luci.trusttunnel', 'service', 2);
 	frames = await framesFor(page, 'luci.trusttunnel', 'service');
 	expect(frames[1].args.action).toBe('stop');
-
-	await clickButton(page, 'Restart service');
-	await waitForFrames(page, 'luci.trusttunnel', 'service', 3);
-	frames = await framesFor(page, 'luci.trusttunnel', 'service');
-	expect(frames[2].args.action).toBe('restart');
 });
 
 test('service failure surfaces a warning notification', async ({ page }) => {
 	await stubSet(page, { service: { code: 0, output: 'boom', not_running: true } });
 	await openView(page, 'status');
 
-	await clickButton(page, 'Enable');
+	await clickButton(page, 'Start');
 	await expect(page.locator('#maincontent .alert-message.warning')).toContainText(
 		'The service did not start. Open the Client log tab to see why.');
 });

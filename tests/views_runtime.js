@@ -396,6 +396,13 @@ async function main() {
     // The client log is its own view now (log.js); the status page only
     // polls the verdict and the facts.
     ok(!hasText(statusTree, 'Client log'), 'status: the client log moved to its own view');
+    // The control row is Start / Stop / Preview rules: the restart verb
+    // is deliberately absent (from the UI it is stop + start).
+    const statusButtons = findButtons(statusTree).map(b => String(b.children[0]));
+    for (const label of ['Start', 'Stop', 'Preview rules'])
+        ok(statusButtons.indexOf(label) !== -1, 'status: ' + label + ' button present');
+    ok(statusButtons.indexOf('Restart service') === -1,
+        'status: no restart button (it would duplicate Stop + Start)');
     // The verdict and facts boxes render their content immediately
     // (E('div', {}, node) passes the node as a child — the bare
     // two-argument form treats it as attributes), and the poll refreshes
