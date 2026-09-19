@@ -12,6 +12,12 @@ var callLog = rpc.declare({
 });
 
 return view.extend({
+	// Nothing to save on this page: without the nulls LuCI renders the
+	// default Save & Apply bar, which would sit here dead.
+	handleSaveApply: null,
+	handleSave: null,
+	handleReset: null,
+
 	// Fetch the tail once during load so the first paint already shows
 	// the log; the poll keeps it fresh afterwards.
 	load: function() {
