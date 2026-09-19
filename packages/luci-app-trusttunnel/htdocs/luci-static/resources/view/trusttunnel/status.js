@@ -181,8 +181,16 @@ return view.extend({
 			rows.push(this.row(_('Mode'), _('Everything through VPN')));
 		}
 
-		if (st.endpoint_hostname)
-			rows.push(this.row(_('Server'), E('code', st.endpoint_hostname)));
+		// The Server row names the ACTIVE server (the name the Settings
+		// page manages) with its TLS hostname; without a name — a legacy
+		// status or no server selected — the hostname stands alone.
+		if (st.server || st.endpoint_hostname) {
+			var serverText = st.server
+				? (st.endpoint_hostname ? st.server + ' — ' + st.endpoint_hostname : st.server)
+				: st.endpoint_hostname;
+
+			rows.push(this.row(_('Server'), E('code', serverText)));
+		}
 
 		if (st.mode === 'proxy' && st.proxy_address)
 			rows.push(this.row(_('Proxy'), E('code', st.proxy_address)));

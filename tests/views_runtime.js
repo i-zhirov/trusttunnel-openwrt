@@ -232,6 +232,7 @@ const canned = {
             enabled: true, running: true, mode: 'tun',
             device: 'tun0', device_up: true,
             rule: true, table: true, nft: true,
+            server: 'Default',
             endpoint_hostname: 'kz.hexbrains.com',
             addresses: ['kz.hexbrains.com:443'],
             client_installed: true, routing_profile: 'Test',
@@ -411,7 +412,8 @@ async function main() {
     ok(hasText(statusTree, 'State'), 'status: facts table has a State row');
     ok(hasText(statusTree, 'working'), 'status: State row says working');
     ok(hasText(statusTree, 'Server'), 'status: facts table has a Server row');
-    ok(hasText(statusTree, 'kz.hexbrains.com'), 'status: Server row shows the hostname');
+    ok(hasText(statusTree, 'Default — kz.hexbrains.com'),
+        'status: Server row names the active server with the hostname');
     ok(hasText(statusTree, 'Profile Test — bypass, only the VPN rules are tunneled'),
         'status: Mode row shows the Test bypass profile');
 

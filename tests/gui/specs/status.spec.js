@@ -14,6 +14,7 @@ const {
 const BASE = {
 	enabled: true, running: true, mode: 'tun', device_up: true, rule: true,
 	table: true, nft: true, client_installed: true,
+	server: 'Default',
 	endpoint_hostname: 'vpn.example.com', addresses: [ '1.2.3.4:443' ],
 	routing_profile: 'Default', routing_mode: 'vpn', vpn_mode: 'general',
 	proxy_address: null, listener_up: null
@@ -30,7 +31,8 @@ test('healthy status shows no banner, working state and facts', async ({ page })
 	await expect(page.locator('#view')).toContainText('working');
 	await expect(page.locator('#view')).toContainText(
 		'Profile Default — VPN, everything except the bypass rules is tunneled');
-	await expect(page.locator('#view code')).toContainText('vpn.example.com');
+	// The Server fact names the ACTIVE server with its TLS hostname.
+	await expect(page.locator('#view code')).toContainText('Default — vpn.example.com');
 });
 
 test('disabled service shows the info verdict', async ({ page }) => {
