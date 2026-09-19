@@ -11,7 +11,7 @@ PKG_NAME:=luci-app-trusttunnel
 # build whose artifact does not carry PKG_VERSION and refuses a version
 # not strictly higher than the last released one — the Makefile is the
 # single source of truth for what a release carries.
-PKG_VERSION:=1.0.27
+PKG_VERSION:=1.0.28
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=Ilia Zhirov <i.zhirov@adguard.com>
