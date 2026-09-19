@@ -7,7 +7,7 @@
 
 const { test, expect } = require('@playwright/test');
 const {
-	openView, stubReset, stubSet, framesFor, waitForFrames, installClock, button
+	openView, stubReset, stubSet, framesFor, waitForFrames, installClock, clickButton
 } = require('../helpers');
 
 // The fields the view's verdict()/renderFacts() read.
@@ -109,18 +109,18 @@ test('verdict and facts render immediately, without waiting for the poll', async
 test('Start/Stop/Restart call the service method with the right action', async ({ page }) => {
 	await openView(page, 'status');
 
-	await button(page, 'Enable').click();
+	await clickButton(page, 'Enable');
 	await waitForFrames(page, 'luci.trusttunnel', 'service', 1);
 	let frames = await framesFor(page, 'luci.trusttunnel', 'service');
 	expect(frames[0].args.action).toBe('start');
 	await expect(page.locator('#maincontent .alert-message')).toContainText('Done');
 
-	await button(page, 'Disable').click();
+	await clickButton(page, 'Disable');
 	await waitForFrames(page, 'luci.trusttunnel', 'service', 2);
 	frames = await framesFor(page, 'luci.trusttunnel', 'service');
 	expect(frames[1].args.action).toBe('stop');
 
-	await button(page, 'Restart service').click();
+	await clickButton(page, 'Restart service');
 	await waitForFrames(page, 'luci.trusttunnel', 'service', 3);
 	frames = await framesFor(page, 'luci.trusttunnel', 'service');
 	expect(frames[2].args.action).toBe('restart');
@@ -130,7 +130,7 @@ test('service failure surfaces a warning notification', async ({ page }) => {
 	await stubSet(page, { service: { code: 0, output: 'boom', not_running: true } });
 	await openView(page, 'status');
 
-	await button(page, 'Enable').click();
+	await clickButton(page, 'Enable');
 	await expect(page.locator('#maincontent .alert-message.warning')).toContainText(
 		'The service did not start. Open the Client log tab to see why.');
 });
@@ -141,7 +141,7 @@ test('Preview rules checks the assigned profile rule by rule', async ({ page }) 
 	// golden for bank.example verdicts 'direct'.
 	await openView(page, 'status');
 
-	await button(page, 'Preview rules').click();
+	await clickButton(page, 'Preview rules');
 	const modal = page.locator('#modal_overlay .modal');
 	await expect(modal).toContainText('Rule preview — Default');
 	await expect(modal).toContainText(
@@ -174,7 +174,7 @@ test('Preview rules without a profile shows the do-not-bypass list', async ({ pa
 	});
 	await openView(page, 'status');
 
-	await button(page, 'Preview rules').click();
+	await clickButton(page, 'Preview rules');
 	const modal = page.locator('#modal_overlay .modal');
 	await expect(modal).toContainText('Rule preview');
 	await expect(modal).toContainText('No routing profile is assigned');

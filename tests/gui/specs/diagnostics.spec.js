@@ -8,7 +8,7 @@ const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
 const {
-	openView, stubReset, stubSet, framesFor, waitForFrames, button
+	openView, stubReset, stubSet, framesFor, waitForFrames, clickButton
 } = require('../helpers');
 
 // Byte-exact backend contract outputs, so the GUI tests see what the
@@ -50,7 +50,7 @@ test('opening the view does not run the checks', async ({ page }) => {
 test('diagnose renders the verdict banner with counts', async ({ page }) => {
 	await openView(page, 'diagnostics');
 
-	await button(page, 'Run checks').click();
+	await clickButton(page, 'Run checks');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
 	await expect(page.locator('#view .alert-message.danger')).toContainText('there are problems');
@@ -62,7 +62,7 @@ test('diagnose renders the verdict banner with counts', async ({ page }) => {
 test('checks are grouped in the fixed order, problems first', async ({ page }) => {
 	await openView(page, 'diagnostics');
 
-	await button(page, 'Run checks').click();
+	await clickButton(page, 'Run checks');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
 	// The baked diagnose has fails/warns; the passed checks are hidden
@@ -90,10 +90,10 @@ test('checks are grouped in the fixed order, problems first', async ({ page }) =
 test('toggle reveals the passed checks', async ({ page }) => {
 	await openView(page, 'diagnostics');
 
-	await button(page, 'Run checks').click();
+	await clickButton(page, 'Run checks');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
-	await button(page, 'Show the checks that passed').click();
+	await clickButton(page, 'Show the checks that passed');
 	const hidden = page.locator('#view div[style*="display:none"]');
 	await expect(hidden).toHaveCount(0);
 	for (const c of hiddenChecks(DIAGNOSE.checks))
@@ -104,7 +104,7 @@ test('healthy diagnose shows the warn banner', async ({ page }) => {
 	await stubSet(page, { diagnose: HEALTHY });
 	await openView(page, 'diagnostics');
 
-	await button(page, 'Run checks').click();
+	await clickButton(page, 'Run checks');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
 	await expect(page.locator('#view .alert-message.warning')).toContainText('works, with remarks');
@@ -113,10 +113,10 @@ test('healthy diagnose shows the warn banner', async ({ page }) => {
 test('Run checks re-runs the diagnose chain', async ({ page }) => {
 	await openView(page, 'diagnostics');
 
-	await button(page, 'Run checks').click();
+	await clickButton(page, 'Run checks');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 1);
 
-	await button(page, 'Run checks').click();
+	await clickButton(page, 'Run checks');
 	await waitForFrames(page, 'luci.trusttunnel', 'diagnose', 2);
 });
 
@@ -140,7 +140,7 @@ test('domain check renders the verdict table', async ({ page }) => {
 test('ping renders loss and round-trip times', async ({ page }) => {
 	await openView(page, 'diagnostics');
 
-	await button(page, 'Ping server').click();
+	await clickButton(page, 'Ping server');
 	await waitForFrames(page, 'luci.trusttunnel', 'ping', 1);
 
 	await expect(page.locator('#view')).toContainText('1.2.3.4');
@@ -151,7 +151,7 @@ test('ping renders loss and round-trip times', async ({ page }) => {
 test('address compare renders the tunnel and direct addresses', async ({ page }) => {
 	await openView(page, 'diagnostics');
 
-	await button(page, 'Compare addresses').click();
+	await clickButton(page, 'Compare addresses');
 	await waitForFrames(page, 'luci.trusttunnel', 'probe', 1);
 
 	await expect(page.locator('#view')).toContainText('Through the tunnel');

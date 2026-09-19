@@ -69,6 +69,8 @@ if ! tt_gui_ensure_luci "$CACHE"; then
 fi
 [ -f "$LUCI_HTDOCS/luci-static/resources/luci.js" ] ||
 	{ echo "  FAIL: luci-base resources missing at $LUCI_HTDOCS"; exit 1; }
+[ -f "$CACHE/themes/luci-theme-bootstrap/htdocs/luci-static/bootstrap/cascade.css" ] ||
+	{ echo "  FAIL: bootstrap theme css missing (stale cache; remove tests/gui/.cache and re-run)"; exit 1; }
 
 # --- npm dependencies (host-side, mounted into the container) ----------------
 
@@ -84,6 +86,7 @@ fi
 
 # Paths as the container sees them: the repo is mounted at /src.
 LUCI_HTDOCS_IN="/src/tests/gui/.cache/modules/luci-base/htdocs"
+THEME_HTDOCS_IN="/src/tests/gui/.cache/themes/luci-theme-bootstrap/htdocs"
 
 echo "  running GUI specs in $PLAYWRIGHT_IMAGE ..."
 
@@ -97,6 +100,7 @@ docker run --rm \
 			--port '$PORT' \
 			--app /src/packages/luci-app-trusttunnel/htdocs \
 			--luci '$LUCI_HTDOCS_IN' \
+			--theme '$THEME_HTDOCS_IN' \
 			--goldens /src/tests/backend/goldens &
 		SRV=\$!
 		sleep 1

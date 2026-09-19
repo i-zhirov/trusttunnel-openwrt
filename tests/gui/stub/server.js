@@ -28,6 +28,7 @@
 // Usage: node tests/gui/stub/server.js --port 8123
 //        --app <repo>/packages/luci-app-trusttunnel/htdocs
 //        --luci <luci-base>/htdocs
+//        --theme <luci-theme-bootstrap>/htdocs   (optional: production styling)
 //        --goldens <repo>/tests/backend/goldens
 //
 // For a manual development loop (no docker, no build) run tests/gui/dev.sh:
@@ -46,6 +47,7 @@ function arg(name, def) {
 const PORT = +arg('--port', process.env.STUB_PORT || 8123);
 const APP_HTDOCS = arg('--app');
 const LUCI_HTDOCS = arg('--luci');
+const THEME_HTDOCS = arg('--theme');
 const GOLDENS = arg('--goldens');
 const VIEW_DIR = 'luci-static/resources/view/trusttunnel';
 
@@ -324,11 +326,21 @@ function handleControl(req, res, body) {
 // ---------------------------------------------------------------------------
 
 function shell(view) {
+	// Production LuCI links the bootstrap theme css (and its mobile
+	// variant) from the media url base; without --theme the page stays
+	// unstyled, which is fine for logic-only work but hides layout
+	// problems.
+	const css = THEME_HTDOCS
+		? `<link rel="stylesheet" href="/luci-static/bootstrap/cascade.css">
+<link rel="stylesheet" media="only screen and (max-device-width: 854px)" href="/luci-static/bootstrap/mobile.css" />`
+		: '';
+
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>TrustTunnel | ${view}</title>
+${css}
 <script src="/luci-static/resources/cbi.js"></script>
 <script src="/luci-static/resources/luci.js?v=1"></script>
 <script>
@@ -380,6 +392,9 @@ L = new LuCI({
 
 function serveStatic(res, rel) {
 	const roots = [ path.join(APP_HTDOCS, 'luci-static'), path.join(LUCI_HTDOCS, 'luci-static') ];
+
+	if (THEME_HTDOCS)
+		roots.push(path.join(THEME_HTDOCS, 'luci-static'));
 
 	for (const root of roots) {
 		const file = path.join(root, rel);
@@ -445,7 +460,10 @@ const server = http.createServer((req, res) => {
 		return;
 	}
 
-	if (req.method === 'GET' && url.pathname.startsWith('/luci-static/resources/')) {
+	if (req.method === 'GET' && url.pathname.startsWith('/luci-static/')) {
+		// Everything under /luci-static/: the app overlay first, then the
+		// pinned luci-base tree, then the bootstrap theme (resources,
+		// cascade.css, mobile.css and the icons).
 		serveStatic(res, url.pathname.slice('/luci-static/'.length));
 		return;
 	}
