@@ -263,7 +263,10 @@ file compiles under the pinned ucode.
 - `log.js` — a tail of the system-log lines written by the client and
   the service (the `log` RPC), fetched during `load()` so the first
   paint already shows it, then refreshed in place by a 10 s poll; the
-  status verdicts and the backend diagnose hints point users here.
+  status verdicts and the backend diagnose hints point users here. The
+  Export client logs button re-fetches the whole ring buffer (5000
+  lines) and downloads it as a timestamped text file via a Blob —
+  purely client-side, no backend or ACL surface.
 - `settings.js` — a single tabbed `form.Map` whose sections become tabs
   (General, Server, Proxy, Routing profiles, Advanced), plus the
   Import… modal that calls `import_config` and applies results to

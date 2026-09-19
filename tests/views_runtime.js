@@ -478,6 +478,30 @@ async function main() {
         'log: the poll refreshes the tail in place');
     ok(!hasText(logTree, 'line one'), 'log: the refreshed content replaced the old lines');
 
+    // The export button downloads the whole ring buffer as a text file:
+    // stub the browser download APIs and capture what the handler builds.
+    const exported = { name: null, text: null };
+    global.Blob = function (parts) { exported.text = String(parts.join('')); };
+    global.URL = { createObjectURL: function () { return 'blob:mock'; }, revokeObjectURL: function () {} };
+    global.document = {
+        body: {
+            appendChild: function (a) {
+                exported.name = a.attrs.download;
+                a.click = function () {};
+            },
+            removeChild: function () {}
+        }
+    };
+    const exportBtn = findButtons(logTree).find(b => String(b.children[0]) === 'Export client logs');
+    ok(exportBtn !== null, 'log: Export client logs button present');
+    await click(exportBtn);
+    await Promise.resolve();
+    await Promise.resolve();
+    ok(exported.name !== null && /^trusttunnel-client-\d{8}-\d{6}\.log$/.test(exported.name),
+        'log: the export names the file with a timestamp');
+    ok(exported.text.indexOf('line three') !== -1 && exported.text.indexOf('line four') !== -1,
+        'log: the export carries the log lines');
+
     // ===== settings.js =====
     console.log('== settings.js');
     const settingsView = loadView('settings.js');
