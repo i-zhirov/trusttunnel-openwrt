@@ -127,6 +127,38 @@ if [ -z "$_has_profile" ]; then
 	logger -t trusttunnel "created the default routing profile; the old direct list moved into its bypass rules"
 fi
 
+# Seed the active-server selection on installs that predate it: the
+# endpoint sections are repeatable now and main.endpoint names the ACTIVE
+# one. A pre-feature config carries exactly one endpoint section without a
+# `name`; give it the Default name (or keep an existing one) and select
+# it. Configs that already select a server — including the shipped
+# default — are left alone.
+# shellcheck disable=SC2329,SC2154
+_find_first_endpoint() {
+	[ -n "$_first_endpoint_sec" ] && return 0
+	_first_endpoint_sec=$1
+}
+
+_first_endpoint_sec=""
+config_foreach _find_first_endpoint endpoint
+config_get _active_server main endpoint
+if [ -z "$_active_server" ] && [ -n "$_first_endpoint_sec" ]; then
+	_name=""
+	config_get _name "$_first_endpoint_sec" name
+	[ -n "$_name" ] || {
+		uci set "trusttunnel.$_first_endpoint_sec.name"='Default'
+		_name="Default"
+	}
+	# uci set cannot create a section, so a missing main section (a
+	# minimal pre-feature config) is created first.
+	if ! uci -q get trusttunnel.main >/dev/null 2>&1; then
+		uci set trusttunnel.main='main'
+	fi
+	uci set trusttunnel.main.endpoint="$_name"
+	uci commit trusttunnel
+	logger -t trusttunnel "selected the $_name endpoint as the active server"
+fi
+
 # The Versions tab on the Settings page renders a form section of type
 # 'about'; map-level tabs are keyed by the UCI section type, so the tab
 # needs the section to exist even though it carries no options. Create it

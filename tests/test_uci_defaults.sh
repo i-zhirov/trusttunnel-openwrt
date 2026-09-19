@@ -165,15 +165,22 @@ EOF
 }
 
 # The default trusttunnel fixture shape is the shipped-config shape: the
-# proxy section, a routing_profile section and the UI-only about section
-# already present, so the seed blocks are a no-op. The upgrade shape (no
-# profile, populated domains.direct, no proxy, no about section) is
-# written by the scenarios that need the seed blocks to fire.
+# proxy section, an endpoint with the Default name, main.endpoint already
+# selecting it, a routing_profile section and the UI-only about section
+# present, so every seed block is a no-op. The upgrade shape (no name, no
+# selector, no profile, populated domains.direct, no proxy, no about
+# section) is written by the scenarios that need the seed blocks to fire.
 ucd_trusttunnel_default() {
     ucd_t_dir=$1
     cat > "$ucd_t_dir/trusttunnel" <<'EOF'
 config proxy 'proxy'
 	option address '127.0.0.1:1080'
+
+config endpoint 'endpoint'
+	option name 'Default'
+
+config main 'main'
+	option endpoint 'Default'
 
 config routing_profile
 	option name 'Default'
@@ -393,6 +400,12 @@ EOF
         "upgrade: every domains.direct value moved into bypass_rules"
     assert_contains "$ucd_tt1" "endpoint.routing_profile='Default'" \
         "upgrade: the endpoint references the seeded profile"
+    assert_contains "$ucd_tt1" "endpoint.name='Default'" \
+        "upgrade: the migrated endpoint carries the Default name"
+    assert_contains "$ucd_tt1" "main.endpoint='Default'" \
+        "upgrade: the endpoint is selected as the active server"
+    assert_eq "1" "$(ucd_grep_count 'selected the Default endpoint as the active server' "$ucd_out")" \
+        "upgrade: the server-seed log line appears exactly once"
     assert_contains "$ucd_tt1" "trusttunnel.about=about" \
         "upgrade: the UI-only about section (Versions tab) is created"
     assert_contains "$ucd_tt1" "trusttunnel.proxy=proxy" \
@@ -505,6 +518,12 @@ EOF
         "idempotent: the about section is not duplicated"
     assert_eq "1" "$(ucd_grep_count 'created the proxy section with the default listener address' "$ucd_out")" \
         "idempotent: the proxy seed log line appears exactly once"
+    assert_contains "$ucd_tt2" "endpoint.name='Default'" \
+        "idempotent: the endpoint keeps its seeded name after run 2"
+    assert_contains "$ucd_tt2" "main.endpoint='Default'" \
+        "idempotent: the active server stays selected after run 2"
+    assert_eq "1" "$(ucd_grep_count 'selected the Default endpoint as the active server' "$ucd_out")" \
+        "idempotent: the server-seed log line appears exactly once"
 }
 
 # --- runner -------------------------------------------------------------------

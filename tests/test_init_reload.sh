@@ -47,14 +47,6 @@ make_stub "$lab/lib/uci-export" <<'EOF'
 cat "$NEXT_RECORDS"
 EOF
 
-# The certificate never lands in records (PEM is multi-line), so apply_config
-# compares it with a separate uci call.
-make_stub "$bin/uci" <<'EOF'
-#!/bin/sh
-cat "$CERT_FROM_UCI" 2>/dev/null
-exit 0
-EOF
-
 PATH="$bin:$PATH"
 export PATH
 
@@ -84,6 +76,29 @@ regen_config() {
 }
 running() { return "${RUNNING_RC:-0}"; }
 logger() { :; }
+
+# The certificate never lands in records (PEM is multi-line), so apply_config
+# compares it with a separate read of the ACTIVE server, resolved through the
+# config shell library — stubbed here as one self-named endpoint section
+# selected by TT_ACTIVE_SERVER, with the certificate served from CERT_FROM_UCI.
+config_load() { :; }
+config_foreach() {
+	for _s in ${TT_ENDPOINT_SECTIONS:-Default}; do
+		"$1" "$_s"
+	done
+}
+config_get() {
+	_var=$1
+	_sec=$2
+	_opt=$3
+	_val=""
+	case "$_opt" in
+		endpoint) _val="${TT_ACTIVE_SERVER:-Default}" ;;
+		name) _val="$_sec" ;;
+		certificate) _val=$(cat "$CERT_FROM_UCI" 2>/dev/null) ;;
+	esac
+	eval "$_var=\"\$_val\""
+}
 
 # The call log is read as one line for the assertions below.
 log_read() { tr '\n' ' ' < "$CALL_LOG" | sed 's/ $//'; }
