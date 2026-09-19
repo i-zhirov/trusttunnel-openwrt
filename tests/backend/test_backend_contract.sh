@@ -20,6 +20,17 @@
 #   goldens/proxy-healthy/*.json — proxy mode with a live listener on the
 #                              configured address and a tunnel-answering
 #                              curl stub
+#   goldens/bypass/*.json     — a bypass profile with an empty VPN-rules
+#                              list: nothing is tunneled by config, so the
+#                              tunnel check becomes a remark instead of a
+#                              misleading failure
+#   goldens/bypass-rule/*.json — the bypass profile with one tunneled
+#                              domain rule: the check probes that rule
+#                              through the tunnel (the "tunnel reaches"
+#                              ok branch)
+#   goldens/bypass-rule-off/*.json — the same rule but the via leg fails:
+#                              the "no response through the tunnel"
+#                              failure branch
 #
 # Docker-gated like test_uci_defaults.sh: without docker the test reports
 # SKIP (exit 77, tt_skip), which the suite runner counts as skipped — the
@@ -112,8 +123,9 @@ LAB_HEALTHY="tt-contract-healthy"
 LAB_STOPPED="tt-contract-stopped"
 LAB_PROXY="tt-contract-proxy"
 LAB_PROXY_HEALTHY="tt-contract-proxy-healthy"
-docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" "$LAB_STOPPED" "$LAB_PROXY" "$LAB_PROXY_HEALTHY" >/dev/null 2>&1
-trap 'docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" "$LAB_STOPPED" "$LAB_PROXY" "$LAB_PROXY_HEALTHY" >/dev/null 2>&1' EXIT
+LAB_BYPASS="tt-contract-bypass"
+docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" "$LAB_STOPPED" "$LAB_PROXY" "$LAB_PROXY_HEALTHY" "$LAB_BYPASS" >/dev/null 2>&1
+trap 'docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" "$LAB_STOPPED" "$LAB_PROXY" "$LAB_PROXY_HEALTHY" "$LAB_BYPASS" >/dev/null 2>&1' EXIT
 
 # --- Phase A: the baked rootfs state (no tun device) ---------------------
 docker run --rm -d --name "$LAB_BAKED" -v "$(pwd)":/ws tt-backend-rootfs sleep 300 >/dev/null || tt_skip "cannot start the lab container"
@@ -322,5 +334,62 @@ while [ "$_i" -lt 20 ]; do
 	sleep 1
 done
 check_goldens "$LAB_PROXY_HEALTHY" "$BASE/goldens/proxy-healthy"
+
+# --- Phase F: bypass profile with an empty VPN-rules list -------------------
+# Bypass mode tunnels only the VPN rules; an empty list means the client
+# sends every connection out directly. The tunnel probe cannot compare
+# egress addresses for a destination that is not tunneled, so the check
+# must report the config as a remark instead of a misleading failure.
+# Pins the "nothing is tunneled by config" warn branch.
+BYPASS_RECORDS='main.enabled	1
+main.log_level	debug
+endpoint.hostname	vpn.example.com
+endpoint.username	alice
+endpoint.password	s3cret
+endpoint.protocol	http2
+endpoint.anti_dpi	1
+endpoint.post_quantum	0
+endpoint.skip_verification	1
+endpoint.has_ipv6	0
+endpoint.custom_sni	vpn.example.com
+endpoint.client_random	0a0b0c/0f0f0f
+endpoint.routing_profile	Default
+endpoint.address	1.2.3.4:443
+endpoint.address	[2001:db8::1]:443
+endpoint.dns_upstream	tls://1.1.1.1
+routing_profile.name	Default
+routing_profile.mode	bypass
+network.mtu	1400
+network.table	880
+network.fwmark	0x9527
+network.blackhole_on_down	1
+network.include_router_traffic	0
+network.lan_devices	br-lan
+domains.direct	legacy.example'
+
+docker run --rm -d --name "$LAB_BYPASS" -v "$(pwd)":/ws tt-backend-rootfs sleep 300 >/dev/null || tt_skip "cannot start the bypass lab container"
+printf '%s\n' "$BYPASS_RECORDS" | docker exec -i "$LAB_BYPASS" sh -c 'cat > /var/etc/trusttunnel/settings.tsv' >/dev/null 2>&1
+check_goldens "$LAB_BYPASS" "$BASE/goldens/bypass"
+
+# --- Phase G: the bypass profile with one tunneled domain rule --------------
+# The same state plus one VPN rule: the check probes that rule through the
+# tunnel (the baked curl stub answers ok), pinning the "tunnel reaches"
+# ok branch.
+docker exec "$LAB_BYPASS" sh -c "printf 'routing_profile.vpn_rules\ttelegram.org\n' >> /var/etc/trusttunnel/settings.tsv" >/dev/null 2>&1
+check_goldens "$LAB_BYPASS" "$BASE/goldens/bypass-rule"
+
+# --- Phase H: the tunneled rule is unreachable through the tunnel -----------
+# The via leg fails: the check reports the rule as unreachable through the
+# tunnel — the "no response from ... through the tunnel" failure branch.
+docker exec "$LAB_BYPASS" sh -c '
+cat > /usr/bin/curl <<"EOF"
+#!/bin/sh
+case "$*" in
+	*--interface*) exit 1 ;;
+	*) echo "203.0.113.77" ;;
+esac
+EOF
+chmod +x /usr/bin/curl' >/dev/null 2>&1
+check_goldens "$LAB_BYPASS" "$BASE/goldens/bypass-rule-off"
 
 tt_test_summary
