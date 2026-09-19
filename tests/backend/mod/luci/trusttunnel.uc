@@ -287,6 +287,10 @@ return {
 					rule: rs.rule,
 					table: rs.table,
 					nft: rs.nft,
+					// The ACTIVE server's name (main.endpoint): the records
+					// carry only the active server's fields, so this is
+					// what distinguishes it when several are saved.
+					server: first(rec, 'endpoint.name', ''),
 					endpoint_hostname: first(rec, 'endpoint.hostname', ''),
 					addresses: rec['endpoint.address'] ?? [],
 					client_installed: access(CLIENT) ? true : false,
@@ -363,7 +367,17 @@ return {
 				    action != 'restart' && action != 'reload')
 					return { error: 'unknown action' };
 
-				let r = run('/etc/init.d/trusttunnel ' + action);
+				// An explicit start (or restart) from the Status page
+				// runs the tunnel NOW even while main.enabled is off:
+				// the switch gates the automatic starts only. The marker
+				// env var is how start_service tells an explicit request
+				// apart from the boot, the wan-up trigger and the
+				// config-reload paths.
+				let cmd = (action == 'start' || action == 'restart')
+					? 'TT_START_NOW=1 /etc/init.d/trusttunnel ' + action
+					: '/etc/init.d/trusttunnel ' + action;
+
+				let r = run(cmd);
 
 				// A start is only a start once the service answers
 				// "running": procd forks the client asynchronously, so the
@@ -555,6 +569,7 @@ return {
 				let user = first(rec, 'endpoint.username', '');
 				let pass = first(rec, 'endpoint.password', '');
 				let addrs = rec['endpoint.address'] ?? [];
+				let server = first(rec, 'endpoint.name', '');
 				let pname = first(rec, 'routing_profile.name', '');
 				let pmode = first(rec, 'routing_profile.mode', '');
 				let mtu_cfg = first(rec, 'network.mtu', '1350');
@@ -563,6 +578,16 @@ return {
 				let paddr = first(rec, 'proxy.address', '');
 
 				// --- Configuration ---
+
+				// The active server is the root of the config: with none
+				// selected the records carry no endpoint fields at all, so
+				// this check explains why the address and the credentials
+				// checks below report unset.
+				if (length(server))
+					push(checks, check('config', 'Active server', 'ok', server, ''));
+				else
+					push(checks, check('config', 'Active server', 'fail', 'none selected',
+						'Select one of the saved servers as the active one on the Settings page.'));
 
 				if (length(addrs))
 					push(checks, check('config', 'Server address', 'ok', join(', ', addrs), ''));
@@ -623,7 +648,7 @@ return {
 					push(checks, check('service', 'Service running', 'ok', 'on', ''));
 				else
 					push(checks, check('service', 'Service running', 'fail', 'off',
-						'Press Start and look at the client log below.'));
+						'Press Start and open the Client log tab.'));
 
 				// --- Kernel ---
 
@@ -646,16 +671,16 @@ return {
 						push(checks, check('kernel', 'SOCKS listener', 'ok', 'bound at ' + paddr, ''));
 					else
 						push(checks, check('kernel', 'SOCKS listener', 'fail', 'not bound',
-							'The listener is bound by the client at start; a bind error or a port conflict keeps it down. See the client log below.'));
+							'The listener is bound by the client at start; a bind error or a port conflict keeps it down. Open the Client log tab.'));
 				} else {
 					let dev_sys = length(dev) ? '/sys/class/net/' + dev : '';
 
 					if (!length(dev)) {
 						push(checks, check('kernel', 'Tunnel device', running ? 'fail' : 'skip', 'the client has not created it yet',
-							'The tun device is created by the client, not by this package. See the client log below.'));
+							'The tun device is created by the client, not by this package. Open the Client log tab.'));
 					} else if (access(dev_sys) == null) {
 						push(checks, check('kernel', 'Tunnel device', 'fail', 'the client has not created it yet',
-							'The tun device is created by the client, not by this package. See the client log below.'));
+							'The tun device is created by the client, not by this package. Open the Client log tab.'));
 					} else {
 						let dev_mtu = trim(readfile(dev_sys + '/mtu') ?? '');
 						push(checks, check('kernel', 'Tunnel device', 'ok',
@@ -681,7 +706,7 @@ return {
 							push(checks, check('kernel', 'Carrier state', 'ok', 'link up', ''));
 						else
 							push(checks, check('kernel', 'Carrier state', 'warn', 'link down',
-								'The device exists but the tunnel is not established yet; that is on the client, not the routing. See the client log.'));
+								'The device exists but the tunnel is not established yet; that is on the client, not the routing. Open the Client log tab.'));
 					}
 
 					if (rs.rule)
@@ -760,15 +785,27 @@ return {
 							length(tip) ? tip : 'request error',
 							'A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.'));
 				} else if (running && length(dev)) {
+					// include_router_traffic=1 extends the output chain to
+					// router-originated traffic, so the plain probe follows
+					// the tunnel too: identical addresses are then the
+					// EXPECTED healthy state, not a failure — the direct
+					// path cannot be sampled from the router at all while
+					// the config tunnels everything it originates. Only
+					// with the option off do identical addresses mean the
+					// unmarked leg leaked into the tunnel path.
+					let router_traffic = first(rec, 'network.include_router_traffic', '0') == '1';
 					let via = run('curl -fsS --max-time 8 --interface ' + shell_quote(dev) + ' https://api.ipify.org', true);
 					let plain = run('curl -fsS --max-time 8 https://api.ipify.org', true);
 					let tip = trim(via.out);
 					let dip = trim(plain.out);
 
-					if (via.code == 0 && plain.code == 0 && tip == dip)
+					if (via.code == 0 && plain.code == 0 && tip == dip && router_traffic)
+						push(checks, check('network', 'Traffic takes the tunnel', 'ok',
+							'tunnel ' + tip + ' (router traffic is tunneled by config)', ''));
+					else if (via.code == 0 && plain.code == 0 && tip == dip)
 						push(checks, check('network', 'Traffic takes the tunnel', 'fail',
 							'identical addresses via both routes: ' + tip,
-							'The tunnel is up, yet traffic is not going through it.'));
+							'The direct probe followed the tunnel — the marking rules may still carry the output chain from an include_router_traffic=1 configuration, or the router shares its public address with the endpoint. Reload the service, or judge by a LAN client.'));
 					else if (via.code == 0 && plain.code == 0)
 						push(checks, check('network', 'Traffic takes the tunnel', 'ok',
 							'tunnel ' + tip + ' vs direct ' + dip, ''));

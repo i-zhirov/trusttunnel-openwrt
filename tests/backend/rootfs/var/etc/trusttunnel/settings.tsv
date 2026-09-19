@@ -1,5 +1,6 @@
 main.enabled	1
 main.log_level	debug
+endpoint.name	Default
 endpoint.hostname	vpn.example.com
 endpoint.username	alice
 endpoint.password	s3cret

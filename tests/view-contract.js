@@ -148,6 +148,7 @@ const ALLOWLIST = [
 	/^.+ \(.+\)$/,                                        // pname + ' (' + pmode + ')'
 	/^user .+$/,                                          // 'user ' + user
 	/^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/,                     // endpoint hostname
+	/^[A-Za-z0-9][A-Za-z0-9._-]*$/,                       // endpoint.name — a user-chosen server name ('Default' etc.)
 	/^identical addresses via both routes: .+$/,          // 'identical addresses via both routes: ' + tip
 	/^bound at .+$/,                                      // 'bound at ' + paddr
 	/^.+ with MTU \d+$/,                                  // dev + ' with MTU ' + dev_mtu

@@ -287,6 +287,10 @@ return {
 					rule: rs.rule,
 					table: rs.table,
 					nft: rs.nft,
+					// The ACTIVE server's name (main.endpoint): the records
+					// carry only the active server's fields, so this is
+					// what distinguishes it when several are saved.
+					server: first(rec, 'endpoint.name', ''),
 					endpoint_hostname: first(rec, 'endpoint.hostname', ''),
 					addresses: rec['endpoint.address'] ?? [],
 					client_installed: access(CLIENT) ? true : false,
@@ -565,6 +569,7 @@ return {
 				let user = first(rec, 'endpoint.username', '');
 				let pass = first(rec, 'endpoint.password', '');
 				let addrs = rec['endpoint.address'] ?? [];
+				let server = first(rec, 'endpoint.name', '');
 				let pname = first(rec, 'routing_profile.name', '');
 				let pmode = first(rec, 'routing_profile.mode', '');
 				let mtu_cfg = first(rec, 'network.mtu', '1350');
@@ -573,6 +578,16 @@ return {
 				let paddr = first(rec, 'proxy.address', '');
 
 				// --- Configuration ---
+
+				// The active server is the root of the config: with none
+				// selected the records carry no endpoint fields at all, so
+				// this check explains why the address and the credentials
+				// checks below report unset.
+				if (length(server))
+					push(checks, check('config', 'Active server', 'ok', server, ''));
+				else
+					push(checks, check('config', 'Active server', 'fail', 'none selected',
+						'Select one of the saved servers as the active one on the Settings page.'));
 
 				if (length(addrs))
 					push(checks, check('config', 'Server address', 'ok', join(', ', addrs), ''));

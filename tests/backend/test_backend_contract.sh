@@ -228,6 +228,7 @@ main.mode	proxy
 proxy.address	0.0.0.0:1080
 proxy.username	lan
 proxy.password	lan-pass
+endpoint.name	Default
 endpoint.hostname	vpn.example.com
 endpoint.username	alice
 endpoint.password	s3cret
