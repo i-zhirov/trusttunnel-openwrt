@@ -48,9 +48,3 @@ config routing_profile
 # The legacy flat exclusion list; consulted only when no routing profile
 # is assigned.
 config domains 'domains'
-
-# UI-only section: it keys the Versions tab on the Settings page
-# (map-level tabs are keyed by the UCI section type). It carries no
-# options and uci-export never touches it; uci-defaults creates it on
-# installs that predate it.
-config about 'about'

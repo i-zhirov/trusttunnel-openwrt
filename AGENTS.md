@@ -219,8 +219,7 @@ First-boot / reinstall setup: dedups the `trusttunnel` firewall zone and
 forwarding, creates them when missing (zone bound to `tun+`, `lan →
 trusttunnel` forwarding), migrates old concrete `tt0` bindings to `tun+`,
 seeds the Default routing profile (migrating `domains.direct` into its
-bypass rules), creates the UI-only `about` section that keys the Versions
-tab on the Settings page, registers the rc.d link and clears LuCI caches.
+bypass rules), registers the rc.d link and clears LuCI caches.
 Idempotent; also run immediately by `install.sh`.
 
 ### rpcd backend (`/usr/share/rpcd/ucode/luci.trusttunnel`)

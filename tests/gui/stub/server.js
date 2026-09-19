@@ -89,11 +89,7 @@ const defaultUci = {
 		},
 		// The legacy "do not bypass" list, consulted when no profile is
 		// assigned (and by the status page's rule preview in that case).
-		domains: { '.type': 'domains', '.anonymous': true, direct: [ 'legacy.example' ] },
-		// The UI-only section that keys the Versions tab (map-level tabs
-		// are keyed by the UCI section type); uci-defaults creates it on
-		// installs that predate it.
-		about: { '.type': 'about' }
+		domains: { '.type': 'domains', '.anonymous': true, direct: [ 'legacy.example' ] }
 	}
 };
 
