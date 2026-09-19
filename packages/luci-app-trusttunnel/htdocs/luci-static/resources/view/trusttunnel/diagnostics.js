@@ -421,16 +421,19 @@ return view.extend({
 		// The chain walk is slow (it pings and probes) and touches the
 		// network; it runs only when the user presses Run checks. The
 		// 'not run yet' word comes from verdictWord(), the same phrasing
-		// the banner would use for a run that produced no verdict.
-		dom.content(diagnoseBox, E('p', verdictWord('')));
+		// the banner would use for a run that produced no verdict; the
+		// info banner keeps the empty state looking like the verdict
+		// banner instead of stray text.
+		dom.content(diagnoseBox, E('div', { 'class': 'alert-message info' }, verdictWord('')));
 
 		// Children as an ARRAY: current LuCI's E() (DOM.create) reads only
 		// arguments[2], so variadic children are silently dropped — this
 		// used to render nothing but the page title.
 		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', _('Diagnostics')),
+			E('h2', { 'class': 'cbi-map-title' }, _('Diagnostics')),
 
 			E('div', { 'class': 'cbi-section' }, [
+				E('h3', _('Checks')),
 				E('div', { 'class': 'cbi-section-descr' },
 					_('Checks the whole chain — configuration, prerequisites, service, kernel state and network — and says what to do about anything it finds.')
 				),
