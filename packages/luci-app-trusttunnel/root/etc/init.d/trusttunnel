@@ -281,11 +281,22 @@ fresh_client_tuns() {
 	done
 }
 
-# One-shot attach of the first client tun that already exists at service
-# start. The hotplug handler is the main mechanism for later devices; this
-# only covers the already-present-device edge, so a single attempt is enough.
+# Attach the first client tun created after <since>, waiting for it to
+# appear: the client creates its device asynchronously after spawn, and a
+# single attempt loses the race whenever the device is not there yet.
+# The hotplug hook is the fallback for later recreations, but its add
+# event can be skipped during a restart (the service's running state is
+# in flux), so the start path must not depend on it. The bound is short —
+# a healthy client's device appears within a second.
 attach_client_tun() {
-	_new=$(fresh_client_tuns "$1" | head -n 1)
+	_new=""
+	_i=0
+	while [ "$_i" -lt 10 ]; do
+		_i=$((_i + 1))
+		_new=$(fresh_client_tuns "$1" | head -n 1)
+		[ -n "$_new" ] && break
+		sleep 1
+	done
 	[ -n "$_new" ] || return 0
 	"$LIBDIR/routing" attach "$RECORDS" "$OUTDIR" "$_new"
 }

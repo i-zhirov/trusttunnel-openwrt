@@ -67,6 +67,10 @@ logger() { echo "logger $*" >> "$CALL_LOG"; }
 await_default_route() { return 0; }
 await_clock() { return 0; }
 highest_ifindex() { echo 0; }
+# The attach retries until the client's tun appears; on the developer
+# machine no tun ever appears, so the stub answers with a device at once
+# (the retry loop must not sleep through its whole bound in every test).
+fresh_client_tuns() { echo tun0; }
 procd_open_instance() { echo "procd_open_instance" >> "$CALL_LOG"; }
 procd_set_param() { echo "procd_set_param $1" >> "$CALL_LOG"; }
 procd_close_instance() { echo "procd_close_instance" >> "$CALL_LOG"; }
