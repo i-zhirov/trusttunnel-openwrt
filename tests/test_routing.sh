@@ -33,7 +33,18 @@ if [ "${1-}" = "list" ] && [ "${2-}" = "table" ]; then
 fi
 exit 0
 EOF
-chmod +x "$stub_dir/ip" "$stub_dir/nft"
+cat > "$stub_dir/logger" <<'EOF'
+#!/bin/sh
+printf '%s\n' "logger $*" >> "$TT_LOGGER_LOG"
+exit 0
+EOF
+chmod +x "$stub_dir/ip" "$stub_dir/nft" "$stub_dir/logger"
+
+# The logger stub shadows the real logger through PATH; its capture file
+# is separate from $TT_CMD_LOG so the "installs nothing" assertions keep
+# counting ip/nft invocations only.
+export PATH="$stub_dir:$PATH"
+export TT_LOGGER_LOG="$TT_TEST_TMP/logger.log"
 
 export TT_IP="$stub_dir/ip"
 export TT_NFT="$stub_dir/nft"
@@ -235,6 +246,28 @@ assert_eq "0" "$(wc -c < "$TT_CMD_LOG" | tr -d ' ')" \
 	"meter without a numeric port installs nothing"
 assert_eq "0" "$(wc -c < "$TT_NFT_STDIN" | tr -d ' ')" \
 	"meter without a numeric port loads no ruleset"
+
+# A failing nft must not swallow the reason: the meter logs nft's
+# stderr (the mirror of up's capture), so a persistently failing
+# install is diagnosable from the log rather than hidden behind the
+# non-fatal warning.
+cat > "$TT_TEST_TMP/failnft" <<'EOF'
+#!/bin/sh
+printf '%s\n' "nft $*" >> "$TT_CMD_LOG"
+echo "nft: no handler for this command" >&2
+exit 1
+EOF
+chmod +x "$TT_TEST_TMP/failnft"
+: > "$TT_CMD_LOG"
+: > "$TT_LOGGER_LOG"
+if TT_NFT="$TT_TEST_TMP/failnft" sh "$R" meter "$TT_TEST_TMP/proxy.tsv" "$TT_TEST_TMP" 2>/dev/null; then
+	_tt_fail "meter with a failing nft exits non-zero"
+else
+	_tt_pass "meter with a failing nft exits non-zero"
+fi
+failnft_log=$(cat "$TT_LOGGER_LOG")
+assert_contains "$failnft_log" 'failed to install the usage meter' "the meter logs the failure"
+assert_contains "$failnft_log" 'no handler for this command' "the meter logs nft's stderr"
 
 # --- status with the meter ------------------------------------------------------
 

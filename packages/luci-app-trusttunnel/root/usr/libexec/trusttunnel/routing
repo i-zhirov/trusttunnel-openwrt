@@ -288,7 +288,9 @@ emit_meter_ruleset() {
 # meter — install the proxy-mode usage meter. Tun mode owns the kernel
 # routing and must not see these rules (the same mutual exclusion as up
 # refusing proxy mode); a meter without a numeric listener port is
-# refused rather than silently counting nothing.
+# refused rather than silently counting nothing. nft's stderr is kept
+# like up does, so a persistently failing install is diagnosable from
+# the log rather than hidden behind the non-fatal warning.
 meter() {
     if [ "$(tt_get main.mode)" != "proxy" ]; then
         logger -t trusttunnel "routing: the meter applies only in proxy mode"
@@ -302,8 +304,10 @@ meter() {
             return 1
             ;;
     esac
-    if ! emit_meter_ruleset "$port" | "$TT_NFT" -f - 2>/dev/null; then
-        logger -t trusttunnel "routing: failed to install the usage meter"
+    err_tmp=$(mktemp) || return 1
+    trap 'rm -f "$err_tmp"' EXIT INT TERM
+    if ! emit_meter_ruleset "$port" | "$TT_NFT" -f - 2> "$err_tmp"; then
+        logger -t trusttunnel "routing: failed to install the usage meter: $(cat "$err_tmp")"
         return 1
     fi
     logger -t trusttunnel "routing: usage meter on port $port"
