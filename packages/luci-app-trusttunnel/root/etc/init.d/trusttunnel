@@ -121,9 +121,14 @@ start_service() {
 	# client would blackhole DNS otherwise) and remembers the newest
 	# existing tun index before the client creates its own device, so the
 	# attach below only ever touches the fresh one. Proxy mode needs no
-	# routing: the client binds the SOCKS listener itself.
+	# routing: the client binds the SOCKS listener itself, and the usage
+	# meter (byte counters on the listener port) is a nicety — a failed
+	# meter must not take the tunnel down with it.
 	if mode_is_proxy; then
 		_tun_since=0
+		if ! "$LIBDIR/routing" meter "$RECORDS" "$OUTDIR"; then
+			logger -t trusttunnel "warning: usage metering is not active"
+		fi
 	else
 		if ! "$LIBDIR/routing" up "$RECORDS" "$OUTDIR"; then
 			logger -t trusttunnel "error: routing setup failed"
