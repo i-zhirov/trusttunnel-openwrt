@@ -42,9 +42,11 @@ test('opening the view does not run the checks', async ({ page }) => {
 	await openView(page, 'diagnostics');
 
 	// The chain runs on demand only: no diagnose frame until the button is
-	// pressed, and the box explains that nothing ran yet.
+	// pressed, the box explains that nothing ran yet, and the report
+	// button stays disabled until a run produced something to copy.
 	expect(await framesFor(page, 'luci.trusttunnel', 'diagnose')).toHaveLength(0);
 	await expect(page.locator('#view')).toContainText('not run yet');
+	await expect(page.locator('#view button', { hasText: 'Copy report' })).toBeDisabled();
 });
 
 test('diagnose renders the verdict banner with counts', async ({ page }) => {
@@ -57,6 +59,7 @@ test('diagnose renders the verdict banner with counts', async ({ page }) => {
 	await expect(page.locator('#view .alert-message.danger')).toContainText(
 		'checks passed: ' + DIAGNOSE.counts.ok + ', remarks: ' + DIAGNOSE.counts.warn +
 		', problems: ' + DIAGNOSE.counts.fail + ', skipped: ' + DIAGNOSE.counts.skip);
+	await expect(page.locator('#view button', { hasText: 'Copy report' })).toBeEnabled();
 });
 
 test('checks are grouped in the fixed order, problems first', async ({ page }) => {

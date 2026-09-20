@@ -37,7 +37,9 @@ var exportLog = function() {
 		document.body.appendChild(a);
 		a.click();
 		document.body.removeChild(a);
-		URL.revokeObjectURL(url);
+		// Defer the revoke: Firefox can abort a download whose blob URL
+		// is revoked before the browser has picked it up.
+		setTimeout(function() { URL.revokeObjectURL(url); }, 0);
 	}).catch(function(e) {
 		ui.addNotification(null, E('p', e.message || String(e)), 'danger');
 	});

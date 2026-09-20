@@ -90,7 +90,7 @@ var DIAG_TEXT = {
 	'nothing is tunneled by config': _('nothing is tunneled by config'),
 	'The assigned profile runs in bypass mode and its VPN rules are empty: the client sends every connection out directly. Add rules to the profile, or switch it to VPN mode.': _('The assigned profile runs in bypass mode and its VPN rules are empty: the client sends every connection out directly. Add rules to the profile, or switch it to VPN mode.'),
 	'the tunneled rules cannot be probed': _('the tunneled rules cannot be probed'),
-	'The profile tunnels only IP or CIDR rules, which a plain HTTPS request cannot reach through the tunnel.': _('The profile tunnels only IP or CIDR rules, which a plain HTTPS request cannot reach through the tunnel.'),
+	'The profile tunnels only IP, CIDR or *.domain rules, which a plain HTTPS request cannot reach through the tunnel.': _('The profile tunnels only IP, CIDR or *.domain rules, which a plain HTTPS request cannot reach through the tunnel.'),
 	'the echo services are bypassed by config': _('the echo services are bypassed by config'),
 	'The profile sends the probe services (api.ipify.org, ifconfig.me, icanhazip.com) out directly; the tunnel path cannot be compared from the router.': _('The profile sends the probe services (api.ipify.org, ifconfig.me, icanhazip.com) out directly; the tunnel path cannot be compared from the router.'),
 	'A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.': _('A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.'),
@@ -251,11 +251,13 @@ var renderDiagnose = function (res) {
 var handleDiagnose = function (container) {
 	dom.content(container, E('p', { 'class': 'spinning' }, _('Running checks — this can take up to half a minute…')));
 
-	callDiagnose().then(function (res) {
+	return callDiagnose().then(function (res) {
 		lastDiagnose = res;
 		dom.content(container, renderDiagnose(res));
+		return true;
 	}).catch(function (err) {
 		dom.content(container, E('div', { 'class': 'alert-message danger' }, err.message || String(err)));
+		return false;
 	});
 };
 
@@ -295,6 +297,18 @@ return view.extend({
 		// banner instead of stray text.
 		dom.content(diagnoseBox, E('div', { 'class': 'alert-message info' }, verdictWord('')));
 
+		// The report serializes the LAST run; with the chain running on
+		// demand there is nothing to copy until the first run finished,
+		// so the button stays disabled until then (a click that silently
+		// did nothing would look broken).
+		var copyBtn = E('button', {
+			'class': 'cbi-button cbi-button-neutral',
+			'disabled': 'disabled',
+			'click': ui.createHandlerFn(this, function () {
+				handleCopyReport();
+			})
+		}, _('Copy report'));
+
 		// Children as an ARRAY: current LuCI's E() (DOM.create) reads only
 		// arguments[2], so variadic children are silently dropped — this
 		// used to render nothing but the page title.
@@ -309,16 +323,14 @@ return view.extend({
 				E('button', {
 					'class': 'cbi-button cbi-button-action',
 					'click': ui.createHandlerFn(this, function () {
-						handleDiagnose(diagnoseBox);
+						handleDiagnose(diagnoseBox).then(function (ok) {
+							if (ok)
+								copyBtn.disabled = false;
+						});
 					})
 				}, _('Run checks')),
 				' ',
-				E('button', {
-					'class': 'cbi-button cbi-button-neutral',
-					'click': ui.createHandlerFn(this, function () {
-						handleCopyReport();
-					})
-				}, _('Copy report')),
+				copyBtn,
 				diagnoseBox
 			])
 		]);
