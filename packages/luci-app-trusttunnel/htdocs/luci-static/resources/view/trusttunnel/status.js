@@ -382,6 +382,10 @@ return view.extend({
 	},
 
 	load: function() {
+		// The traffic baseline must not survive a view re-entry: the
+		// rates are poll deltas, so a baseline from a previous visit
+		// would paint a rate averaged over the whole away interval.
+		lastTraffic = null;
 		return callStatus();
 	},
 

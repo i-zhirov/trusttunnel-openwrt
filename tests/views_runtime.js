@@ -435,6 +435,20 @@ async function main() {
     ok(!hasText(noCountersTree, 'Traffic'),
         'status: no Traffic row without counters');
 
+    // Re-entering the view starts the traffic baseline fresh: the rates
+    // are poll deltas, so a baseline from a previous visit would paint
+    // a rate averaged over the whole away interval. Simulate 10 minutes
+    // of absence with a faked clock and a fresh load().
+    const realNow = Date.now;
+    Date.now = function () { return realNow() + 600000; };
+    const reentryData = await statusView.load();
+    const reentryTree = statusView.render(Object.assign({}, canned.status(), {
+        rx_bytes: 11534336, tx_bytes: 5767168
+    }));
+    Date.now = realNow;
+    ok(hasText(reentryTree, 'Down —') && hasText(reentryTree, 'Up —'),
+        'status: a re-entered view shows placeholder rates, not a stale average');
+
     // Preview rules: the button opens the modal for the assigned profile
     // (Test, bypass mode) and checks every VPN rule against the backend
     // one after another.
