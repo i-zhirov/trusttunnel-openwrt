@@ -60,6 +60,12 @@ function verdictRow(rule, res) {
 }
 
 return view.extend({
+	// Nothing to save on this page: without the nulls LuCI renders the
+	// default Save & Apply bar, which would sit here dead.
+	handleSaveApply: null,
+	handleSave: null,
+	handleReset: null,
+
 	verdict: function(st) {
 		var host = st.endpoint_hostname || (st.addresses || [])[0] || '';
 
@@ -349,24 +355,24 @@ return view.extend({
 
 		poll.add(refreshStatus, 10);
 
-		// The three service actions are declared as data and turned into
-		// buttons here, so the row stays a single place to extend.
-		var controls = [
-			{ verb: 'start', tone: 'apply', word: _('Enable') },
-			{ verb: 'stop', tone: 'reset', word: _('Disable') },
-			{ verb: 'restart', tone: 'action', word: _('Restart service') }
-		];
+		// The service actions and the rule preview are one row of buttons.
+		// There is deliberately no restart button: from the UI it is stop
+		// + start (the routing-preserving restart is internal to the
+		// settings apply path), so it would only duplicate Start.
 		var controlRow = [];
-
-		controls.forEach(function(c, i) {
-			if (i)
+		var addControl = function(tone, word, handler) {
+			if (controlRow.length)
 				controlRow.push(' ');
 
 			controlRow.push(E('button', {
-				'class': 'cbi-button cbi-button-' + c.tone,
-				'click': function(ev) { me.runAction(c.verb, ev); }
-			}, c.word));
-		});
+				'class': 'cbi-button cbi-button-' + tone,
+				'click': handler
+			}, word));
+		};
+
+		addControl('apply', _('Start'), function(ev) { me.runAction('start', ev); });
+		addControl('reset', _('Stop'), function(ev) { me.runAction('stop', ev); });
+		addControl('action', _('Preview rules'), function(ev) { me.handlePreview(me._lastStatus); });
 
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', { 'class': 'cbi-map-title' }, _('TrustTunnel')),
@@ -376,13 +382,7 @@ return view.extend({
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', _('Current state')),
-				factRows,
-				E('div', { 'style': 'margin-top:0.75em' }, [
-					E('button', {
-						'class': 'cbi-button cbi-button-action',
-						'click': function(ev) { me.handlePreview(me._lastStatus); }
-					}, _('Preview rules'))
-				])
+				factRows
 			])
 		]);
 	}

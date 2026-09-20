@@ -15,8 +15,8 @@
 // the UCI layout: General (service state and the ACTIVE server), Server
 // (the saved servers — repeatable endpoint sections, one selected as
 // active on General; each server carries its own Connection/Security
-// settings and routing profile), Routing profiles, Advanced (networking
-// internals) and Versions (what is installed, read-only).
+// settings and routing profile), Routing profiles and Advanced
+// (networking internals).
 var callImport = rpc.declare({
 	object: 'luci.trusttunnel',
 	method: 'import_config',
@@ -26,11 +26,6 @@ var callImport = rpc.declare({
 var callStatus = rpc.declare({
 	object: 'luci.trusttunnel',
 	method: 'status'
-});
-
-var callVersions = rpc.declare({
-	object: 'luci.trusttunnel',
-	method: 'versions'
 });
 
 var callPing = rpc.declare({
@@ -116,14 +111,12 @@ function verdictRow(rule, res) {
 return view.extend({
 	load: function() {
 		// The network config feeds the LAN device hint on the Advanced
-		// tab; the status call feeds the Service line on the General tab;
-		// the versions call feeds the Versions tab. A failure of any of
-		// them must not take the whole settings page down.
+		// tab; the status call feeds the Service line on the General tab.
+		// A failure of either must not take the whole settings page down.
 		return Promise.all([
 			uci.load('trusttunnel'),
 			uci.load('network').catch(function() { return null; }),
-			callStatus().catch(function() { return null; }),
-			callVersions().catch(function() { return null; })
+			callStatus().catch(function() { return null; })
 		]);
 	},
 
@@ -381,7 +374,6 @@ return view.extend({
 
 	render: function(data) {
 		var st = data[2];
-		var versions = data[3];
 
 		var m = new form.Map('trusttunnel', _('TrustTunnel'));
 
@@ -843,23 +835,6 @@ return view.extend({
 
 			return true;
 		};
-
-		// Tab 6 — Versions: what is installed, read-only. The section
-		// exists only to key the map-level tab (tabs are keyed by the
-		// UCI section type); the values come from the backend, not from
-		// UCI. uci-defaults creates the section on installs that predate
-		// it.
-		s = m.section(form.NamedSection, 'about', 'about', _('Versions'));
-		s.description = _('The installed TrustTunnel packages and the client binary. Updates are delivered through the package manager, not this page: apk update && apk upgrade on OpenWrt 25.12, opkg update && opkg upgrade before it.');
-
-		o = s.option(form.DummyValue, '_package', _('TrustTunnel package'));
-		o.cfgvalue = function() { return versions ? (versions.package || _('not installed')) : _('unavailable'); };
-
-		o = s.option(form.DummyValue, '_client_package', _('Client package'));
-		o.cfgvalue = function() { return versions ? (versions.client_package || _('not installed')) : _('unavailable'); };
-
-		o = s.option(form.DummyValue, '_client', _('Client binary'));
-		o.cfgvalue = function() { return versions ? (versions.client || _('not installed')) : _('unavailable'); };
 
 		return m.render();
 	}
