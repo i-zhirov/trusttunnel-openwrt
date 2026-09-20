@@ -141,16 +141,17 @@ selects how the tunnel is delivered:
   `gen-config` must never emit both blocks.
 
 The mode gates: `gen-config` (listener block), the init script's
-`mode_is_proxy()` (skip `routing up`/attach in `start_service`, skip the
-routing reload in `apply_settings`), the `routing` helper (refuses `up` in
-proxy mode — defense in depth), the hotplug hook (exits early), the
-backend (`status.mode`/`proxy_address`/`listener_up`, `probe` via
-`curl --socks5-hostname`, `diagnose`'s kernel group and tunnel check) and
-the views (mode picker, Proxy tab, verdict/facts). `main.mode` maps to
-`restart_full` and `proxy.*` to `restart` in the change classifier; the
-listener state is detected through `/proc/net/tcp{,6}` (local port in hex,
-anchored grep — the fixed-width sl column makes plain field splits
-unreliable).
+`mode_is_proxy()` (skip `routing up`/attach in `start_service`, install
+the usage meter instead; skip the routing reload in `apply_settings`),
+the `routing` helper (refuses `up` in proxy mode and `meter` in tun mode
+— defense in depth, the two rulesets never coexist), the hotplug hook
+(exits early), the backend (`status.mode`/`proxy_address`/`listener_up`,
+`probe` via `curl --socks5-hostname`, `diagnose`'s kernel group and
+tunnel check) and the views (mode picker, Proxy tab, verdict/facts).
+`main.mode` maps to `restart_full` and `proxy.*` to `restart` in the
+change classifier; the listener state is detected through
+`/proc/net/tcp{,6}` (local port in hex, anchored grep — the fixed-width
+sl column makes plain field splits unreliable).
 
 ### Routing profiles (the core feature)
 
@@ -171,7 +172,7 @@ Domain matching happens inside the client (by SNI).
 
 ### Kernel routing state (`/usr/libexec/trusttunnel/routing`)
 
-Subcommands: `dump | up | attach | reattach | detach | down | status`.
+Subcommands: `dump | up | meter | attach | reattach | detach | down | status`.
 - `up`: blackhole default routes (metric 1000) in table 880 → fwmark rule
   (priority 30820) → the nft ruleset (table `inet trusttunnel`, sets
   `tt_endpoint4/6`, a prerouting chain that marks traffic arriving on a
@@ -179,9 +180,20 @@ Subcommands: `dump | up | attach | reattach | detach | down | status`.
   ranges with fwmark `0x9527`). Endpoint addresses are resolved BEFORE
   the ruleset lands (marked traffic would otherwise blackhole DNS).
   `up` refuses to run when the records declare proxy mode.
+- `meter`: the proxy-mode usage meter — byte counters on the SOCKS
+  listener port in the same table: `tt_meter_in` (prerouting,
+  `tcp dport <port> counter`, requests into the listener = tx) and
+  `tt_meter_out` (output, `tcp sport <port> counter`, responses = rx).
+  Port-only matching works for localhost and LAN-exposed listeners
+  alike; a non-numeric port is refused. `meter` refuses in tun mode (the
+  mirror of `up` refusing proxy mode — the two rulesets never coexist).
+  `down` removes it like any other table content.
 - `attach`: point table 880's default route at the client tun device
   (metric 1) and record the device name in `$OUT_DIR/device`.
 - `down`: remove everything; the client's device is never deleted.
+- `status`: additionally reports `meter up` / `meter rx <bytes>` /
+  `meter tx <bytes>` while both counter rules exist (a stale table after
+  a port change reports no meter).
 - Overrides for tests: `TT_IP`, `TT_NFT`, `TT_LIBDIR`.
 
 ### Service lifecycle (`/etc/init.d/trusttunnel`)
@@ -194,8 +206,10 @@ procd service, `USE_PROCD=1`, `START=95`, `STOP=10`. Notable behaviors:
   the tunnel runs on demand while "start on boot" is off (and stays off
   at the next boot). Then the client binary, the trust store, records +
   config regeneration, a wait for a default route and for the clock to
-  catch up, `routing up` (tun mode only), the client with `procd` and an
-  attach of an already-existing tun device (tun mode only).
+  catch up, `routing up` (tun mode only; proxy mode installs the usage
+  meter instead — a failed meter only warns, it must not take the
+  tunnel down), the client with `procd` and an attach of an
+  already-existing tun device (tun mode only).
 - `reload_service` → `apply_settings`: classifies the diff between the
   current records and the new export (`changed_keys` →
   `classify_change`), producing `noop | reload | restart | restart_full`,
@@ -229,7 +243,10 @@ Exposes `luci.trusttunnel` RPC methods (the ACL grants read on
 `service import_config`):
 
 - `status` — service state, device, rule/table/nft flags, endpoint,
-  routing profile and effective `vpn_mode`.
+  routing profile and effective `vpn_mode`, plus the cumulative usage
+  counters (`rx_bytes`/`tx_bytes`, null when no counters exist: the tun
+  device's `/proc/net/dev` in tun mode, the meter rules in proxy mode;
+  the view diffs consecutive polls for rates).
 - `versions` — what is installed, read-only: the luci app and client
   package versions as apk/opkg report them (apk on 25.12+, opkg
   fallback for 22.03–24.10), plus the client binary's own `--version`;
@@ -252,14 +269,17 @@ file compiles under the pinned ucode.
 
 ### LuCI views
 
-- `status.js` — verdict banner, facts (state/mode/server/proxy address),
-  Start/Stop buttons and a rules preview for the assigned profile
-  (or the legacy `domains.direct` list without one) that checks each
-  effective rule via `check_domain`; polls every 10s. There is no
+- `status.js` — verdict banner, facts (state/mode/server/proxy address,
+  traffic), Start/Stop buttons and a rules preview for the assigned
+  profile (or the legacy `domains.direct` list without one) that checks
+  each effective rule via `check_domain`; polls every 10s. There is no
   restart button: from the UI it is stop + start, and the
   routing-preserving restart is internal to the settings apply path.
   The verdict is mode-aware: the "working" gate is `device_up` in tun
-  mode and `listener_up` in proxy mode.
+  mode and `listener_up` in proxy mode. The traffic row shows the
+  poll-delta rates (a 10 s average) and the cumulative totals from
+  `rx_bytes`/`tx_bytes`; a counter reset (reconnected tunnel)
+  rebaselines the snapshot, and null counters hide the row.
 - `log.js` — a tail of the system-log lines written by the client and
   the service (the `log` RPC), fetched during `load()` so the first
   paint already shows it, then refreshed in place by a 10 s poll; the
@@ -394,7 +414,10 @@ absent, so the plain suite runs anywhere.
   `goldens/healthy/*.json` (real tun device in a privileged container).
   **Do not edit `tests/backend/mod/luci/trusttunnel.uc`** — it is a copy
   overwritten by the test. Golden file names encode method + args
-  (`golden_call` in the script).
+  (`golden_call` in the script). `TT_REGEN=1` rewrites the goldens from
+  the live output instead of comparing — use it only to land a deliberate
+  backend change, and diff the result (a regen that touches anything
+  beyond the intended files means the backend moved behavior elsewhere).
 - `tests/test_uci_defaults.sh` — scenario harness running the real
   uci-defaults script in an OpenWrt rootfs container against scratch
   configs (fresh / duplicated / legacy / upgrade / side-effects /
