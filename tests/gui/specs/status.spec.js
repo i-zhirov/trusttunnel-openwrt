@@ -10,13 +10,16 @@ const {
 	openView, stubReset, stubSet, framesFor, waitForFrames, installClock, clickButton
 } = require('../helpers');
 
-// The fields the view's verdict()/renderFacts() read.
+// The fields the view's verdict()/renderFacts() read. The counters are
+// null to mirror the baked golden (no tun0 in the lab netns): the
+// traffic row is hidden unless a test overrides them.
 const BASE = {
 	enabled: true, running: true, mode: 'tun', device_up: true, rule: true,
 	table: true, nft: true, client_installed: true,
 	endpoint_hostname: 'vpn.example.com', addresses: [ '1.2.3.4:443' ],
 	routing_profile: 'Default', routing_mode: 'vpn', vpn_mode: 'general',
-	proxy_address: null, listener_up: null
+	proxy_address: null, listener_up: null,
+	rx_bytes: null, tx_bytes: null
 };
 
 test.beforeEach(async ({ page }) => {
@@ -81,6 +84,37 @@ test('proxy mode without a live listener shows the warning verdict', async ({ pa
 	await openView(page, 'status');
 	await expect(page.locator('#view .alert-message.warning')).toContainText(
 		'Connecting to vpn.example.com');
+});
+
+test('tun mode with counters shows the traffic row with the totals', async ({ page }) => {
+	// The rates are the poll delta: on the first render no baseline
+	// exists, so the row shows the cumulative totals (deterministic) and
+	// placeholder rates.
+	await stubSet(page, { status: { ...BASE, rx_bytes: 1048576, tx_bytes: 524288 } });
+	await openView(page, 'status');
+
+	await expect(page.locator('#view')).toContainText('Traffic');
+	await expect(page.locator('#view')).toContainText(
+		'Total 1.0 MiB down, 512.0 KiB up');
+});
+
+test('proxy mode with meter counters shows the traffic row', async ({ page }) => {
+	await stubSet(page, {
+		status: { ...BASE, mode: 'proxy', device: null, device_up: false,
+		          listener_up: true, proxy_address: '0.0.0.0:1080',
+		          rx_bytes: 4096, tx_bytes: 2048 }
+	});
+	await openView(page, 'status');
+
+	await expect(page.locator('#view')).toContainText('Traffic');
+	await expect(page.locator('#view')).toContainText(
+		'Total 4.0 KiB down, 2.0 KiB up');
+});
+
+test('without counters the traffic row is hidden', async ({ page }) => {
+	await openView(page, 'status');
+
+	await expect(page.locator('#view')).not.toContainText('Traffic');
 });
 
 test('bypass profile shows the bypass success wording', async ({ page }) => {
