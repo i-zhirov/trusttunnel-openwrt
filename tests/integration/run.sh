@@ -1387,7 +1387,15 @@ uci commit trusttunnel
 		sh -c '/usr/libexec/trusttunnel/routing status /var/etc/trusttunnel/settings.tsv' 2>/dev/null)
 	assert_contains "$_rs" "rule absent" "the mode switch removed the fwmark rule"
 	assert_contains "$_rs" "table absent" "the mode switch emptied the routing table"
-	assert_contains "$_rs" "nft absent" "the mode switch removed the nft table"
+	# Proxy mode now owns the meter table: the mode switch must have
+	# replaced the marking ruleset with the meter chains, never left the
+	# tun-mode ruleset behind.
+	assert_contains "$_rs" "meter up" "the mode switch installed the usage meter"
+	_nft=$(docker exec "$ROUTER_CID" sh -c 'nft list table inet trusttunnel' 2>/dev/null)
+	assert_eq "0" "$(printf '%s\n' "$_nft" | grep -c tt_endpoint)" \
+		"the mode switch removed the marking ruleset"
+	assert_contains "$_nft" "tt_meter_in" "the meter counts requests into the listener"
+	assert_contains "$_nft" "tt_meter_out" "the meter counts responses from the listener"
 	_tun=$(docker exec "$ROUTER_CID" sh -c 'ls /sys/class/net/ 2>/dev/null | grep -c "^tun"' 2>/dev/null)
 	assert_eq "0" "$_tun" "proxy mode creates no tun device"
 
@@ -1398,6 +1406,19 @@ uci commit trusttunnel
 	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 --socks5-hostname lan:lan-pass@127.0.0.1:1080 http://$IP_TARGET:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" \
 		"SOCKS traffic arrives with the endpoint's source address"
+
+	# The meter counts the listener traffic: after the request above both
+	# counter rules must carry bytes (dport = uploads into the listener,
+	# sport = responses from it).
+	_rs=$(docker exec "$ROUTER_CID" \
+		sh -c '/usr/libexec/trusttunnel/routing status /var/etc/trusttunnel/settings.tsv' 2>/dev/null)
+	_mrx=$(printf '%s\n' "$_rs" | awk '/^meter rx / { print $3; exit }')
+	_mtx=$(printf '%s\n' "$_rs" | awk '/^meter tx / { print $3; exit }')
+	if [ "${_mrx:-0}" -gt 0 ] && [ "${_mtx:-0}" -gt 0 ]; then
+		_tt_pass "the meter counted the SOCKS traffic in both directions"
+	else
+		_tt_fail "the meter counted the SOCKS traffic in both directions (rx=$_mrx tx=$_mtx)"
+	fi
 
 	# --- P3: traffic that does not use the proxy stays direct.
 	_src=$(docker exec "$ROUTER_CID" \
