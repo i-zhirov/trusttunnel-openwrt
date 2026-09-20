@@ -712,6 +712,19 @@ return {
 					else
 						push(checks, check('kernel', 'SOCKS listener', 'fail', 'not bound',
 							'The listener is bound by the client at start; a bind error or a port conflict keeps it down. Open the Client log tab.'));
+
+					// The usage meter is installed by the init script at
+					// start, so a running service without the counter
+					// rules is a degraded state worth a remark — the
+					// tunnel works, but the traffic row stays hidden and
+					// nothing would tell the user why.
+					if (!running)
+						push(checks, check('kernel', 'Usage meter', 'skip', 'the service is stopped', ''));
+					else if (rs.meter_up)
+						push(checks, check('kernel', 'Usage meter', 'ok', 'listener port metered', ''));
+					else
+						push(checks, check('kernel', 'Usage meter', 'warn', 'no counter rules',
+							'The meter is installed by the init script at start; a failed install leaves the traffic row hidden. Restart the service.'));
 				} else {
 					let dev_sys = length(dev) ? '/sys/class/net/' + dev : '';
 
