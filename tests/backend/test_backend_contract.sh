@@ -111,6 +111,10 @@ run_call() {
 }
 
 # Compare every golden in a directory against the live backend in a lab.
+# TT_REGEN=1 rewrites the goldens from the live output instead of
+# comparing (the counterpart to "do not rebuild goldens casually": the
+# rewritten set must be diffed and only the intended files may change —
+# anything else means the backend moved behavior elsewhere).
 check_goldens() {
 	lab="$1"
 	dir="$2"
@@ -122,6 +126,10 @@ check_goldens() {
 		[ -n "$call" ] || continue
 		method=${call%%	*}
 		args=${call#*	}
+		if [ "${TT_REGEN:-0}" = 1 ]; then
+			run_call "$lab" "$method" "$args" > "$g"
+			continue
+		fi
 		assert_eq "$(cat "$g")" "$(run_call "$lab" "$method" "$args")" "golden $name"
 	done
 }
