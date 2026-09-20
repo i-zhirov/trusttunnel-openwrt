@@ -54,7 +54,12 @@
 #      container; the Backup server is saved next to the Default one and
 #      made active via main.endpoint + reload, and the records,
 #      client.toml and the traffic all follow the new selection, then
-#      back.
+#      back;
+#  15. migrate    — the boot-migration contract: the ACTIVE server's
+#      section is deleted (a CLI edit), the dangling selector stops the
+#      service, and the uci-defaults script — run exactly as the boot and
+#      install.sh run it — re-points the selection at the remaining
+#      server, which brings the tunnel back.
 #
 # Usage:
 #   TT_PM=apk sh tests/integration/run.sh                 # default
@@ -1548,6 +1553,69 @@ uci commit trusttunnel
 		"switching back restores the original endpoint"
 }
 
+# --- stage: the boot migration heals a deleted active server --------------------
+
+st_migrate() {
+	stage migrate || return
+	echo "== boot migration against a deleted active server"
+
+	# The switch stage left two servers saved with Default active. Remove
+	# the ACTIVE server's section the way a CLI edit would (the section is
+	# the named 'endpoint' one): the selector now names a section that no
+	# longer exists.
+	if docker exec "$ROUTER_CID" sh -c "uci delete trusttunnel.endpoint
+uci commit trusttunnel" >/dev/null 2>&1; then
+		_tt_pass "the active server section is deleted"
+	else
+		_tt_fail "deleting the active server section failed"
+		return
+	fi
+	if docker exec "$ROUTER_CID" sh -c 'uci -q get trusttunnel.endpoint >/dev/null 2>&1'; then
+		_tt_fail "the deleted endpoint section still resolves"
+	else
+		_tt_pass "the deleted section is gone"
+	fi
+	_sel=$(docker exec "$ROUTER_CID" uci -q get trusttunnel.main.endpoint 2>/dev/null)
+	assert_eq "Default" "$_sel" "the selector keeps the deleted name"
+
+	# M1: the dangling selector breaks the service. A reload exports no
+	# endpoint records, gen-config refuses, and the tunnel comes down —
+	# the lab target sees the router's own address again.
+	docker exec "$ROUTER_CID" /etc/init.d/trusttunnel reload >/dev/null 2>&1
+	_i=0
+	while [ "$_i" -lt 20 ]; do
+		_i=$((_i + 1))
+		[ -z "$(docker exec "$ROUTER_CID" sh -c 'ps | grep "[t]rusttunnel_client"' 2>/dev/null)" ] && break
+		sleep 1
+	done
+	_proc=$(docker exec "$ROUTER_CID" sh -c 'ps | grep "[t]rusttunnel_client"' 2>/dev/null)
+	assert_eq "" "$_proc" "the dangling selector keeps the client down"
+	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$IP_ROUTER" "$_got" \
+		"without a healed selection the tunnel is down (direct traffic)"
+
+	# M2: the boot migration heals the reference: main.endpoint moves to
+	# the first remaining server (Backup). The script is the one the boot
+	# and install.sh run; the package manager consumes the router's copy
+	# on the apk path, so the tree's own file is executed.
+	if docker exec "$ROUTER_CID" \
+			sh /src/packages/luci-app-trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel \
+			>/dev/null 2>&1; then
+		_tt_pass "the boot migration runs on the live config"
+	else
+		_tt_fail "the boot migration failed on the live config"
+		return
+	fi
+	_sel=$(docker exec "$ROUTER_CID" uci -q get trusttunnel.main.endpoint 2>/dev/null)
+	assert_eq "Backup" "$_sel" "the migration re-points the selection at the remaining server"
+
+	# M3: the service comes back through the remaining server: the lab
+	# target observes the second endpoint's address again.
+	docker exec "$ROUTER_CID" /etc/init.d/trusttunnel start >/dev/null 2>&1
+	wait_source "$IP_ENDPOINT2" \
+		"after the migration the tunnel comes back through the remaining server"
+}
+
 # --- main -------------------------------------------------------------------------
 
 st_preflight
@@ -1565,5 +1633,6 @@ st_traffic
 st_lifecycle
 st_proxy
 st_switch
+st_migrate
 
 tt_test_summary
