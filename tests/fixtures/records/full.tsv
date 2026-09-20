@@ -1,5 +1,6 @@
 main.enabled	1
 main.log_level	debug
+endpoint.name	Default
 endpoint.hostname	vpn.example.com
 endpoint.address	1.2.3.4:443
 endpoint.address	[2001:db8::1]:443

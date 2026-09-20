@@ -58,6 +58,8 @@ scratch directory and the served public key is what install.sh installs.
 | `connect` | endpoint configured via uci (hostname, address, credentials, the **pinned** certificate), service enabled+started, tunnel up |
 | `traffic` | service running, tun0 + routing state, client log connected, client.toml carries the pin, through-tunnel traffic arrives with the **endpoint's** source address, private traffic stays direct |
 | `lifecycle` | the blackhole killswitch (kernel-level: with the device down, the marked lookup fails into the blackhole), a clean stop tears the routing down and a start restores it, install.sh / uci-defaults / reload idempotence, and the endpoint log shows the tunneled CONNECTs |
+| `switch` | a second, twin endpoint container; the Backup server is saved next to the Default one (same fields, its own address) and made active via `main.endpoint` + reload: the records and client.toml follow the active server, the tunnel moves to the new endpoint's source address, and switching back restores the original |
+| `migrate` | the boot-migration contract: the ACTIVE server's section is deleted via `uci` (a CLI edit), the dangling selector stops the service (direct traffic), and the uci-defaults script — run exactly as the boot and install.sh run it — re-points `main.endpoint` at the remaining server, which brings the tunnel back through it |
 
 ### Knobs
 

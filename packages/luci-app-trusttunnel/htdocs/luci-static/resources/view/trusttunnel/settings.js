@@ -12,11 +12,11 @@
 // pure browser-side work, no router round-trip.
 //
 // The tabs are grouped by what the fields mean to the user rather than by
-// the UCI layout: General (service state and the profile picker), Server
-// (the connection, with a Security inner tab for TLS trust and
-// anti-censorship), Routing profiles and Advanced (networking internals
-// and the client's own DNS). The profile picker and the DNS upstream
-// write endpoint options from their host tabs via ucisection.
+// the UCI layout: General (service state and the ACTIVE server), Server
+// (the saved servers — repeatable endpoint sections, one selected as
+// active on General; each server carries its own Connection/Security
+// settings and routing profile), Routing profiles and Advanced
+// (networking internals).
 var callImport = rpc.declare({
 	object: 'luci.trusttunnel',
 	method: 'import_config',
@@ -120,11 +120,34 @@ return view.extend({
 		]);
 	},
 
-	handleImport: function() {
+	// The section id of the ACTIVE server: the endpoint section whose name
+	// matches main.endpoint. With several saved servers the literal
+	// "endpoint" name would be just one of them, so the import target is
+	// always resolved through the selection.
+	activeServerSection: function() {
+		var active = uci.get('trusttunnel', 'main', 'endpoint');
+		var servers = uci.sections('trusttunnel', 'endpoint') || [];
+
+		for (var i = 0; i < servers.length; i++)
+			if (servers[i].name === active)
+				return servers[i]['.name'];
+
+		// A stale or empty selection falls back to the first server, so
+		// the import has a target even before the user picked one.
+		return servers.length ? servers[0]['.name'] : null;
+	},
+
+	handleImport: function(ev, section_id) {
 		var ta = E('textarea', {
 			'style': 'width:100%', 'rows': 12,
 			'placeholder': _('Paste the configuration your server generated')
 		});
+
+		// The imported values land in the server whose Import button was
+		// pressed (section_id); a handler invoked without one falls back
+		// to the active server. Computed once here so the promise chain
+		// below does not need a `this`.
+		var target = section_id || this.activeServerSection();
 
 		// import_config hands the text to the vendor's setup_wizard binary
 		// and parses its output, which takes a moment: while it runs, the
@@ -148,6 +171,12 @@ return view.extend({
 						return;
 					}
 
+					if (!target) {
+						restore();
+						ui.addNotification(null, E('p', {}, _('Save a server first — the import needs a place to land.')), 'danger');
+						return;
+					}
+
 					// Every imported value is applied through the
 					// pending save below: nothing is written until
 					// the user presses Save & Apply.
@@ -161,13 +190,29 @@ return view.extend({
 
 					Object.keys(fields).forEach(function(k) {
 						if (res[k] != null)
-							uci.set('trusttunnel', 'endpoint', fields[k], res[k]);
+							uci.set('trusttunnel', target, fields[k], res[k]);
 					});
 
 					if (res.addresses && res.addresses.length)
-						uci.set('trusttunnel', 'endpoint', 'address', res.addresses);
+						uci.set('trusttunnel', target, 'address', res.addresses);
 					if (res.dns_upstreams && res.dns_upstreams.length)
-						uci.set('trusttunnel', 'endpoint', 'dns_upstream', res.dns_upstreams);
+						uci.set('trusttunnel', target, 'dns_upstream', res.dns_upstreams);
+
+					// A server needs a name to be selectable; the imported
+					// hostname is the natural default.
+					if (!uci.get('trusttunnel', target, 'name') && res.hostname)
+						uci.set('trusttunnel', target, 'name', res.hostname);
+
+					// An empty or stale active-server reference is healed:
+					// the import makes this server the active one. A valid
+					// selection is never overridden.
+					var sel = uci.get('trusttunnel', 'main', 'endpoint');
+					var selected = uci.sections('trusttunnel', 'endpoint').some(function(s) {
+						return s.name === sel;
+					});
+
+					if (!selected && uci.get('trusttunnel', target, 'name'))
+						uci.set('trusttunnel', 'main', 'endpoint', uci.get('trusttunnel', target, 'name'));
 
 					uci.save();
 					ui.hideModal();
@@ -261,10 +306,10 @@ return view.extend({
 
 		// check_domain answers against the effective profile, so verdicts
 		// for any other profile would be misleading — it takes no effect
-		// until assigned on the General tab.
+		// until assigned to the active server.
 		if (name !== this._activeProfile) {
 			ui.showModal(_('Rule preview'), [
-				E('p', {}, _('Profile "%s" is not assigned, so its rules take no effect. Assign it on the General tab — only the assigned profile decides what goes through the tunnel.').format(name)),
+				E('p', {}, _('Profile "%s" is not assigned, so its rules take no effect. Assign it on the Server tab — only the active server\'s profile decides what goes through the tunnel.').format(name)),
 				close
 			]);
 			return;
@@ -336,9 +381,24 @@ return view.extend({
 
 		var s, o;
 
-		// Tab 1 — General: the service itself and the profile that applies.
+		// The saved servers and profiles, read through the uci module API
+		// (current LuCI resolves uci.load() with the package-name list, so
+		// the load() result is no source of config data). The ACTIVE server
+		// is the endpoint section whose name matches main.endpoint.
+		var servers = uci.sections('trusttunnel', 'endpoint') || [];
+		var profiles = uci.sections('trusttunnel', 'routing_profile') || [];
+		var activeServerName = uci.get('trusttunnel', 'main', 'endpoint') || '';
+		var activeProfileName = '';
+
+		for (var i = 0; i < servers.length; i++)
+			if (servers[i].name === activeServerName) {
+				activeProfileName = servers[i].routing_profile || '';
+				break;
+			}
+
+		// Tab 1 — General: the service itself and the server that applies.
 		s = m.section(form.NamedSection, 'main', 'main', _('General'));
-		s.description = _('When the service runs and which profile decides what goes through the tunnel.');
+		s.description = _('When the service runs and which saved server the tunnel uses.');
 
 		o = s.option(form.DummyValue, '_status', _('Service'));
 		o.cfgvalue = function() { return statusSummary(st); };
@@ -359,50 +419,96 @@ return view.extend({
 		o.value('trace', 'trace');
 		o.description = _('debug and trace produce a lot of output; keep them on only while debugging.');
 
-		o = s.option(form.ListValue, 'routing_profile', _('Routing profile'),
-			_('The named profile that decides what goes through the tunnel. Profiles are managed on the Routing profiles tab.'));
-		o.value('', _('None — everything through the tunnel'));
-		// The picker lives on the General tab but writes the endpoint
-		// option it displays.
-		o.ucisection = 'endpoint';
+		o = s.option(form.ListValue, 'endpoint', _('Active server'),
+			_('The saved server the tunnel uses right now. Servers are added and edited on the Server tab; each server carries its own routing profile.'));
+		// Not rmempty: with no servers saved an empty selection is the
+		// honest state (the service then refuses to start and the
+		// Diagnostics page explains it). While servers exist the select
+		// always carries one.
 
-		// Names are read through the uci module API (current LuCI
-		// resolves uci.load() with the package-name list, so the load()
-		// result is no source of config data). The endpoint's stored
-		// assignment is appended too when it references a profile that has
-		// been deleted, so that reference keeps saving (legacy fallback).
-		var profiles = uci.sections('trusttunnel', 'routing_profile') || [];
-		var current = uci.get('trusttunnel', 'endpoint', 'routing_profile');
 		var currentKnown = false;
 
-		for (var i = 0; i < profiles.length; i++) {
-			o.value(profiles[i].name, profiles[i].name);
+		for (var i = 0; i < servers.length; i++) {
+			o.value(servers[i].name, servers[i].name);
 
-			if (profiles[i].name === current)
+			if (servers[i].name === activeServerName)
 				currentKnown = true;
 		}
 
-		if (current && !currentKnown)
-			o.value(current, current);
+		// A reference to a deleted server is appended too, so that
+		// reference keeps saving (legacy fallback).
+		if (activeServerName && !currentKnown)
+			o.value(activeServerName, activeServerName);
 
-		// Stash for the per-profile rule preview on the Routing profiles tab.
+		// Stash for the per-profile rule preview on the Routing profiles
+		// tab: check_domain answers against the ACTIVE server's profile.
 		this._profiles = profiles;
-		this._activeProfile = current || '';
+		this._activeProfile = activeProfileName;
 
-		// Tab 2 — Server: the connection to the server.
-		// Tab 2 — Server: the connection and its TLS/anti-censorship
-		// options share the endpoint section, split into inner tabs.
-		// Map-level tabs key their panes by the UCI section type, so two
-		// sections of the same type would collide; section-level tabs are
-		// keyed by their own names.
-		s = m.section(form.NamedSection, 'endpoint', 'endpoint', _('Server'));
+		// Tab 2 — Server: the saved servers. Every server is one endpoint
+		// section, split into Connection/Security inner tabs (map-level
+		// tabs key their panes by the UCI section type, so two sections of
+		// the same type would collide; section-level tabs are keyed by
+		// their own names). The General tab selects the ACTIVE one by the
+		// server's name.
+		s = m.section(form.TypedSection, 'endpoint', _('Server'));
+		s.addremove = true;
+		s.anonymous = true;
+		s.description = _('The saved servers. The General tab selects the active one; each server carries its own connection settings and routing profile.');
+
 		s.tab('connection', _('Connection'),
-			_('How the client reaches your server. The Import server config… button is the quick way.'));
+			_('How the client reaches this server. The Import server config… button is the quick way.'));
 		s.tab('security', _('Security'),
 			_('TLS trust and anti-censorship. These rarely need manual changes after importing the server configuration.'));
 
+		// Deleting the ACTIVE server would leave main.endpoint naming a
+		// section that no longer exists and the tunnel would stop; the
+		// delete is refused while other servers remain. The LAST server
+		// may be deleted — the empty state is honest, and the
+		// Diagnostics page explains it.
+		var realHandleRemove = s.handleRemove;
+
+		s.handleRemove = function(section_id, ev) {
+			var removedName = uci.get('trusttunnel', section_id, 'name');
+
+			if (removedName && removedName === uci.get('trusttunnel', 'main', 'endpoint') &&
+					(uci.sections('trusttunnel', 'endpoint') || []).length > 1) {
+				ui.addNotification(null, E('p', {},
+					_('Select another active server on the General tab first — the active server cannot be deleted.')), 'warning');
+				return Promise.resolve();
+			}
+
+			return realHandleRemove.call(this, section_id, ev);
+		};
+
+		o = s.taboption('connection', form.Value, 'name', _('Name'),
+			_('Unique name; the General tab selects the active server by it.'));
+		o.rmempty = false;
+		o.validate = function(section_id, value) {
+			if (!value)
+				return _('Name is required');
+
+			var secs = uci.sections('trusttunnel', 'endpoint') || [];
+
+			for (var i = 0; i < secs.length; i++)
+				if (secs[i]['.name'] !== section_id && secs[i].name === value)
+					return _('Another server already has this name');
+
+			// Renaming the ACTIVE server moves the selection with it: the
+			// General-tab picker parses (and writes) before the endpoint
+			// sections, so this later write wins in the same save. When
+			// the user switched the selection in the same edit, the
+			// section is no longer active here and the selection is left
+			// alone.
+			if (value !== uci.get('trusttunnel', section_id, 'name') &&
+					uci.get('trusttunnel', section_id, 'name') === uci.get('trusttunnel', 'main', 'endpoint'))
+				uci.set('trusttunnel', 'main', 'endpoint', value);
+
+			return true;
+		};
+
 		o = s.taboption('connection', form.Button, '_import', _('Server configuration'),
-			_('The quick way: paste the server output and the fields below fill in automatically.'));
+			_('The quick way: paste the server output and the fields of THIS server fill in automatically.'));
 		o.inputtitle = _('Import server config…');
 		o.inputstyle = 'action';
 		o.onclick = ui.createHandlerFn(this, 'handleImport');
@@ -432,8 +538,39 @@ return view.extend({
 		o = s.taboption('connection', form.Flag, 'has_ipv6', _('Server carries IPv6'));
 		o.default = '1';
 
+		o = s.taboption('connection', form.ListValue, 'routing_profile', _('Routing profile'),
+			_('The named profile that decides what goes through the tunnel while THIS server is the active one. Profiles are managed on the Routing profiles tab.'));
+		o.value('', _('None — everything through the tunnel'));
+
+		for (var i = 0; i < profiles.length; i++)
+			o.value(profiles[i].name, profiles[i].name);
+
+		// Every server's stored assignment is appended too when it
+		// references a profile that has been deleted, so that reference
+		// keeps saving (legacy fallback).
+		var knownProfile = {};
+
+		for (var i = 0; i < profiles.length; i++)
+			knownProfile[profiles[i].name] = true;
+
+		for (var i = 0; i < servers.length; i++)
+			if (servers[i].routing_profile && !knownProfile[servers[i].routing_profile])
+				o.value(servers[i].routing_profile, servers[i].routing_profile);
+
+		o = s.taboption('connection', form.DynamicList, 'dns_upstream', _('DNS the client resolves with'),
+			_('Applies to what the TrustTunnel client resolves on its own — for example the exclusion domains it pre-resolves. Empty means the client default, AdGuard DNS unfiltered.'));
+		o.placeholder = 'tls://1.1.1.1';
+		o.value('tls://1.1.1.1', 'Cloudflare — DNS over TLS');
+		o.value('tls://9.9.9.9', 'Quad9 — DNS over TLS');
+		o.value('tls://dns.adguard-dns.com', 'AdGuard — DNS over TLS');
+		o.value('https://cloudflare-dns.com/dns-query', 'Cloudflare — DNS over HTTPS');
+		o.value('https://dns.quad9.net/dns-query', 'Quad9 — DNS over HTTPS');
+		o.value('quic://dns.adguard-dns.com', 'AdGuard — DNS over QUIC');
+		o.value('1.1.1.1:53', 'Cloudflare — ' + _('plain DNS'));
+		o.value('9.9.9.9:53', 'Quad9 — ' + _('plain DNS'));
+
 		o = s.taboption('connection', form.Button, '_test', _('Connection test'),
-			_('Loss and round-trip time for every configured address. Uses the saved settings, so press Save & Apply first.'));
+			_('Loss and round-trip time for every configured address of the ACTIVE server. Uses the saved settings, so press Save & Apply first.'));
 		o.inputtitle = _('Test connection');
 		o.inputstyle = 'action';
 		o.onclick = ui.createHandlerFn(this, 'handleTest');
@@ -665,21 +802,6 @@ return view.extend({
 
 		o = s.option(form.Flag, 'include_router_traffic', _('Also route the router\'s own traffic'),
 			_('By default only forwarded LAN traffic is routed. Enabling this also routes traffic originated by the router itself.'));
-
-		o = s.option(form.DynamicList, 'dns_upstream', _('DNS the client resolves with'),
-			_('Applies to what the TrustTunnel client resolves on its own — for example the exclusion domains it pre-resolves. Empty means the client default, AdGuard DNS unfiltered.'));
-		// The list lives on the Advanced tab but writes the endpoint
-		// option it displays.
-		o.ucisection = 'endpoint';
-		o.placeholder = 'tls://1.1.1.1';
-		o.value('tls://1.1.1.1', 'Cloudflare — DNS over TLS');
-		o.value('tls://9.9.9.9', 'Quad9 — DNS over TLS');
-		o.value('tls://dns.adguard-dns.com', 'AdGuard — DNS over TLS');
-		o.value('https://cloudflare-dns.com/dns-query', 'Cloudflare — DNS over HTTPS');
-		o.value('https://dns.quad9.net/dns-query', 'Quad9 — DNS over HTTPS');
-		o.value('quic://dns.adguard-dns.com', 'AdGuard — DNS over QUIC');
-		o.value('1.1.1.1:53', 'Cloudflare — ' + _('plain DNS'));
-		o.value('9.9.9.9:53', 'Quad9 — ' + _('plain DNS'));
 
 		o = s.option(form.Value, 'fwmark', _('Firewall mark'),
 			_('Decimal or 0x-prefixed hex. Change it only on a conflict with mwan3, SQM or other packet-marking packages.'));

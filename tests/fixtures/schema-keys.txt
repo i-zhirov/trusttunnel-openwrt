@@ -6,6 +6,7 @@ endpoint.custom_sni
 endpoint.dns_upstream
 endpoint.has_ipv6
 endpoint.hostname
+endpoint.name
 endpoint.password
 endpoint.post_quantum
 endpoint.protocol

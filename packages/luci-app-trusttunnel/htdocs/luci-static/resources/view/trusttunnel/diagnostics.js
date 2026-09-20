@@ -48,6 +48,7 @@ var groupTitle = {
 };
 
 var DIAG_TEXT = {
+	'Active server': _('Active server'),
 	'Server address': _('Server address'),
 	'Endpoint credentials': _('Endpoint credentials'),
 	'TLS SNI': _('TLS SNI'),
@@ -74,6 +75,7 @@ var DIAG_TEXT = {
 	'Server reachable': _('Server reachable'),
 	'Traffic takes the tunnel': _('Traffic takes the tunnel'),
 	'Set the address on the Settings page or import the server config.': _('Set the address on the Settings page or import the server config.'),
+	'Select one of the saved servers as the active one on the Settings page.': _('Select one of the saved servers as the active one on the Settings page.'),
 	'The user name and the password must both be filled in.': _('The user name and the password must both be filled in.'),
 	'Without it the TLS session uses the plain address, which many servers reject.': _('Without it the TLS session uses the plain address, which many servers reject.'),
 	'Assign a routing profile on the Settings page to control what goes through the tunnel.': _('Assign a routing profile on the Settings page to control what goes through the tunnel.'),
@@ -100,6 +102,7 @@ var DIAG_TEXT = {
 	'A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.': _('A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.'),
 	'A request bound to the device can fail on a healthy tunnel because the default route lives in the marked table. Judge by a LAN client instead.': _('A request bound to the device can fail on a healthy tunnel because the default route lives in the marked table. Judge by a LAN client instead.'),
 	'unset': _('unset'),
+	'none selected': _('none selected'),
 	'binary missing': _('binary missing'),
 	'not present': _('not present'),
 	'not bound': _('not bound'),

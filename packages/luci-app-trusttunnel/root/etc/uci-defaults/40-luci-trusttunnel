@@ -120,6 +120,56 @@ if [ -z "$_has_profile" ]; then
 	logger -t trusttunnel "created the default routing profile; the old direct list moved into its bypass rules"
 fi
 
+# Seed the active-server selection on installs that predate it, and heal
+# a stale reference: the endpoint sections are repeatable now and
+# main.endpoint names the ACTIVE one. A pre-feature config carries
+# exactly one endpoint section without a `name`; give it the Default name
+# (or keep an existing one) and select it. A selector that names no
+# section (a server renamed or deleted outside the UI) is re-pointed at
+# the first remaining server. Configs that already select a server —
+# including the shipped default — are left alone.
+# shellcheck disable=SC2329,SC2154
+_find_first_endpoint() {
+	[ -n "$_first_endpoint_sec" ] && return 0
+	_first_endpoint_sec=$1
+}
+
+# config_foreach callback: mark when an endpoint section matches the
+# active server reference; the stale-reference heal needs to know whether
+# the reference still resolves.
+# shellcheck disable=SC2329,SC2154
+_find_named_endpoint() {
+	_sec=$1
+	_name=""
+	config_get _name "$_sec" name
+	[ "$_name" = "$_active_server" ] || return 0
+	_server_matches=1
+}
+
+_first_endpoint_sec=""
+config_foreach _find_first_endpoint endpoint
+config_get _active_server main endpoint
+_server_matches=""
+if [ -n "$_active_server" ]; then
+	config_foreach _find_named_endpoint endpoint
+fi
+if { [ -z "$_active_server" ] || [ -z "$_server_matches" ]; } && [ -n "$_first_endpoint_sec" ]; then
+	_name=""
+	config_get _name "$_first_endpoint_sec" name
+	[ -n "$_name" ] || {
+		uci set "trusttunnel.$_first_endpoint_sec.name"='Default'
+		_name="Default"
+	}
+	# uci set cannot create a section, so a missing main section (a
+	# minimal pre-feature config) is created first.
+	if ! uci -q get trusttunnel.main >/dev/null 2>&1; then
+		uci set trusttunnel.main='main'
+	fi
+	uci set trusttunnel.main.endpoint="$_name"
+	uci commit trusttunnel
+	logger -t trusttunnel "selected the $_name endpoint as the active server"
+fi
+
 # Seed the proxy section on installs that predate proxy mode, so the Proxy
 # tab always renders the listener defaults. The operation mode itself
 # stays absent (tun) — an upgrade must not silently change delivery.

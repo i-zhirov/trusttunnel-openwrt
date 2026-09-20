@@ -17,6 +17,33 @@ mode_is_proxy() {
 	[ "$(awk -F '\t' '$1 == "main.mode" { print $2; exit }' "$RECORDS" 2>/dev/null)" = "proxy" ]
 }
 
+# config_foreach callback: record the endpoint section whose name matches
+# the active server reference (main.endpoint); other sections are skipped.
+# shellcheck disable=SC2317,SC2154
+_find_server() {
+	_sec=$1
+	_name=""
+	config_get _name "$_sec" name
+	[ "$_name" = "$server_want" ] || return 0
+	server_sec="$_sec"
+}
+
+# resolve_active_server — populate server_sec with the section id of the
+# ACTIVE server, or empty when main.endpoint is absent or stale. Requires
+# a prior config_load trusttunnel; mirrors uci-export's resolution.
+#
+# The certificate and the verification override belong to the ACTIVE
+# server only, and with repeatable endpoint sections the literal
+# "endpoint" section name would read whichever section carries it, not
+# the selected one — so every direct endpoint read goes through here.
+resolve_active_server() {
+	server_sec=""
+	server_want=""
+	config_get server_want main endpoint
+	[ -n "$server_want" ] || return 0
+	config_foreach _find_server endpoint
+}
+
 # Undo the keep-routing handshake of an interrupted restart: a start that
 # aborted before the procd instance came up must tear the routing down for
 # real, otherwise the table, the mark rule and the blackhole would stay
@@ -41,7 +68,14 @@ regen_config() {
 	fi
 	mv "$RECORDS.new" "$RECORDS" || return 1
 
-	_cert=$(uci -q get trusttunnel.endpoint.certificate)
+	# The pinned certificate belongs to the ACTIVE server; the read goes
+	# through the same main.endpoint resolution as uci-export.
+	config_load trusttunnel
+	resolve_active_server
+	_cert=""
+	if [ -n "$server_sec" ]; then
+		config_get _cert "$server_sec" certificate
+	fi
 	_cert_pem=""
 	if [ -z "$_cert" ]; then
 		rm -f "$OUTDIR/endpoint.pem"
@@ -71,8 +105,13 @@ regen_config() {
 # the variable is left unset when nothing was found.
 provision_ca_store() {
 	config_load trusttunnel
-	config_get_bool _skipver endpoint skip_verification 0
-	config_get _pinned endpoint certificate
+	resolve_active_server
+	_skipver=0
+	_pinned=""
+	if [ -n "$server_sec" ]; then
+		config_get_bool _skipver "$server_sec" skip_verification 0
+		config_get _pinned "$server_sec" certificate
+	fi
 	# shellcheck disable=SC2154 # both are assigned by config_get_bool/config_get above
 	if [ "${_skipver:-0}" = "1" ] || [ -n "${_pinned:-}" ]; then
 		return 0
@@ -242,11 +281,22 @@ fresh_client_tuns() {
 	done
 }
 
-# One-shot attach of the first client tun that already exists at service
-# start. The hotplug handler is the main mechanism for later devices; this
-# only covers the already-present-device edge, so a single attempt is enough.
+# Attach the first client tun created after <since>, waiting for it to
+# appear: the client creates its device asynchronously after spawn, and a
+# single attempt loses the race whenever the device is not there yet.
+# The hotplug hook is the fallback for later recreations, but its add
+# event can be skipped during a restart (the service's running state is
+# in flux), so the start path must not depend on it. The bound is short —
+# a healthy client's device appears within a second.
 attach_client_tun() {
-	_new=$(fresh_client_tuns "$1" | head -n 1)
+	_new=""
+	_i=0
+	while [ "$_i" -lt 10 ]; do
+		_i=$((_i + 1))
+		_new=$(fresh_client_tuns "$1" | head -n 1)
+		[ -n "$_new" ] && break
+		sleep 1
+	done
 	[ -n "$_new" ] || return 0
 	"$LIBDIR/routing" attach "$RECORDS" "$OUTDIR" "$_new"
 }
@@ -360,7 +410,12 @@ apply_config() {
 	fi
 
 	_class=$(class_of_diff "$RECORDS" "$RECORDS.next")
-	_cert_uci=$(uci -q get trusttunnel.endpoint.certificate)
+	config_load trusttunnel
+	resolve_active_server
+	_cert_uci=""
+	if [ -n "$server_sec" ]; then
+		config_get _cert_uci "$server_sec" certificate
+	fi
 	_cert_pem=$(cat "$OUTDIR/endpoint.pem" 2>/dev/null)
 	if [ "$_cert_uci" != "$_cert_pem" ]; then
 		_class=$(max_class "$_class" restart)

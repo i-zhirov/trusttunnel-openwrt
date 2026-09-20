@@ -434,7 +434,14 @@ absent, so the plain suite runs anywhere.
   and traffic contracts (through-tunnel traffic arrives with the
   endpoint's source address, private traffic stays direct, the blackhole
   killswitch swallows marked traffic, install/uci-defaults/reload are
-  idempotent). An early pure-shell `archparse` stage pins the ipk
+  idempotent). The later stages exercise the multiple-server model live:
+  `switch` saves a second endpoint as the Backup server, selects it via
+  `main.endpoint` + reload and asserts the records, client.toml and the
+  traffic follow it (and back), and `migrate` deletes the ACTIVE server's
+  section, asserts the dangling selector stops the service, then runs
+  the uci-defaults script exactly as the boot runs it and asserts the
+  selection is re-pointed at the remaining server, which brings the
+  tunnel back. An early pure-shell `archparse` stage pins the ipk
   arch/version derivation (`tests/integration/ipk-arch.sh`, shared with
   release.yml's opkg assembly) against every matrix arch-name shape — a
   last-underscore split once clipped `mipsel_24kc` to `24kc`, and the
