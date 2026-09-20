@@ -338,6 +338,10 @@ test('deleting the last server saves the empty state', async ({ page }) => {
 	await waitForFrames(page, 'http', '/admin/uci/apply_rollback', 1);
 	await waitForFrames(page, 'http', '/admin/uci/confirm', 1);
 
-	// No validation modal: the empty selection is allowed.
-	await expect(page.locator('#modal_overlay .modal')).toHaveCount(0);
+	// The empty state saves without a validation error. The overlay
+	// shell is always present, so visibility is the signal: a real modal
+	// (a validation error, the apply progress) is visible, the idle shell
+	// is not. The apply flow reloads the page on success, which ends the
+	// visible apply modal.
+	await expect(page.locator('#modal_overlay .modal')).not.toBeVisible();
 });
