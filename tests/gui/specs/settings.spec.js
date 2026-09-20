@@ -283,3 +283,55 @@ test('switching the active server stages main.endpoint', async ({ page }) => {
 
 	await waitForFrames(page, 'http', '/admin/uci/confirm', 1);
 });
+
+test('renaming the active server moves the selection with it', async ({ page }) => {
+	await openView(page, 'settings');
+
+	// Renaming the ACTIVE server must not leave main.endpoint pointing at
+	// the old name — the tunnel would stop.
+	await page.locator('[id="widget.cbid.trusttunnel.endpoint.name"]').fill('Home');
+
+	await page.locator('#view .cbi-page-actions .cbi-dropdown').first().click();
+	await waitForFrames(page, 'uci', 'set', 1);
+	await waitForFrames(page, 'http', '/admin/uci/apply_rollback', 1);
+
+	const sets = await framesFor(page, 'uci', 'set');
+	const mainSet = sets.find(f => f.args.section === 'main');
+	expect(mainSet.args.values.endpoint).toBe('Home');
+
+	await waitForFrames(page, 'http', '/admin/uci/confirm', 1);
+});
+
+test('deleting the active server is refused while others remain', async ({ page }) => {
+	await openView(page, 'settings');
+
+	// The Default server is the active one; its Delete button must be
+	// refused while the Backup server exists.
+	const deletes = page.locator('#view .cbi-section[data-tab="endpoint"] .cbi-section-remove button');
+	await expect(deletes).toHaveCount(2);
+	await deletes.first().click();
+
+	await expect(page.locator('#maincontent .alert-message.warning')).toContainText(
+		'Select another active server on the General tab first');
+	await expect(page.locator('[id="widget.cbid.trusttunnel.endpoint.name"]')).toHaveValue('Default');
+});
+
+test('deleting the last server saves the empty state', async ({ page }) => {
+	await openView(page, 'settings');
+
+	// Backup is not active: its Delete works. Then Default is the LAST
+	// server and may be deleted too — the empty state is valid and saves
+	// without a validation error.
+	const deletes = page.locator('#view .cbi-section[data-tab="endpoint"] .cbi-section-remove button');
+	await deletes.nth(1).click();
+	await waitForFrames(page, 'uci', 'delete', 1);
+	await deletes.first().click();
+	await waitForFrames(page, 'uci', 'delete', 2);
+
+	await page.locator('#view .cbi-page-actions .cbi-dropdown').first().click();
+	await waitForFrames(page, 'http', '/admin/uci/apply_rollback', 1);
+	await waitForFrames(page, 'http', '/admin/uci/confirm', 1);
+
+	// No validation modal: the empty selection is allowed.
+	await expect(page.locator('#modal_overlay .modal')).toHaveCount(0);
+});

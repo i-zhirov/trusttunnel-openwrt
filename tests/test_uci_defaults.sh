@@ -526,6 +526,46 @@ EOF
         "idempotent: the server-seed log line appears exactly once"
 }
 
+scenario_stale() {
+    ucd_s_dir=$UCD_FIXTURE_ROOT/stale
+    mkdir -p "$ucd_s_dir"
+    cat > "$ucd_s_dir/firewall" <<'EOF'
+config defaults
+	option input 'ACCEPT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+EOF
+    # A selector that names no section: a server renamed or deleted
+    # outside the UI (e.g. over ssh). The heal must re-point it at the
+    # first remaining server, and the second run must change nothing.
+    cat > "$ucd_s_dir/trusttunnel" <<'EOF'
+config endpoint 'endpoint'
+	option name 'Default'
+	option hostname 'vpn.example.com'
+
+config main 'main'
+	option endpoint 'Ghost'
+EOF
+    ucd_stubs "$ucd_s_dir"
+    ucd_run stale 1 ""
+
+    ucd_out=$(cat "$ucd_s_dir/out")
+    ucd_tt2=$(ucd_block TT2 "$ucd_out")
+
+    assert_contains "$ucd_out" "SCRIPT_EXIT=0" \
+        "stale: run 1 exits 0"
+    assert_contains "$ucd_out" "SCRIPT_EXIT2=0" \
+        "stale: run 2 exits 0"
+    assert_contains "$ucd_tt2" "main.endpoint='Default'" \
+        "stale: the dangling reference is re-pointed at the first server"
+    assert_contains "$ucd_out" "TT_IDENTICAL=yes" \
+        "stale: the healed state is not touched by run 2"
+    assert_contains "$ucd_out" "LOG_STABLE=yes" \
+        "stale: no new log lines on run 2"
+    assert_eq "1" "$(ucd_grep_count 'selected the Default endpoint as the active server' "$ucd_out")" \
+        "stale: the heal log line appears exactly once"
+}
+
 # --- runner -------------------------------------------------------------------
 
 ucd_matches() {
@@ -539,7 +579,7 @@ ucd_matches() {
     esac
 }
 
-for ucd_scenario in fresh duplicated legacy upgrade side-effects idempotent; do
+for ucd_scenario in fresh duplicated legacy upgrade side-effects idempotent stale; do
     if [ -z "$TT_UCD_FILTER" ] || ucd_matches "$ucd_scenario"; then
         echo "== scenario: $ucd_scenario"
         case $ucd_scenario in

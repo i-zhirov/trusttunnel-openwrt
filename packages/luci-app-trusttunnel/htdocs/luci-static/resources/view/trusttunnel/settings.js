@@ -429,7 +429,10 @@ return view.extend({
 
 		o = s.option(form.ListValue, 'endpoint', _('Active server'),
 			_('The saved server the tunnel uses right now. Servers are added and edited on the Server tab; each server carries its own routing profile.'));
-		o.rmempty = false;
+		// Not rmempty: with no servers saved an empty selection is the
+		// honest state (the service then refuses to start and the
+		// Diagnostics page explains it). While servers exist the select
+		// always carries one.
 
 		var currentKnown = false;
 
@@ -466,6 +469,26 @@ return view.extend({
 		s.tab('security', _('Security'),
 			_('TLS trust and anti-censorship. These rarely need manual changes after importing the server configuration.'));
 
+		// Deleting the ACTIVE server would leave main.endpoint naming a
+		// section that no longer exists and the tunnel would stop; the
+		// delete is refused while other servers remain. The LAST server
+		// may be deleted — the empty state is honest, and the
+		// Diagnostics page explains it.
+		var realHandleRemove = s.handleRemove;
+
+		s.handleRemove = function(section_id, ev) {
+			var removedName = uci.get('trusttunnel', section_id, 'name');
+
+			if (removedName && removedName === uci.get('trusttunnel', 'main', 'endpoint') &&
+					(uci.sections('trusttunnel', 'endpoint') || []).length > 1) {
+				ui.addNotification(null, E('p', {},
+					_('Select another active server on the General tab first — the active server cannot be deleted.')), 'warning');
+				return Promise.resolve();
+			}
+
+			return realHandleRemove.call(this, section_id, ev);
+		};
+
 		o = s.taboption('connection', form.Value, 'name', _('Name'),
 			_('Unique name; the General tab selects the active server by it.'));
 		o.rmempty = false;
@@ -478,6 +501,16 @@ return view.extend({
 			for (var i = 0; i < secs.length; i++)
 				if (secs[i]['.name'] !== section_id && secs[i].name === value)
 					return _('Another server already has this name');
+
+			// Renaming the ACTIVE server moves the selection with it: the
+			// General-tab picker parses (and writes) before the endpoint
+			// sections, so this later write wins in the same save. When
+			// the user switched the selection in the same edit, the
+			// section is no longer active here and the selection is left
+			// alone.
+			if (value !== uci.get('trusttunnel', section_id, 'name') &&
+					uci.get('trusttunnel', section_id, 'name') === uci.get('trusttunnel', 'main', 'endpoint'))
+				uci.set('trusttunnel', 'main', 'endpoint', value);
 
 			return true;
 		};
