@@ -198,7 +198,10 @@ TrustTunnel** (Settings is covered under Configuration).
   ("working" only when everything is), a Mode row — the assigned profile
   and which half of its rules goes through the tunnel, or "Everything
   through VPN" without a profile — the server host name, and in proxy
-  mode the listener address. Start / Stop / Restart buttons.
+  mode the listener address. A **Traffic** row shows the current
+  download/upload rates (a ten-second average) and the cumulative bytes
+  through the tunnel: the tun device's kernel counters in tun mode, the
+  listener-port counters in proxy mode. Start / Stop / Restart buttons.
 - **Preview rules**: shows how each rule of the assigned profile is
   treated right now — or the legacy "do not bypass" list when no profile
   is assigned.
