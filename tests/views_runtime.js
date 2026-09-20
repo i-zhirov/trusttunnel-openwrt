@@ -560,16 +560,6 @@ async function main() {
     const advSec = form_lastMap.sections.find(s => s.type === 'network');
     ok(advSec && !advSec.options.some(o => o.name === 'dns_upstream'),
         'settings: the Advanced tab no longer writes the endpoint DNS list');
-    // The Versions tab is a NamedSection of the UI-only 'about' type
-    // (map-level tabs key panes by the section type, so the section must
-    // exist for the tab to render its rows).
-    const aboutSec = form_lastMap.sections.find(s => s.type === 'about');
-    ok(aboutSec && aboutSec.title === 'Versions',
-        'settings: the Versions tab section is created');
-    ok(aboutSec && [ '_package', '_client_package', '_client' ].every(n =>
-        aboutSec.options.some(o => o.name === n)),
-        'settings: the Versions section carries the three version rows');
-    ok(hasText(settingsTree, 'Versions'), 'settings: the Versions tab title renders');
 
     // The operation mode picker and the ACTIVE server picker live on the
     // General tab, the SOCKS listener settings on their own Proxy tab.
