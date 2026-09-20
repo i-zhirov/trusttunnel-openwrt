@@ -13,10 +13,14 @@
 # the harness for both variants: the real install.sh inside a dockerized
 # OpenWrt router, the router configured with its own tools (uci,
 # /etc/init.d/*), connected to a real TrustTunnel endpoint container, with
-# the tunnel traffic verified end to end (through-tunnel requests arrive
-# with the endpoint's source address, private traffic stays direct, the
-# blackhole killswitch swallows marked traffic, and
-# install/uci-defaults/reload are idempotent).
+# the tunnel traffic verified end to end. The harness runs its FULL stage
+# list on every trigger (no TT_FILTER): install, install-side asserts,
+# connect, traffic, lifecycle (killswitch + idempotence), proxy mode, the
+# active-server switch (a second endpoint; the tunnel follows main.endpoint
+# and back), and the boot-migration heal (the ACTIVE server's section
+# deleted, the dangling selector stops the service, and the uci-defaults
+# script re-points main.endpoint at the remaining server, which brings the
+# tunnel back). A regression in any stage fails the run.
 #
 # Separate from ci.yml on purpose: the SDK builds are the slow part, and
 # the fast contract gates must not wait for them. The release workflow
