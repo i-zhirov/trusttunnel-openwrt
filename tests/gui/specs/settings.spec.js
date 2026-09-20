@@ -249,7 +249,13 @@ test('server name uniqueness validator rejects duplicates', async ({ page }) => 
 	await openView(page, 'settings');
 
 	// Add a second server and give it the same name as the active one.
-	await page.locator('#view .cbi-section[data-tab="endpoint"] button[title="Add"]').click();
+	// The Server pane is inactive until its map tab is clicked (the
+	// panes overlap); the sticky bars intercept edge clicks, so the
+	// button is also scrolled to the center first.
+		await page.locator('#view .cbi-map > .cbi-tabmenu li a', { hasText: 'Server' }).click();
+	const addBtn = page.locator('#view .cbi-section[data-tab="endpoint"] button[title="Add"]');
+	await addBtn.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest' }));
+	await addBtn.click();
 	const nameInputs = page.locator('#view .cbi-section[data-tab="endpoint"] input[id$=".name"]');
 	await expect(nameInputs).toHaveCount(3);
 	await nameInputs.last().fill('Default');
@@ -299,9 +305,12 @@ test('deleting the active server is refused while others remain', async ({ page 
 	await openView(page, 'settings');
 
 	// The Default server is the active one; its Delete button must be
-	// refused while the Backup server exists.
+	// refused while the Backup server exists. The Server pane needs its
+	// map tab active first (the panes overlap).
+		await page.locator('#view .cbi-map > .cbi-tabmenu li a', { hasText: 'Server' }).click();
 	const deletes = page.locator('#view .cbi-section[data-tab="endpoint"] .cbi-section-remove button');
 	await expect(deletes).toHaveCount(2);
+	await deletes.first().evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest' }));
 	await deletes.first().click();
 
 	await expect(page.locator('#maincontent .alert-message.warning')).toContainText(
@@ -314,10 +323,14 @@ test('deleting the last server saves the empty state', async ({ page }) => {
 
 	// Backup is not active: its Delete works. Then Default is the LAST
 	// server and may be deleted too — the empty state is valid and saves
-	// without a validation error.
+	// without a validation error. The Server pane needs its map tab
+	// active first (the panes overlap).
+		await page.locator('#view .cbi-map > .cbi-tabmenu li a', { hasText: 'Server' }).click();
 	const deletes = page.locator('#view .cbi-section[data-tab="endpoint"] .cbi-section-remove button');
+	await deletes.nth(1).evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest' }));
 	await deletes.nth(1).click();
 	await waitForFrames(page, 'uci', 'delete', 1);
+	await deletes.first().evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest' }));
 	await deletes.first().click();
 	await waitForFrames(page, 'uci', 'delete', 2);
 
