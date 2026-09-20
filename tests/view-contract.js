@@ -37,7 +37,9 @@ const ACL = 'packages/luci-app-trusttunnel/root/usr/share/rpcd/acl.d/luci-app-tr
 const GOLDENS = ['tests/backend/goldens/diagnose.json', 'tests/backend/goldens/healthy/diagnose.json',
 	'tests/backend/goldens/proxy/diagnose.json', 'tests/backend/goldens/proxy-healthy/diagnose.json',
 	'tests/backend/goldens/bypass/diagnose.json', 'tests/backend/goldens/bypass-rule/diagnose.json',
-	'tests/backend/goldens/bypass-rule-off/diagnose.json'];
+	'tests/backend/goldens/bypass-rule-off/diagnose.json',
+	'tests/backend/goldens/bypass-wildcard/diagnose.json',
+	'tests/backend/goldens/vpn-wildcard-bypass/diagnose.json'];
 
 let failures = 0;
 

@@ -742,14 +742,24 @@ return {
 				// used.
 				let ECHO_HOSTS = [ 'api.ipify.org', 'ifconfig.me', 'icanhazip.com' ];
 
-				// listed(rules, host) — the client's SNI matching: exact,
-				// or under a *.domain rule.
+				// listed(rules, host) — the client's SNI matching: exact, or
+				// under a *.domain rule. A wildcard covers the subdomains,
+				// NOT the apex (verified against the vendor client:
+				// *.ipify.org tunnels api.ipify.org but ipify.org itself
+				// goes out directly), so the leading '*.' strips and only
+				// the suffix test applies — the apex must not match.
 				let listed = function(rules, host) {
 					let lc_host = lc(host);
 
 					for (let r in (rules ?? [])) {
 						let rule = lc(trim(r));
-						if (rule == lc_host || substr(lc_host, -(length(rule) + 1)) == '.' + rule)
+
+						if (substr(rule, 0, 1) == '*') {
+							rule = substr(rule, 2);
+							if (substr(lc_host, -(length(rule) + 1)) == '.' + rule)
+								return true;
+						}
+						else if (rule == lc_host || substr(lc_host, -(length(rule) + 1)) == '.' + rule)
 							return true;
 					}
 
@@ -757,15 +767,17 @@ return {
 				};
 
 				// probe_domain(rules) — the first rule a plain HTTPS
-				// request can reach through the tunnel: a bare domain or a
-				// *.domain rule (the * strips to the base name). IP,
-				// IP:port and CIDR rules cannot be probed this way.
+				// request can reach through the tunnel: a bare domain
+				// only. A *.domain wildcard covers only the subdomains,
+				// and no canonical subdomain exists to probe, so wildcard
+				// rules — like IP, IP:port and CIDR rules — cannot be
+				// probed this way.
 				let probe_domain = function(rules) {
 					for (let r in (rules ?? [])) {
 						let rule = trim(r);
 
 						if (substr(rule, 0, 1) == '*')
-							rule = substr(rule, 2);
+							continue;
 
 						if (match(rule, /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/) &&
 							!match(rule, /^\d{1,3}(\.\d{1,3}){3}$/))
@@ -866,7 +878,7 @@ return {
 							if (!length(target))
 								push(checks, check('network', 'Traffic takes the tunnel', 'warn',
 									'the tunneled rules cannot be probed',
-									'The profile tunnels only IP or CIDR rules, which a plain HTTPS request cannot reach through the tunnel.'));
+									'The profile tunnels only IP, CIDR or *.domain rules, which a plain HTTPS request cannot reach through the tunnel.'));
 							else {
 								let via = run(sock_cmd + shell_quote(target), true);
 
@@ -930,7 +942,7 @@ return {
 							if (!length(target))
 								push(checks, check('network', 'Traffic takes the tunnel', 'warn',
 									'the tunneled rules cannot be probed',
-									'The profile tunnels only IP or CIDR rules, which a plain HTTPS request cannot reach through the tunnel.'));
+									'The profile tunnels only IP, CIDR or *.domain rules, which a plain HTTPS request cannot reach through the tunnel.'));
 							else {
 								let via = run('curl -fsS --max-time 8 --interface ' + shell_quote(dev) + ' https://' + shell_quote(target), true);
 

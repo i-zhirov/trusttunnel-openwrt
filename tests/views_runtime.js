@@ -610,6 +610,12 @@ async function main() {
     const diagButtons = findButtons(diagTree).map(b => String(b.children[0]));
     for (const label of ['Run checks', 'Copy report'])
         ok(diagButtons.indexOf(label) !== -1, 'diagnostics: ' + label + ' button present');
+    // The report serializes the last run; with the chain on demand there
+    // is nothing to copy before the first run, so the button starts
+    // disabled and enables only after a successful run.
+    const copyBtn = findButtons(diagTree).find(b => String(b.children[0]) === 'Copy report');
+    ok(copyBtn && copyBtn.attrs.disabled !== undefined,
+        'diagnostics: Copy report starts disabled');
     // the chain runs on demand: rendering alone must not call diagnose
     ok(hasText(diagTree, 'not run yet'), 'diagnostics: nothing runs until Run checks is pressed');
     ok(rpcCalls.indexOf('diagnose') === -1, 'diagnostics: no diagnose call on render');
@@ -621,6 +627,7 @@ async function main() {
     await Promise.resolve();
     ok(hasText(diagTree, 'everything checks out'), 'diagnostics: verdict banner renders');
     ok(hasText(diagTree, 'Server address'), 'diagnostics: the checks table renders');
+    ok(copyBtn.disabled === false, 'diagnostics: Copy report enables after a run');
 
     // ===== tools.js =====
     console.log('== tools.js');
