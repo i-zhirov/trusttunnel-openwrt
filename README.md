@@ -224,7 +224,7 @@ problem.
 | Configuration | endpoint address, credentials, TLS host name, assigned routing profile |
 | Prerequisites | client binary, `/dev/net/tun` (TUN mode only) |
 | Service | enabled at boot, running now |
-| Kernel state | TUN mode: tunnel device and its MTU, route attached to the device, tunnel carrier, fwmark rule, routing table, nftables table, firewall zone. Proxy mode: the SOCKS listener (bound on the configured address or not). |
+| Kernel state | TUN mode: tunnel device and its MTU, route attached to the device, tunnel carrier, fwmark rule, routing table, nftables table, firewall zone. Proxy mode: the SOCKS listener (bound on the configured address or not) and the usage meter (counter rules on the listener port). |
 | Network | endpoint reachable, traffic actually going through the tunnel (via the device in TUN mode, via the listener in proxy mode) |
 
 Four verdicts, and the distinction matters:
