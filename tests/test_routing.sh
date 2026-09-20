@@ -6,7 +6,9 @@
 # only for the "-f -" transaction (the suite runner closes stdin, so an
 # unconditional read would hang), and ip always reports success so the live
 # device checks in attach pass. The fixture endpoints are literal addresses,
-# which keeps real nslookup out of the test.
+# which keeps real nslookup out of the test. For status tests the nft stub
+# answers a "list table" call from the file $TT_NFT_LIST (empty by default),
+# so the meter-counter parsing can be pinned against a canned listing.
 # shellcheck source=/dev/null
 . "$(dirname "$0")/lib.sh"
 
@@ -25,6 +27,9 @@ cat > "$stub_dir/nft" <<'EOF'
 printf '%s\n' "nft $*" >> "$TT_CMD_LOG"
 if [ "${1-}" = "-f" ] && [ "${2-}" = "-" ]; then
     cat > "$TT_NFT_STDIN"
+fi
+if [ "${1-}" = "list" ] && [ "${2-}" = "table" ]; then
+    cat "${TT_NFT_LIST:-/dev/null}"
 fi
 exit 0
 EOF
@@ -176,5 +181,107 @@ assert_eq "0" "$(wc -c < "$TT_CMD_LOG" | tr -d ' ')" \
 	"up in proxy mode installs nothing"
 assert_eq "0" "$(wc -c < "$TT_NFT_STDIN" | tr -d ' ')" \
 	"up in proxy mode loads no ruleset"
+
+# --- meter ---------------------------------------------------------------------
+
+# The proxy-mode usage meter counts bytes on the SOCKS listener port:
+# requests into the listener (dport, prerouting) are the upload path,
+# responses from it (sport, output) the download path. The rules land in
+# the same table up owns, so down removes them like any other ruleset.
+: > "$TT_CMD_LOG"
+: > "$TT_NFT_STDIN"
+sh "$R" meter "$TT_TEST_TMP/proxy.tsv" "$TT_TEST_TMP"
+meter_log=$(cat "$TT_CMD_LOG")
+meter_stdin=$(cat "$TT_NFT_STDIN")
+
+assert_eq "1" "$(line_count '^nft -f -$' "$meter_log")" "meter loads its ruleset in a single nft transaction"
+assert_eq "0" "$(line_count 'blackhole' "$meter_log")" "meter installs no blackhole"
+assert_eq "0" "$(line_count 'rule add' "$meter_log")" "meter installs no fwmark rule"
+assert_eq "0" "$(line_count 'route ' "$meter_log")" "meter touches no routes"
+assert_contains "$meter_stdin" 'table inet trusttunnel { }' "the meter transaction opens the table"
+assert_contains "$meter_stdin" 'delete table inet trusttunnel' "the meter transaction is idempotent"
+assert_contains "$meter_stdin" 'type filter hook prerouting priority mangle' "the meter counts requests in prerouting"
+assert_contains "$meter_stdin" 'tcp dport 1080 counter' "the meter counts bytes into the listener"
+assert_contains "$meter_stdin" 'type filter hook output priority mangle' "the meter counts responses in output"
+assert_contains "$meter_stdin" 'tcp sport 1080 counter' "the meter counts bytes from the listener"
+assert_eq "0" "$(line_count 'meta mark' "$meter_stdin")" "the meter never marks traffic"
+assert_eq "0" "$(line_count 'tt_endpoint' "$meter_stdin")" "the meter carries no endpoint sets"
+
+# Tun mode owns the kernel routing: meter must refuse just like up
+# refuses proxy mode — the two rulesets never coexist.
+: > "$TT_CMD_LOG"
+: > "$TT_NFT_STDIN"
+if sh "$R" meter "$TT_TEST_TMP/up.tsv" "$TT_TEST_TMP" 2>/dev/null; then
+	_tt_fail "meter in tun mode exits non-zero"
+else
+	_tt_pass "meter in tun mode exits non-zero"
+fi
+assert_eq "0" "$(wc -c < "$TT_CMD_LOG" | tr -d ' ')" \
+	"meter in tun mode installs nothing"
+assert_eq "0" "$(wc -c < "$TT_NFT_STDIN" | tr -d ' ')" \
+	"meter in tun mode loads no ruleset"
+
+# A listener address without a numeric port cannot be counted: refuse
+# instead of installing a ruleset that never matches.
+printf 'main.mode\tproxy\nproxy.address\t127.0.0.1\n' > "$TT_TEST_TMP/noport.tsv"
+: > "$TT_CMD_LOG"
+: > "$TT_NFT_STDIN"
+if sh "$R" meter "$TT_TEST_TMP/noport.tsv" "$TT_TEST_TMP" 2>/dev/null; then
+	_tt_fail "meter without a numeric port exits non-zero"
+else
+	_tt_pass "meter without a numeric port exits non-zero"
+fi
+assert_eq "0" "$(wc -c < "$TT_CMD_LOG" | tr -d ' ')" \
+	"meter without a numeric port installs nothing"
+assert_eq "0" "$(wc -c < "$TT_NFT_STDIN" | tr -d ' ')" \
+	"meter without a numeric port loads no ruleset"
+
+# --- status with the meter ------------------------------------------------------
+
+# The status subcommand reports the meter counters exactly as the nft
+# listing carries them: rx from the sport rule (downloads), tx from the
+# dport rule (uploads).
+cat > "$TT_TEST_TMP/meter.list" <<'EOF'
+table inet trusttunnel {
+	chain tt_meter_in {
+		type filter hook prerouting priority -150; policy accept;
+		tcp dport 1080 counter packets 7 bytes 2048
+	}
+	chain tt_meter_out {
+		type filter hook output priority -150; policy accept;
+		tcp sport 1080 counter packets 13 bytes 4096
+	}
+}
+EOF
+export TT_NFT_LIST="$TT_TEST_TMP/meter.list"
+meter_status=$(sh "$R" status "$TT_TEST_TMP/proxy.tsv" "$TT_TEST_TMP")
+assert_contains "$meter_status" 'nft present' "status sees the meter table"
+assert_contains "$meter_status" 'meter up' "status reports the meter rules"
+assert_contains "$meter_status" 'meter rx 4096' "status reports the download bytes"
+assert_contains "$meter_status" 'meter tx 2048' "status reports the upload bytes"
+
+# The meter lines appear only while BOTH counter rules exist: a tun-mode
+# ruleset (or a stale table after a port change) must report no meter.
+cat > "$TT_TEST_TMP/tun.list" <<'EOF'
+table inet trusttunnel {
+	set tt_endpoint4 { type ipv4_addr; flags interval; elements = { 1.2.3.4 } }
+	chain prerouting {
+		type filter hook prerouting priority mangle; policy accept;
+		iifname != { "br-lan" } return
+		ip daddr @tt_endpoint4 return
+		meta mark set 0x9527
+	}
+}
+EOF
+export TT_NFT_LIST="$TT_TEST_TMP/tun.list"
+tun_status=$(sh "$R" status "$TT_TEST_TMP/up.tsv" "$TT_TEST_TMP")
+assert_contains "$tun_status" 'nft present' "status sees the tun ruleset"
+assert_eq "0" "$(line_count 'meter' "$tun_status")" "no meter lines for a tun-mode ruleset"
+
+# An empty listing is an absent table: no nft, no meter.
+export TT_NFT_LIST=/dev/null
+absent_status=$(sh "$R" status "$TT_TEST_TMP/up.tsv" "$TT_TEST_TMP")
+assert_contains "$absent_status" 'nft absent' "an empty listing reports no table"
+unset TT_NFT_LIST
 
 tt_test_summary
