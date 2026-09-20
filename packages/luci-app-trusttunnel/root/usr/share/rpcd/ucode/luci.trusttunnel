@@ -14,6 +14,7 @@ const LIBDIR = '/usr/libexec/trusttunnel';
 const OUTDIR = '/var/etc/trusttunnel';
 const RECORDS = OUTDIR + '/settings.tsv';
 const CLIENT = '/opt/trusttunnel_client/trusttunnel_client';
+const DEV_STATS = '/proc/net/dev';
 
 // Run a command and return { code, out }. With capture the output carries
 // stdout only and stderr is dropped — the right mode wherever the output is
@@ -139,11 +140,11 @@ function parse_ping(host, output) {
 }
 
 // Ask the routing helper about the applied kernel state. Returns a flat
-// object with the device name (when the helper reports one) and the four
-// presence flags; everything is false/empty when the records file is
-// absent or the helper fails.
+// object with the device name (when the helper reports one), the four
+// presence flags and the proxy-mode meter counters; everything is
+// false/empty when the records file is absent or the helper fails.
 function kernel_state() {
-	let out = { device: '', device_up: false, rule: false, table: false, nft: false };
+	let out = { device: '', device_up: false, rule: false, table: false, nft: false, meter_up: false, meter_rx: 0, meter_tx: 0 };
 
 	if (access(RECORDS) == null)
 		return out;
@@ -161,11 +162,49 @@ function kernel_state() {
 			out.table = true;
 		else if (line == 'nft present')
 			out.nft = true;
+		else if (line == 'meter up')
+			out.meter_up = true;
+		else if (match(line, /^meter rx /))
+			out.meter_rx = int(trim(substr(line, 9)));
+		else if (match(line, /^meter tx /))
+			out.meter_tx = int(trim(substr(line, 9)));
 		else if (match(line, /^client device /))
 			out.device = trim(substr(line, 14));
 	}
 
 	return out;
+}
+
+// Cumulative rx/tx bytes for a device from /proc/net/dev, or null when
+// the device has no line there (unknown name, or a device this netns
+// does not carry — the contract lab, for instance, never has a tun0).
+// The fields are column-aligned, so multiple spaces can separate them;
+// the regex mirrors parse_ping's literal-space style. Field order after
+// the interface name: rx_bytes, then seven more rx fields, then
+// tx_bytes.
+function dev_counters(dev) {
+	if (!length(dev))
+		return null;
+
+	let raw = readfile(DEV_STATS);
+	if (raw == null)
+		return null;
+
+	let lines = split(raw, '\n');
+	for (let i = 0; i < length(lines); i++) {
+		let c = index(lines[i], ':');
+		if (c < 0)
+			continue;
+		if (trim(substr(lines[i], 0, c)) != dev)
+			continue;
+
+		let m = match(substr(lines[i], c + 1),
+			/^ *([0-9]+) +([0-9]+) +([0-9]+) +([0-9]+) +([0-9]+) +([0-9]+) +([0-9]+) +([0-9]+) +([0-9]+)/);
+		if (m)
+			return { rx: +m[1], tx: +m[9] };
+	}
+
+	return null;
 }
 
 // The port of a "ip:port", "host:port" or "[v6]:port" listen address; an
@@ -278,11 +317,22 @@ return {
 
 				let running = run('/etc/init.d/trusttunnel running').code == 0;
 
+				// Usage counters: the tun device's kernel bytes in tun
+				// mode, the SOCKS listener meter rules in proxy mode.
+				// Null means no counters exist (no device, or a meter
+				// that was never installed); the view hides the row.
+				let dev = length(rs.device) ? rs.device : null;
+				let counters = null;
+				if (mode == 'tun')
+					counters = dev_counters(dev);
+				else if (rs.meter_up)
+					counters = { rx: rs.meter_rx, tx: rs.meter_tx };
+
 				return {
 					enabled: uci_value('trusttunnel.main.enabled') == '1',
 					running: running,
 					mode: mode,
-					device: length(rs.device) ? rs.device : null,
+					device: dev,
 					device_up: rs.device_up,
 					rule: rs.rule,
 					table: rs.table,
@@ -301,7 +351,12 @@ return {
 					// proxy mode; in tun mode the address is unused and
 					// no listener exists.
 					proxy_address: length(paddr) ? paddr : null,
-					listener_up: mode == 'proxy' ? socks_listening(paddr) : null
+					listener_up: mode == 'proxy' ? socks_listening(paddr) : null,
+					// Cumulative bytes through the tunnel: the tun device
+					// counters (kernel-maintained) or the meter rules.
+					// The view diffs consecutive polls for rates.
+					rx_bytes: counters ? counters.rx : null,
+					tx_bytes: counters ? counters.tx : null
 				};
 			}
 		},
@@ -657,6 +712,19 @@ return {
 					else
 						push(checks, check('kernel', 'SOCKS listener', 'fail', 'not bound',
 							'The listener is bound by the client at start; a bind error or a port conflict keeps it down. Open the Client log tab.'));
+
+					// The usage meter is installed by the init script at
+					// start, so a running service without the counter
+					// rules is a degraded state worth a remark — the
+					// tunnel works, but the traffic row stays hidden and
+					// nothing would tell the user why.
+					if (!running)
+						push(checks, check('kernel', 'Usage meter', 'skip', 'the service is stopped', ''));
+					else if (rs.meter_up)
+						push(checks, check('kernel', 'Usage meter', 'ok', 'listener port metered', ''));
+					else
+						push(checks, check('kernel', 'Usage meter', 'warn', 'no counter rules',
+							'The meter is installed by the init script at start; a failed install leaves the traffic row hidden. Restart the service.'));
 				} else {
 					let dev_sys = length(dev) ? '/sys/class/net/' + dev : '';
 

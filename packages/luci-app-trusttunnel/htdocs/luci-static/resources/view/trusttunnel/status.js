@@ -28,6 +28,25 @@ var callCheckDomain = rpc.declare({
 	expect: {}
 });
 
+// The previous poll's counters, for the rate delta in the traffic row.
+// Module-level on purpose: the view instance lives as long as the view.
+var lastTraffic = null;
+
+// 1024-based byte formatting shared by the traffic totals and the
+// poll-delta rates ("1.2 MiB" and "340 KiB/s").
+function fmtBytes(n) {
+	var units = [ 'B', 'KiB', 'MiB', 'GiB', 'TiB' ];
+	var i = 0;
+
+	n = Number(n) || 0;
+	while (n >= 1024 && i < units.length - 1) {
+		n /= 1024;
+		i++;
+	}
+
+	return (i ? n.toFixed(1) : n.toFixed(0)) + ' ' + units[i];
+}
+
 // Header and rows for the rule preview table, mirroring the Check a
 // domain tool: the rule itself, a verdict badge and the backend's reason.
 function verdictHead() {
@@ -169,6 +188,43 @@ return view.extend({
 		]);
 	},
 
+	// The traffic cell for the facts table: cumulative bytes from the
+	// status plus the poll-delta rates. A counter reset (a reconnected
+	// tunnel starts from zero) rebaselines the snapshot, so that poll
+	// shows totals only. Null counters — proxy mode without the meter,
+	// tun mode without a device — hide the row entirely.
+	trafficCell: function(st) {
+		var rx = st.rx_bytes, tx = st.tx_bytes;
+
+		if (rx == null || tx == null) {
+			lastTraffic = null;
+			return null;
+		}
+
+		var now = Date.now();
+		var down = '—', up = '—';
+
+		if (lastTraffic && rx >= lastTraffic.rx && tx >= lastTraffic.tx) {
+			var dt = (now - lastTraffic.t) / 1000;
+
+			if (dt > 0.5) {
+				down = fmtBytes((rx - lastTraffic.rx) / dt) + '/s';
+				up = fmtBytes((tx - lastTraffic.tx) / dt) + '/s';
+			}
+		}
+
+		lastTraffic = { rx: rx, tx: tx, t: now };
+
+		return E('span', {}, [
+			E('strong', _('Down %s').format(down)),
+			' · ',
+			E('strong', _('Up %s').format(up)),
+			E('br'),
+			E('small', { 'class': 'text-muted' },
+				_('Total %s down, %s up').format(fmtBytes(rx), fmtBytes(tx)))
+		]);
+	},
+
 	renderFactRows: function(st) {
 		var rows = [];
 
@@ -192,6 +248,10 @@ return view.extend({
 
 		if (st.mode === 'proxy' && st.proxy_address)
 			rows.push(this.row(_('Proxy'), E('code', st.proxy_address)));
+
+		var traffic = this.trafficCell(st);
+		if (traffic)
+			rows.push(this.row(_('Traffic'), traffic));
 
 		return E('table', { 'class': 'table' }, rows);
 	},
@@ -322,6 +382,10 @@ return view.extend({
 	},
 
 	load: function() {
+		// The traffic baseline must not survive a view re-entry: the
+		// rates are poll deltas, so a baseline from a previous visit
+		// would paint a rate averaged over the whole away interval.
+		lastTraffic = null;
 		return callStatus();
 	},
 

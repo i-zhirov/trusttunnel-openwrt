@@ -198,7 +198,10 @@ TrustTunnel** (Settings is covered under Configuration).
   ("working" only when everything is), a Mode row — the assigned profile
   and which half of its rules goes through the tunnel, or "Everything
   through VPN" without a profile — the server host name, and in proxy
-  mode the listener address. Start / Stop / Restart buttons.
+  mode the listener address. A **Traffic** row shows the current
+  download/upload rates (a ten-second average) and the cumulative bytes
+  through the tunnel: the tun device's kernel counters in tun mode, the
+  listener-port counters in proxy mode. Start / Stop / Restart buttons.
 - **Preview rules**: shows how each rule of the assigned profile is
   treated right now — or the legacy "do not bypass" list when no profile
   is assigned.
@@ -221,7 +224,7 @@ problem.
 | Configuration | endpoint address, credentials, TLS host name, assigned routing profile |
 | Prerequisites | client binary, `/dev/net/tun` (TUN mode only) |
 | Service | enabled at boot, running now |
-| Kernel state | TUN mode: tunnel device and its MTU, route attached to the device, tunnel carrier, fwmark rule, routing table, nftables table, firewall zone. Proxy mode: the SOCKS listener (bound on the configured address or not). |
+| Kernel state | TUN mode: tunnel device and its MTU, route attached to the device, tunnel carrier, fwmark rule, routing table, nftables table, firewall zone. Proxy mode: the SOCKS listener (bound on the configured address or not) and the usage meter (counter rules on the listener port). |
 | Network | endpoint reachable, traffic actually going through the tunnel (via the device in TUN mode, via the listener in proxy mode) |
 
 Four verdicts, and the distinction matters:

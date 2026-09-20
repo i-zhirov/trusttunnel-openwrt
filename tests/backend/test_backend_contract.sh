@@ -111,6 +111,10 @@ run_call() {
 }
 
 # Compare every golden in a directory against the live backend in a lab.
+# TT_REGEN=1 rewrites the goldens from the live output instead of
+# comparing (the counterpart to "do not rebuild goldens casually": the
+# rewritten set must be diffed and only the intended files may change —
+# anything else means the backend moved behavior elsewhere).
 check_goldens() {
 	lab="$1"
 	dir="$2"
@@ -122,6 +126,10 @@ check_goldens() {
 		[ -n "$call" ] || continue
 		method=${call%%	*}
 		args=${call#*	}
+		if [ "${TT_REGEN:-0}" = 1 ]; then
+			run_call "$lab" "$method" "$args" > "$g"
+			continue
+		fi
 		assert_eq "$(cat "$g")" "$(run_call "$lab" "$method" "$args")" "golden $name"
 	done
 }
@@ -281,6 +289,13 @@ case "$1" in
 		echo "rule absent"
 		echo "table absent"
 		echo "nft absent"
+		# The usage meter (installed by the init script at start,
+		# independently of the listener being bound) reports fixed
+		# counters; the nonzero values pin the rx/tx mapping — a zero
+		# could hide a parse bug.
+		echo "meter up"
+		echo "meter rx 4096"
+		echo "meter tx 2048"
 		;;
 	up|attach|reattach|detach|down) exit 0 ;;
 	*) exit 1 ;;
@@ -305,6 +320,11 @@ case "$1" in
 		echo "rule absent"
 		echo "table absent"
 		echo "nft absent"
+		# The usage meter of a running proxy-mode service: fixed nonzero
+		# counters pin the rx/tx mapping (see phase D).
+		echo "meter up"
+		echo "meter rx 4096"
+		echo "meter tx 2048"
 		;;
 	up|attach|reattach|detach|down) exit 0 ;;
 	*) exit 1 ;;

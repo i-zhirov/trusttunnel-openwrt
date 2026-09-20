@@ -230,7 +230,8 @@ const canned = {
             addresses: ['kz.hexbrains.com:443'],
             client_installed: true, routing_profile: 'Test',
             routing_mode: 'bypass', vpn_mode: 'selective',
-            proxy_address: null, listener_up: null
+            proxy_address: null, listener_up: null,
+            rx_bytes: 1048576, tx_bytes: 524288
         };
     },
     service: function () { return { code: 0 }; },
@@ -417,6 +418,36 @@ async function main() {
     ok(hasText(statusTree, 'kz.hexbrains.com'), 'status: Server row shows the hostname');
     ok(hasText(statusTree, 'Profile Test — bypass, only the VPN rules are tunneled'),
         'status: Mode row shows the Test bypass profile');
+    // The traffic row renders the cumulative counters; the rates are the
+    // poll delta, so they only appear once a later snapshot exists (the
+    // test cannot wait 0.5 s, so it pins the totals, which are
+    // deterministic from the canned counters).
+    ok(hasText(statusTree, 'Traffic'), 'status: facts table has a Traffic row');
+    ok(hasText(statusTree, 'Total 1.0 MiB down, 512.0 KiB up'),
+        'status: Traffic row shows the cumulative totals');
+
+    // Without counters (proxy mode without the meter, tun mode without a
+    // device yet) the traffic row is hidden, not blank.
+    const noCountersStatus = Object.assign({}, canned.status(), {
+        rx_bytes: null, tx_bytes: null
+    });
+    const noCountersTree = statusView.render(noCountersStatus);
+    ok(!hasText(noCountersTree, 'Traffic'),
+        'status: no Traffic row without counters');
+
+    // Re-entering the view starts the traffic baseline fresh: the rates
+    // are poll deltas, so a baseline from a previous visit would paint
+    // a rate averaged over the whole away interval. Simulate 10 minutes
+    // of absence with a faked clock and a fresh load().
+    const realNow = Date.now;
+    Date.now = function () { return realNow() + 600000; };
+    const reentryData = await statusView.load();
+    const reentryTree = statusView.render(Object.assign({}, canned.status(), {
+        rx_bytes: 11534336, tx_bytes: 5767168
+    }));
+    Date.now = realNow;
+    ok(hasText(reentryTree, 'Down —') && hasText(reentryTree, 'Up —'),
+        'status: a re-entered view shows placeholder rates, not a stale average');
 
     // Preview rules: the button opens the modal for the assigned profile
     // (Test, bypass mode) and checks every VPN rule against the backend
