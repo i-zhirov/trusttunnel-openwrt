@@ -18,7 +18,7 @@ endpoint.dns_upstream	quic://dns.adguard.com:8853
 network.mtu	1400
 network.table	880
 network.fwmark	0x9527
-network.blackhole_on_down	1
+network.blackhole_on_down	0
 network.include_router_traffic	1
 # The assigned profile is resolved by name; its bypass rules become the
 # exclusions in vpn mode. domains.direct is the legacy fallback and must be

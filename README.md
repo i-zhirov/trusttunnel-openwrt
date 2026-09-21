@@ -141,7 +141,7 @@ tabs:
   carries its own). The Status page offers the same preview for whichever
   profile is assigned right now.
 - **Advanced**: rarely needed — the MTU, the LAN interfaces, the
-  blackhole switch, router-traffic routing, the client's own DNS
+  strict-killswitch switch, router-traffic routing, the client's own DNS
   upstreams, and the internal routing parameters (firewall mark,
   routing table). The routing options apply in TUN mode only.
 - **Versions**: what is installed — the app package and the client
@@ -306,13 +306,17 @@ The page also carries three tools:
   and CIDR ranges by the destination — and IP/CIDR bypass entries are
   already kept out at the kernel: listed destinations never enter the
   tun at all, so they work even while the client is down.
-- **Killswitch.** The blackhole route (metric `1000`) in table `880`
-  exists only while a tun device is attached (attach arms it, detach
-  removes it). While the client is connecting or dead, marked traffic
-  falls through to the direct route instead of being swallowed — a
-  crashed client must not blackhole the LAN. The generated config turns
-  the client's own killswitch off (`killswitch_enabled = false`); the
-  routing table does the protecting while the tunnel is up.
+- **Killswitch.** The blackhole route (metric `1000`) in table `880` is
+  armed while a tun device is attached (attach arms it, detach removes
+  it). By default it exists only then: while the client is connecting or
+  dead, marked traffic falls through to the direct route instead of
+  being swallowed — a crashed client must not blackhole the LAN. The
+  Advanced-tab *Strict killswitch* option (`blackhole_on_down`) arms the
+  blackhole even without a device: marked traffic is then dropped
+  instead of leaking to the provider whenever it cannot reach the
+  tunnel. The generated config turns the client's own killswitch off
+  (`killswitch_enabled = false`); the routing table does the protecting
+  while the tunnel is up.
 - **DNS.** Nothing intercepts or rewrites DNS: the generated config sets
   `change_system_dns = false`, and the router's resolver keeps serving
   the LAN.
@@ -367,8 +371,10 @@ untouched.
 - **Marked traffic is dropped.** While the tun device exists but its
   route is not attached, marked traffic falls into the blackhole; the
   "Route attached to the device" check reports it. Restart the service.
-  When the tun device is gone entirely, the blackhole is removed with it
-  and marked traffic falls through to the direct route.
+  When the tun device is gone entirely, the default fail-open mode
+  removes the blackhole with it and marked traffic falls through to the
+  direct route; with the *Strict killswitch* option on, it stays dropped
+  until the client re-attaches.
 - **Nothing goes through the tunnel.** Check the marking chain: the
   traffic must be forwarded from a listed LAN interface into the
   `trusttunnel` zone (the `lan → trusttunnel` forwarding rule) and the
@@ -504,7 +510,7 @@ configuration.
 |---|---|---|
 | `mtu` | `1350` | Tunnel MTU. Too high a value makes small pages load while TLS handshakes and large downloads stall. |
 | `lan_devices` | — | LAN interfaces whose forwarded traffic is considered; empty means the device of the `lan` network, with `br-lan` as the last-resort fallback |
-| `blackhole_on_down` | `1` | Arm the blackhole route while a tun device is attached, so marked traffic is dropped instead of leaking to the provider when the tunnel is down. While no device is attached, marked traffic falls through to the direct route. |
+| `blackhole_on_down` | `0` | Fail-open default: the blackhole exists only while a tun device is attached, so marked traffic falls through to the direct route while the client connects or is down. Set to `1` for the strict killswitch: the blackhole stays armed without a device, so marked traffic is dropped instead of leaking to the provider whenever it cannot reach the tunnel. |
 | `include_router_traffic` | `0` | Also route traffic originated by the router itself. |
 | `fwmark` | `0x9527` | The firewall mark, decimal or `0x`-prefixed hex. Change only on a conflict with mwan3, SQM or another package that marks packets. |
 | `table` | `880` | The routing table id; anything except `0` and the reserved `253–255`. |

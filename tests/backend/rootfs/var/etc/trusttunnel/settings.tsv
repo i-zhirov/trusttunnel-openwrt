@@ -23,7 +23,7 @@ routing_profile.bypass_rules	bank.example
 network.mtu	1400
 network.table	880
 network.fwmark	0x9527
-network.blackhole_on_down	1
+network.blackhole_on_down	0
 network.include_router_traffic	1
 network.lan_devices	br-lan
 domains.direct	legacy.example

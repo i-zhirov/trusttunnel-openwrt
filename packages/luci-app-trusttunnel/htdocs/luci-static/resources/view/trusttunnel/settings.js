@@ -792,9 +792,9 @@ return view.extend({
 			o.placeholder = 'br-lan';
 		}
 
-		o = s.option(form.Flag, 'blackhole_on_down', _('Drop marked traffic while the tunnel is down'),
-			_('Adds a blackhole route so marked traffic is dropped instead of leaking to the ISP.'));
-		o.default = '1';
+		o = s.option(form.Flag, 'blackhole_on_down', _('Strict killswitch'),
+			_('By default the blackhole exists only while a tun device is attached: while the client connects or is down, marked traffic falls through to the direct route. Enabling this keeps the blackhole armed even without a device, so marked traffic is dropped instead of leaking to the provider whenever it cannot reach the tunnel.'));
+		o.default = '0';
 
 		o = s.option(form.Flag, 'include_router_traffic', _('Also route the router\'s own traffic'),
 			_('By default only forwarded LAN traffic is routed. Enabling this also routes traffic originated by the router itself.'));

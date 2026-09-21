@@ -11,9 +11,10 @@
 # devices are told apart from foreign tun devices (OpenVPN and friends).
 #
 # Remove/unbind events: when the event names the recorded attached device,
-# the tunnel is gone, so the blackhole must go with it — otherwise the
-# killswitch keeps swallowing LAN traffic after the client died. The detach
-# falls through to the direct route, and the next add event re-arms.
+# the tunnel is gone. The detach drops the blackhole in the default
+# fail-open mode (marked traffic falls through to the direct route) and
+# keeps it armed in strict mode (the killswitch keeps protecting the
+# tunneled set); either way the next add event re-attaches.
 
 # The event names the device in INTERFACE, with DEVICENAME as the fallback.
 # Without a device name there is nothing to act on.

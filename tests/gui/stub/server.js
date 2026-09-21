@@ -87,7 +87,7 @@ const defaultUci = {
 		},
 		network: {
 			'.type': 'network', mtu: '1350', table: '880', fwmark: '0x9527',
-			blackhole_on_down: '1', include_router_traffic: '0', lan_devices: ''
+			blackhole_on_down: '0', include_router_traffic: '0', lan_devices: ''
 		},
 		proxy: {
 			'.type': 'proxy', address: '127.0.0.1:1080', username: '', password: ''

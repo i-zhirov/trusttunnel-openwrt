@@ -192,8 +192,13 @@ Subcommands: `dump | up | meter | attach | reattach | detach | down | status`.
   profile marks nothing (direct by default). The output chain mirrors
   the selection when `include_router_traffic` is on. Endpoint addresses
   are resolved BEFORE the ruleset lands (marked traffic would otherwise
-  blackhole DNS). `up` installs NO blackhole and refuses to run when the
-  records declare proxy mode.
+  blackhole DNS). The blackhole follows `network.blackhole_on_down`
+  (default `0`, fail-open): `up` removes a stale one and `attach` arms
+  it only while a tun device is attached, so a dead or still-connecting
+  client falls through to the direct route instead of blackholing the
+  LAN; with the option `1` (strict) `up` arms it and only `down` removes
+  it, so marked traffic is dropped whenever it cannot reach the tunnel.
+  `up` refuses to run when the records declare proxy mode.
 - `meter`: the proxy-mode usage meter — byte counters on the SOCKS
   listener port in the same table: `tt_meter_in` (prerouting,
   `tcp dport <port> counter`, requests into the listener = tx) and
@@ -201,15 +206,16 @@ Subcommands: `dump | up | meter | attach | reattach | detach | down | status`.
   Port-only matching works for localhost and LAN-exposed listeners
   alike; a non-numeric port is refused. `meter` refuses in tun mode (the
   mirror of `up` refusing proxy mode — the two rulesets never coexist).
-- `attach`: arm the blackhole (metric 1000, only while a device is
-  attached — `blackhole_on_down=0` removes a stale one instead), point
-  table 880's default route at the client tun device (metric 1), bind
-  the `trusttunnel` firewall zone to the CONCRETE device name (never a
+- `attach`: arm the blackhole (metric 1000 — the replace is idempotent
+  in strict mode, the whole killswitch in fail-open mode), point table
+  880's default route at the client tun device (metric 1), bind the
+  `trusttunnel` firewall zone to the CONCRETE device name (never a
   `tun+` wildcard, which would absorb foreign tun devices) and record
   the device name in `$OUT_DIR/device`.
-- `detach`: remove the device route, the blackhole and the zone binding
-  (marked traffic falls through to the direct route while no tun device
-  exists) and forget the device record.
+- `detach`: remove the device route and the zone binding and forget the
+  device record; the blackhole is removed only in the fail-open default
+  (strict mode keeps it armed, so the tunneled set is dropped instead
+  of leaked until the client re-attaches).
 - `down`: remove everything — the nft table, the fwmark rule and only
   this package's own routes (a table flush would wipe foreign routes in
   table 880); the client's device is never deleted.
@@ -250,9 +256,10 @@ the routing table's default route to the new device — but only when the
 device's ifindex is above the `$OUT_DIR/tun_since` snapshot written by the
 init script right before the client starts (foreign tun devices such as
 OpenVPN's predate it and are never attached). A `remove`/`unbind` event for
-the recorded device runs `routing detach`, so the blackhole dies with the
-tun device instead of swallowing LAN traffic after a client crash. Devices
-that would displace a working tunnel are ignored.
+the recorded device runs `routing detach`: in the fail-open default the
+blackhole dies with the tun device (marked traffic falls through to the
+direct route), in strict mode it stays armed. Devices that would displace a
+working tunnel are ignored.
 
 ### uci-defaults (`/etc/uci-defaults/40-luci-trusttunnel`)
 
@@ -713,9 +720,12 @@ package managers rely on. No branch ever holds packages.
   leftovers from earlier versions of the package). Do not add such touches.
 - **Killswitch**: the generated config keeps the client's own killswitch
   off (`killswitch_enabled = false`); the routing table blackhole is the
-  killswitch — armed on attach and removed on detach, so a dead client
-  falls through to the direct route instead of blackholing the LAN.
-  `change_system_dns = false` — DNS is never intercepted.
+  killswitch, gated by `network.blackhole_on_down`. The default `0`
+  (fail-open) arms it on attach and removes it on detach, so a dead or
+  still-connecting client falls through to the direct route instead of
+  blackholing the LAN; `1` (strict) arms it in `up` and keeps it until
+  `down`, so marked traffic is dropped whenever it cannot reach the
+  tunnel. `change_system_dns = false` — DNS is never intercepted.
 - **Keys**: `key-build.pub` / `opkg-key.pub` are public; never commit
   private keys. Repo signing keys rotate — run `install.sh` again on a
   router to refresh them.

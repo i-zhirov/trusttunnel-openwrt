@@ -121,7 +121,7 @@ const uciData = {
                 anti_dpi: '0', post_quantum: '1', skip_verification: '0',
                 has_ipv6: '1', routing_profile: '' },
     network:  { '.type': 'network', '.name': 'network', mtu: '1350', table: '880',
-                fwmark: '0x9527', blackhole_on_down: '1', include_router_traffic: '0' },
+                fwmark: '0x9527', blackhole_on_down: '0', include_router_traffic: '0' },
     proxy:    { '.type': 'proxy', '.name': 'proxy', address: '127.0.0.1:1080',
                 username: '', password: '' },
     cfg1:     { '.type': 'routing_profile', '.name': 'cfg1', name: 'Default', mode: 'vpn' },

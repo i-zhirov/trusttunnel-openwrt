@@ -118,14 +118,16 @@ reset_logs() {
     rm -f "$TT_IP_RULE"
 }
 
-# Fixtures: a vpn-mode profile with an IP/CIDR bypass list, a bypass-mode
-# profile with a purely address-based VPN list, a bypass-mode profile with
-# a domain entry (forces mark-all), a profile-less record set (direct by
-# default), a variant with the blackhole disabled, an endpoint list with
-# one IPv4 and one IPv6 literal, and the router-traffic variant.
+# Fixtures: a vpn-mode profile with an IP/CIDR bypass list (the default
+# fail-open blackhole: no blackhole_on_down key), a bypass-mode profile
+# with a purely address-based VPN list, a bypass-mode profile with a
+# domain entry (forces mark-all), a profile-less record set (direct by
+# default), a strict-mode variant (blackhole_on_down=1), an endpoint
+# list with one IPv4 and one IPv6 literal, and the router-traffic
+# variant.
 printf 'network.fwmark\t0x9527\nnetwork.lan_devices\tbr-lan br-guest\nnetwork.include_router_traffic\t0\nendpoint.routing_profile\tDefault\nrouting_profile.name\tDefault\nrouting_profile.mode\tvpn\nrouting_profile.bypass_rules\t1.2.3.0/24\nrouting_profile.bypass_rules\tbank.example\n' > "$TT_TEST_TMP/up.tsv"
 printf 'network.fwmark\t0x9527\nnetwork.lan_devices\tbr-lan\nnetwork.include_router_traffic\t1\nrouting_profile.mode\tvpn\n' > "$TT_TEST_TMP/router.tsv"
-printf 'network.fwmark\t0x9527\nnetwork.lan_devices\tbr-lan\nnetwork.include_router_traffic\t0\nnetwork.blackhole_on_down\t0\nrouting_profile.mode\tvpn\n' > "$TT_TEST_TMP/nobh.tsv"
+printf 'network.fwmark\t0x9527\nnetwork.lan_devices\tbr-lan\nnetwork.include_router_traffic\t0\nnetwork.blackhole_on_down\t1\nrouting_profile.mode\tvpn\n' > "$TT_TEST_TMP/strict.tsv"
 printf 'network.fwmark\t0x9527\nnetwork.lan_devices\tbr-lan\nnetwork.include_router_traffic\t0\nrouting_profile.mode\tbypass\nrouting_profile.vpn_rules\t1.2.3.4\nrouting_profile.vpn_rules\t2001:db8::/32\n' > "$TT_TEST_TMP/selective.tsv"
 printf 'network.fwmark\t0x9527\nnetwork.lan_devices\tbr-lan\nnetwork.include_router_traffic\t0\nrouting_profile.mode\tbypass\nrouting_profile.vpn_rules\ttelegram.org\n' > "$TT_TEST_TMP/bypassdom.tsv"
 printf 'network.fwmark\t0x9527\nnetwork.lan_devices\tbr-lan\nnetwork.include_router_traffic\t0\n' > "$TT_TEST_TMP/none.tsv"
@@ -193,7 +195,7 @@ reset_logs
 sh "$R" up "$TT_TEST_TMP/up.tsv" "$TT_TEST_TMP"
 up_log=$(cat "$TT_CMD_LOG")
 
-assert_eq "0" "$(line_count 'route replace blackhole' "$up_log")" "up installs no blackhole (attach arms it on the tun device)"
+assert_eq "0" "$(line_count 'route replace blackhole' "$up_log")" "up installs no blackhole in the fail-open default (attach arms it on the tun device)"
 assert_contains "$up_log" 'ip route del blackhole default table 880 metric 1000' "up removes a stale IPv4 blackhole"
 assert_contains "$up_log" 'ip -6 route del blackhole default table 880 metric 1000' "up removes a stale IPv6 blackhole"
 assert_contains "$up_log" 'ip rule add fwmark 0x9527 table 880 priority 30820' "up adds the IPv4 fwmark rule"
@@ -259,14 +261,6 @@ sh "$R" attach "$TT_TEST_TMP/up.tsv" "$TT_TEST_TMP" tun7
 repeat_log=$(cat "$TT_CMD_LOG")
 assert_eq "0" "$(line_count 'add_list' "$repeat_log")" "a repeated attach leaves the zone binding alone"
 
-# attach with the killswitch disabled: no blackhole, stale one removed.
-reset_logs
-sh "$R" attach "$TT_TEST_TMP/nobh.tsv" "$TT_TEST_TMP" tun7
-nobh_attach_log=$(cat "$TT_CMD_LOG")
-assert_eq "0" "$(line_count 'route replace blackhole' "$nobh_attach_log")" "no blackhole is armed when the killswitch is disabled"
-assert_contains "$nobh_attach_log" 'ip route del blackhole default table 880 metric 1000' "a stale IPv4 blackhole is removed when the killswitch is disabled"
-assert_contains "$nobh_attach_log" 'ip -6 route del blackhole default table 880 metric 1000' "a stale IPv6 blackhole is removed when the killswitch is disabled"
-
 reset_logs
 printf 'tun7\n' > "$TT_UCI_STATE"
 sh "$R" detach "$TT_TEST_TMP/up.tsv" "$TT_TEST_TMP"
@@ -304,14 +298,32 @@ order_ok=$(awk '/^nft delete table inet trusttunnel$/ { n = NR }
                END { if (n && f && n < f) print "1"; else print "0" }' "$TT_CMD_LOG")
 assert_eq "1" "$order_ok" "down tears the nft table down before the zone"
 
-# --- no blackhole -------------------------------------------------------------
+# --- strict mode: blackhole_on_down=1 -----------------------------------------
+# The strict killswitch: up arms the blackhole (marked traffic is
+# dropped during the connect window), detach keeps it armed (a crashed
+# client must not leak the tunneled set) and only down removes it.
 
 reset_logs
-sh "$R" up "$TT_TEST_TMP/nobh.tsv" "$TT_TEST_TMP"
-nobh_log=$(cat "$TT_CMD_LOG")
-assert_eq "0" "$(line_count 'route replace blackhole' "$nobh_log")" "up never installs the blackhole even with the killswitch enabled"
-assert_contains "$nobh_log" 'ip route del blackhole default table 880 metric 1000' "up still removes a stale IPv4 blackhole"
-assert_contains "$nobh_log" 'ip -6 route del blackhole default table 880 metric 1000' "up still removes a stale IPv6 blackhole"
+sh "$R" up "$TT_TEST_TMP/strict.tsv" "$TT_TEST_TMP"
+strict_up_log=$(cat "$TT_CMD_LOG")
+assert_contains "$strict_up_log" 'ip route replace blackhole default table 880 metric 1000' "up arms the IPv4 blackhole in strict mode"
+assert_contains "$strict_up_log" 'ip -6 route replace blackhole default table 880 metric 1000' "up arms the IPv6 blackhole in strict mode"
+
+reset_logs
+printf 'tun7\n' > "$TT_UCI_STATE"
+sh "$R" detach "$TT_TEST_TMP/strict.tsv" "$TT_TEST_TMP"
+strict_detach_log=$(cat "$TT_CMD_LOG")
+assert_contains "$strict_detach_log" 'ip route del default table 880 metric 1' "strict detach deletes the device route"
+assert_eq "0" "$(line_count 'route del blackhole' "$strict_detach_log")" "strict detach keeps the blackhole armed"
+assert_contains "$strict_detach_log" 'uci delete firewall.@zone[0].device' "strict detach still unbinds the firewall zone"
+
+reset_logs
+printf 'tun7\n' > "$TT_TEST_TMP/device"
+printf 'tun7\n' > "$TT_UCI_STATE"
+sh "$R" down "$TT_TEST_TMP/strict.tsv" "$TT_TEST_TMP"
+strict_down_log=$(cat "$TT_CMD_LOG")
+assert_contains "$strict_down_log" 'ip route del blackhole default table 880 metric 1000' "down removes the IPv4 blackhole in strict mode"
+assert_contains "$strict_down_log" 'ip -6 route del blackhole default table 880 metric 1000' "down removes the IPv6 blackhole in strict mode"
 
 # --- proxy mode guard ----------------------------------------------------------
 

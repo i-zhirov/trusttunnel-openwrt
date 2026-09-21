@@ -28,12 +28,16 @@ config main 'main'
 	option endpoint 'Default'
 
 # The kernel wiring for tun mode: the marked table, the fwmark and the
-# killswitch. These options are inert while main.mode is 'proxy'.
+# killswitch. These options are inert while main.mode is 'proxy'. The
+# blackhole is armed while a tun device is attached; setting
+# blackhole_on_down to 1 arms it even without a device (strict
+# killswitch: marked traffic is dropped whenever it cannot reach the
+# tunnel instead of falling through to the direct route).
 config network 'network'
 	option mtu '1350'
 	option table '880'
 	option fwmark '0x9527'
-	option blackhole_on_down '1'
+	option blackhole_on_down '0'
 	option include_router_traffic '0'
 	option lan_devices ''
 
