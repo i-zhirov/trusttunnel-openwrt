@@ -134,10 +134,11 @@ return view.extend({
 				detail: _('Everything else stays direct.')
 			};
 
-		// An unknown profile mode is treated like the legacy full-tunnel
-		// mode: gen-config falls back to domains.direct + general for
-		// anything other than bypass/vpn, so describing the profile as
-		// VPN would mislead.
+		// An unrecognized profile mode falls back like gen-config does:
+		// in tun mode nothing is routed (direct by default), while in
+		// proxy mode the legacy full-tunnel semantics stay (the SOCKS
+		// listener is the explicit routing there) — so describing the
+		// profile as VPN would mislead.
 		if (st.routing_profile && st.routing_mode === 'vpn')
 			return {
 				level: 'success',
@@ -242,8 +243,13 @@ return view.extend({
 				rows.push(this.row(_('Mode'), _('Profile %s — bypass, only the VPN rules are tunneled').format(st.routing_profile)));
 			else if (st.routing_mode === 'vpn')
 				rows.push(this.row(_('Mode'), _('Profile %s — VPN, everything except the bypass rules is tunneled').format(st.routing_profile)));
-			else
+			// An unrecognized profile mode falls back like the verdict:
+			// direct by default in tun mode, the legacy full-tunnel
+			// semantics in proxy mode.
+			else if (st.mode === 'proxy')
 				rows.push(this.row(_('Mode'), _('Everything through VPN')));
+			else
+				rows.push(this.row(_('Mode'), _('Direct — unknown profile mode')));
 		}
 		else if (st.mode === 'proxy') {
 			rows.push(this.row(_('Mode'), _('Everything through VPN')));

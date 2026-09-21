@@ -498,6 +498,18 @@ async function main() {
     ok(await waitText(legacyBox, 'traffic goes out directly'),
         'status: no-profile preview states the direct verdict');
 
+    // An assigned profile with an unrecognized mode falls back the same
+    // way in tun mode (direct by default): the facts row must not claim
+    // a full tunnel.
+    const unknownModeStatus = Object.assign({}, canned.status(), {
+        routing_profile: 'Default', routing_mode: '', vpn_mode: 'selective'
+    });
+    const unknownModeTree = statusView.render(unknownModeStatus);
+    ok(hasText(unknownModeTree, 'Direct — unknown profile mode'),
+        'status: an unrecognized profile mode renders the direct-by-default facts row');
+    ok(!hasText(unknownModeTree, 'Everything through VPN'),
+        'status: an unrecognized profile mode in tun mode is not described as a full tunnel');
+
     // ===== log.js =====
     console.log('== log.js');
     const logView = loadView('log.js');
