@@ -952,7 +952,7 @@ st_install() {
 		# The package-manager update hits the public OpenWrt mirrors, and
 		# a transient download failure (busybox wget does not retry) is
 		# the common flake. install.sh is safe to rerun — its repository
-		# setup is idempotent, which A15 asserts — so one retry is
+		# setup is idempotent, which A17 asserts — so one retry is
 		# attempted before failing.
 		echo "  install.sh failed (rc=$_rc); retrying once"
 		sleep 5
@@ -1260,7 +1260,59 @@ st_lifecycle() {
 		_tt_fail "the re-attached route does not restore the tunnel path (got: $_lk)"
 	fi
 
-	# --- A15: a clean stop tears everything down; a start restores it -------
+	# --- A15: the killswitch window — a crashed client must not blackhole --
+	# The client is killed hard (SIGKILL, no cleanup): its tun device
+	# disappears with the process, the hotplug remove handler detaches and
+	# the blackhole dies with the attach. Marked traffic then falls
+	# through to the direct route instead of blackholing the LAN, until
+	# the respawned client re-attaches. This pins the killswitch-window
+	# fix end to end: before it, a dead client left the blackhole armed
+	# and every marked packet was swallowed. The pid comes from the procd
+	# pidfile (busybox has no pkill on these images).
+	_pid=$(docker exec "$ROUTER_CID" sh -c 'cat /var/run/trusttunnel.pid 2>/dev/null' 2>/dev/null)
+	if [ -n "$_pid" ]; then
+		docker exec "$ROUTER_CID" sh -c "kill -9 $_pid" >/dev/null 2>&1
+	else
+		_tt_fail "no client pid to kill for the crash-window test"
+	fi
+	_window=0
+	_i=0
+	while [ "$_i" -lt 20 ]; do
+		_i=$((_i + 1))
+		_lk=$(docker exec "$ROUTER_CID" sh -c "ip route get $IP_TARGET mark 0x9527 2>&1" 2>/dev/null)
+		if printf '%s' "$_lk" | grep -q "dev eth0"; then
+			_window=1
+			break
+		fi
+		sleep 1
+	done
+	if [ "$_window" = "1" ]; then
+		_tt_pass "a crashed client falls through to the direct route (no blackhole window)"
+	else
+		_tt_fail "a crashed client leaves marked traffic blackholed (got: $_lk)"
+	fi
+	wait_tunnel "the respawned client re-attaches the tunnel"
+	# The attach arms the blackhole before the device route: the lookup
+	# can race that ordering, so the re-armed path is polled until the
+	# device route wins.
+	_rearmed=0
+	_i=0
+	while [ "$_i" -lt 10 ]; do
+		_i=$((_i + 1))
+		_lk=$(docker exec "$ROUTER_CID" sh -c "ip route get $IP_TARGET mark 0x9527 2>&1" 2>/dev/null)
+		if printf '%s' "$_lk" | grep -q "dev tun0"; then
+			_rearmed=1
+			break
+		fi
+		sleep 1
+	done
+	if [ "$_rearmed" = "1" ]; then
+		_tt_pass "the respawned client re-arms the tunnel path"
+	else
+		_tt_fail "the respawned client does not re-attach (got: $_lk)"
+	fi
+
+	# --- A16: a clean stop tears everything down; a start restores it -------
 	docker exec "$ROUTER_CID" /etc/init.d/trusttunnel stop >/dev/null 2>&1
 	_i=0
 	while [ "$_i" -lt 20 ]; do
@@ -1297,7 +1349,7 @@ st_lifecycle() {
 	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" "the restored tunnel carries traffic again"
 
-	# --- A16: idempotence ----------------------------------------------------
+	# --- A17: idempotence ----------------------------------------------------
 	# The uci-defaults rerun (while the script still exists) creates no
 	# duplicates. The apk path consumes the script during the install:
 	# apk runs /etc/uci-defaults/* right after placing them and removes
@@ -1356,7 +1408,7 @@ st_lifecycle() {
 	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" "the tunnel survives the noop reload"
 
-	# --- A16: the endpoint saw the tunneled CONNECTs --------------------------
+	# --- A18: the endpoint saw the tunneled CONNECTs --------------------------
 	# The endpoint (started with -l debug) logs every tunneled CONNECT;
 	# their presence is the server-side confirmation that the traffic
 	# really traveled through the tunnel.
