@@ -94,7 +94,7 @@ test('fields render the loaded UCI state', async ({ page }) => {
 	await expect(active.locator('option[value="Backup"]')).toHaveText('Backup');
 
 	const profile = page.locator('[id="widget.cbid.trusttunnel.endpoint.routing_profile"]');
-	await expect(profile.locator('option[value=""]')).toHaveText('None — everything through the tunnel');
+	await expect(profile.locator('option[value=""]')).toHaveText('None — traffic goes out directly');
 	await expect(profile.locator('option[value="Default"]')).toHaveText('Default');
 
 	// The operation mode picker defaults to TUN and the Proxy tab carries
