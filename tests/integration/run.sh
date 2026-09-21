@@ -1611,6 +1611,11 @@ uci add_list trusttunnel.@endpoint[-1].address='$IP_ENDPOINT2:8443'
 uci set trusttunnel.@endpoint[-1].username='router'
 uci set trusttunnel.@endpoint[-1].password='test-pass'
 uci set trusttunnel.@endpoint[-1].certificate=\"\$(cat /tmp/cert.pem)\"
+# The twin server carries the same profile assignment as the Default one:
+# under the direct-by-default semantics a profile-less server routes
+# nothing, so without this line the switch assertions would watch the
+# traffic fall through to the direct route.
+uci set trusttunnel.@endpoint[-1].routing_profile='Default'
 uci set trusttunnel.main.endpoint='Backup'
 uci commit trusttunnel
 /etc/init.d/trusttunnel reload" >/dev/null 2>&1; then
