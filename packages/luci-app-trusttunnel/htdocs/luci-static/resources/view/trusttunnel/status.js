@@ -146,6 +146,10 @@ return view.extend({
 				detail: _('The bypass rules are sent out directly.')
 			};
 
+		// Proxy mode with no profile keeps the legacy full-tunnel
+		// semantics: the SOCKS listener is the explicit routing, so
+		// everything proxied goes through except the "do not bypass"
+		// list.
 		if (st.mode === 'proxy')
 			return {
 				level: 'success',
@@ -153,10 +157,12 @@ return view.extend({
 				detail: _('Domains from the "do not bypass" list are sent out directly.')
 			};
 
+		// No routing profile (or an unknown mode): the direct-by-default
+		// fallback — nothing is routed, everything goes out directly.
 		return {
 			level: 'success',
-			head: host ? _('All LAN traffic goes through %s').format(host) : _('All LAN traffic goes through the tunnel'),
-			detail: _('Domains from the "do not bypass" list are sent out directly.')
+			head: _('No routing profile — traffic goes out directly'),
+			detail: _('Assign a routing profile in Settings to send traffic through the tunnel.')
 		};
 	},
 
@@ -239,8 +245,11 @@ return view.extend({
 			else
 				rows.push(this.row(_('Mode'), _('Everything through VPN')));
 		}
-		else {
+		else if (st.mode === 'proxy') {
 			rows.push(this.row(_('Mode'), _('Everything through VPN')));
+		}
+		else {
+			rows.push(this.row(_('Mode'), _('Direct — no routing profile')));
 		}
 
 		// The Server row names the ACTIVE server (the name the Settings
@@ -304,7 +313,9 @@ return view.extend({
 		ui.showModal(mode ? _('Rule preview — %s').format(name) : _('Rule preview'), [
 			mode
 				? E('p', {}, _('How each rule of this profile is treated in %s. The verdicts come from the applied settings — press Save & Apply on the Settings page to preview pending changes.').format(modeLabel))
-				: E('p', {}, _('No routing profile is assigned, so everything goes through the tunnel except the "do not bypass" list below.')),
+				: (st.mode === 'proxy'
+					? E('p', {}, _('No routing profile is assigned; the proxy keeps the legacy "do not bypass" list below.'))
+					: E('p', {}, _('No routing profile is assigned, so traffic goes out directly. Add a profile in Settings to route traffic through the tunnel.'))),
 			box,
 			close
 		]);
@@ -322,8 +333,8 @@ return view.extend({
 			// In vpn mode the bypass rules are the exclusions, in bypass
 			// mode the VPN rules are the tunneled set; the other list is
 			// inert. Without a profile (or with an unrecognized one) the
-			// backend falls back to the legacy domains.direct list, so
-			// the preview does too.
+			// backend falls back to the legacy domains.direct list in
+			// proxy mode; in tun mode nothing is routed by default.
 			var effective = [], inert = [];
 
 			if (mode && profile) {
@@ -336,7 +347,7 @@ return view.extend({
 					inert = profile.vpn_rules || [];
 				}
 			}
-			else {
+			else if (st.mode === 'proxy') {
 				effective = uci.get('trusttunnel', 'domains', 'direct') || [];
 			}
 
@@ -378,7 +389,7 @@ return view.extend({
 				if (!effective.length && !inert.length)
 					nodes.push(E('p', {}, mode
 						? _('This profile has no rules yet.')
-						: _('The "do not bypass" list is empty — everything goes through the tunnel.')));
+						: _('No routing profile is assigned — traffic goes out directly.')));
 
 				dom.content(box, nodes);
 			}).catch(function(e) {

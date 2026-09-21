@@ -46,9 +46,14 @@ config proxy 'proxy'
 
 # Named rule sets; the ACTIVE endpoint's routing_profile option assigns
 # the one in use by name, so each saved server can carry its own profile.
+# The Default profile is in bypass mode: traffic goes out DIRECTLY unless
+# a rule in its VPN list explicitly routes it through the tunnel
+# (BitTorrent and other non-SNI traffic stays direct by default). Switch
+# the mode to 'vpn' for the full-tunnel behaviour (everything except the
+# bypass rules goes through the tunnel).
 config routing_profile
 	option name 'Default'
-	option mode 'vpn'
+	option mode 'bypass'
 
 # The legacy flat exclusion list; consulted only when no routing profile
 # is assigned.

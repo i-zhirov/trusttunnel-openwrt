@@ -421,10 +421,6 @@ return view.extend({
 
 		o = s.option(form.ListValue, 'endpoint', _('Active server'),
 			_('The saved server the tunnel uses right now. Servers are added and edited on the Server tab; each server carries its own routing profile.'));
-		// Not rmempty: with no servers saved an empty selection is the
-		// honest state (the service then refuses to start and the
-		// Diagnostics page explains it). While servers exist the select
-		// always carries one.
 
 		var currentKnown = false;
 
@@ -540,7 +536,7 @@ return view.extend({
 
 		o = s.taboption('connection', form.ListValue, 'routing_profile', _('Routing profile'),
 			_('The named profile that decides what goes through the tunnel while THIS server is the active one. Profiles are managed on the Routing profiles tab.'));
-		o.value('', _('None — everything through the tunnel'));
+		o.value('', _('None — traffic goes out directly'));
 
 		for (var i = 0; i < profiles.length; i++)
 			o.value(profiles[i].name, profiles[i].name);

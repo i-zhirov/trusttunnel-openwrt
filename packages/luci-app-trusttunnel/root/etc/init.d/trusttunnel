@@ -159,10 +159,13 @@ start_service() {
 	# Tun mode wires the kernel routing first (a hard prerequisite, the
 	# client would blackhole DNS otherwise) and remembers the newest
 	# existing tun index before the client creates its own device, so the
-	# attach below only ever touches the fresh one. Proxy mode needs no
-	# routing: the client binds the SOCKS listener itself, and the usage
-	# meter (byte counters on the listener port) is a nicety — a failed
-	# meter must not take the tunnel down with it.
+	# attach below only ever touches the fresh one. The snapshot is
+	# persisted for the hotplug hook, which uses it to tell the client's
+	# own devices (higher index) from foreign tun devices (OpenVPN and
+	# friends, lower index). Proxy mode needs no routing: the client
+	# binds the SOCKS listener itself, and the usage meter (byte
+	# counters on the listener port) is a nicety — a failed meter must
+	# not take the tunnel down with it.
 	if mode_is_proxy; then
 		_tun_since=0
 		if ! "$LIBDIR/routing" meter "$RECORDS" "$OUTDIR"; then
@@ -175,6 +178,7 @@ start_service() {
 			return 1
 		fi
 		_tun_since=$(highest_ifindex)
+		printf '%s\n' "$_tun_since" > "$OUTDIR/tun_since"
 	fi
 
 	procd_open_instance trusttunnel
@@ -199,6 +203,9 @@ stop_service() {
 	if [ "${_TT_KEEP_ROUTING:-0}" != "1" ] && [ -f "$RECORDS" ]; then
 		"$LIBDIR/routing" down "$RECORDS"
 	fi
+	# The ownership snapshot dies with the service: without it the hotplug
+	# hook has nothing to judge foreign devices against.
+	rm -f "$OUTDIR/tun_since"
 	return 0
 }
 

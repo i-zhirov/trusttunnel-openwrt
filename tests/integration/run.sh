@@ -1017,12 +1017,12 @@ st_asserts() {
 	_prof=$(docker exec "$ROUTER_CID" uci -q get 'trusttunnel.@routing_profile[0].name' 2>/dev/null)
 	assert_eq "Default" "$_prof" "the seeded routing profile is named Default"
 	_mode=$(docker exec "$ROUTER_CID" uci -q get 'trusttunnel.@routing_profile[0].mode' 2>/dev/null)
-	assert_eq "vpn" "$_mode" "the seeded profile is vpn mode"
+	assert_eq "bypass" "$_mode" "the seeded profile is bypass mode (direct unless explicitly routed)"
 
 	_zone=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep \"name='trusttunnel'\"" 2>/dev/null)
 	assert_contains "$_zone" "name='trusttunnel'" "the trusttunnel firewall zone exists"
-	_dev=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep \"device='tun+'\"" 2>/dev/null)
-	assert_contains "$_dev" "device='tun+'" "the zone is bound to the tun+ wildcard"
+	_dev=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep \"device='tun'\"" 2>/dev/null)
+	assert_eq "" "$_dev" "a fresh install binds the zone to no device (attach binds the concrete tun)"
 	_fwd=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep \"dest='trusttunnel'\"" 2>/dev/null)
 	assert_contains "$_fwd" "dest='trusttunnel'" "the lan to trusttunnel forwarding exists"
 
@@ -1095,7 +1095,10 @@ st_connect() {
 	fi
 	# The endpoint is configured with the router's own tools, exactly like
 	# the README's headless example — plus the PINNED certificate, which is
-	# what the client verifies against (skip_verification stays off).
+	# what the client verifies against (skip_verification stays off). The
+	# seeded Default profile stays in bypass mode with no rules: the direct
+	# by-default contract is asserted in the traffic stage, and the tunnel
+	# is switched to full-tunnel mode there explicitly.
 	cat > "$SCRATCH/configure.sh" <<EOF
 #!/bin/sh
 set -e
@@ -1153,6 +1156,14 @@ st_traffic() {
 	assert_contains "$_rs" "rule present" "routing: the fwmark rule is present"
 	assert_contains "$_rs" "table present" "routing: table 880 carries the route"
 	assert_contains "$_rs" "nft present" "routing: the nft table is present"
+	_snap=$(docker exec "$ROUTER_CID" sh -c 'cat /var/etc/trusttunnel/tun_since 2>/dev/null' 2>/dev/null)
+	if [ -n "$_snap" ] && [ "$_snap" -gt 0 ] 2>/dev/null; then
+		_tt_pass "the ifindex ownership snapshot is recorded"
+	else
+		_tt_fail "the ifindex ownership snapshot is missing"
+	fi
+	_zone_dev=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep \"device='tun0'\"" 2>/dev/null)
+	assert_contains "$_zone_dev" "device='tun0'" "the firewall zone is bound to the attached tun device"
 
 	# A9: the client log reports the established connection.
 	_log=$(docker exec "$ROUTER_CID" \
@@ -1161,7 +1172,8 @@ st_traffic() {
 		"the client log reports the connection"
 
 	# A10: the generated client.toml carries the pinned certificate and the
-	# fixed contract fields.
+	# fixed contract fields. The seeded bypass profile with no rules means
+	# selective mode with nothing tunneled.
 	_toml=$(docker exec "$ROUTER_CID" cat /var/etc/trusttunnel/client.toml 2>/dev/null)
 	assert_contains "$_toml" "certificate = '''" \
 		"client.toml opens the pinned certificate literal"
@@ -1171,16 +1183,37 @@ st_traffic() {
 		"client.toml leaves the killswitch to the routing table"
 	assert_contains "$_toml" "change_system_dns = false" \
 		"client.toml never changes the system DNS"
-	assert_contains "$_toml" 'vpn_mode = "general"' \
-		"the Default profile means general mode"
+	assert_contains "$_toml" 'vpn_mode = "selective"' \
+		"the seeded bypass profile means selective mode"
+	assert_contains "$_toml" "exclusions = []" \
+		"no rules means nothing is routed through the tunnel"
 
-	# A11: traffic to the lab target flows through the tunnel — the target
+	# A11: BitTorrent-style traffic bypasses the tunnel unless explicitly
+	# routed — with the empty bypass profile, the target is reached DIRECT
+	# even though the tunnel is fully connected. This is the
+	# direct-by-default contract.
+	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$IP_ROUTER" "$_got" \
+		"without rules the lab target is reached directly (bypass unless routed)"
+
+	# --- the tunnel is switched to full-tunnel mode explicitly -----------
+	# Everything from here on exercises the vpn-mode path: the mode switch
+	# restarts the client (routing survives), the tunnel reconnects and the
+	# traffic assertions below prove the tunnel carries the traffic.
+	docker exec "$ROUTER_CID" sh -c "uci set trusttunnel.@routing_profile[0].mode='vpn'; uci commit trusttunnel" >/dev/null 2>&1
+	docker exec "$ROUTER_CID" /etc/init.d/trusttunnel reload >/dev/null 2>&1
+	wait_tunnel "the vpn-mode restart brings the tunnel back"
+	_toml=$(docker exec "$ROUTER_CID" cat /var/etc/trusttunnel/client.toml 2>/dev/null)
+	assert_contains "$_toml" 'vpn_mode = "general"' \
+		"the vpn-mode profile means general mode"
+
+	# A12: traffic to the lab target flows through the tunnel — the target
 	# observes the ENDPOINT's address as the source.
 	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" \
 		"traffic to the lab target arrives with the endpoint's source address"
 
-	# A12: traffic to the private target stays direct — the target observes
+	# A13: traffic to the private target stays direct — the target observes
 	# the ROUTER's own address (the source the main table picks for it).
 	_src=$(docker exec "$ROUTER_CID" \
 		sh -c "ip route get $DIRECT_IP 2>/dev/null | grep -o 'src [0-9.]*' | awk '{print \$2}' | head -1" 2>/dev/null)
@@ -1195,7 +1228,7 @@ st_lifecycle() {
 	stage lifecycle || return
 	echo "== killswitch and lifecycle assertions"
 
-	# --- A13: the blackhole killswitch, at the kernel level ------------------
+	# --- A14: the blackhole killswitch, at the kernel level ------------------
 	# While the tunnel is up, marked traffic resolves via tun0 (table
 	# 880's default). Bringing the device down makes the kernel drop the
 	# attached route by itself — table 880 then holds only the blackhole,
@@ -1227,7 +1260,7 @@ st_lifecycle() {
 		_tt_fail "the re-attached route does not restore the tunnel path (got: $_lk)"
 	fi
 
-	# --- A14: a clean stop tears everything down; a start restores it -------
+	# --- A15: a clean stop tears everything down; a start restores it -------
 	docker exec "$ROUTER_CID" /etc/init.d/trusttunnel stop >/dev/null 2>&1
 	_i=0
 	while [ "$_i" -lt 20 ]; do
@@ -1264,7 +1297,7 @@ st_lifecycle() {
 	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" "the restored tunnel carries traffic again"
 
-	# --- A15: idempotence ----------------------------------------------------
+	# --- A16: idempotence ----------------------------------------------------
 	# The uci-defaults rerun (while the script still exists) creates no
 	# duplicates. The apk path consumes the script during the install:
 	# apk runs /etc/uci-defaults/* right after placing them and removes

@@ -480,23 +480,23 @@ async function main() {
     ok(await waitText(modalBox, 'through the tunnel'),
         'status: preview renders verdicts for the checked rules');
 
-    // Without an assigned profile the same button previews the legacy
-    // "do not bypass" list.
+    // Without an assigned profile the same button previews the
+    // direct-by-default state in tun mode: nothing is routed at all.
     const legacyStatus = Object.assign({}, canned.status(), {
-        routing_profile: '', routing_mode: '', vpn_mode: 'general'
+        routing_profile: '', routing_mode: '', vpn_mode: 'selective'
     });
     const legacyTree = statusView.render(legacyStatus);
     const legacyBtn = findButtons(legacyTree).find(b => hasText(b, 'Preview rules'));
     ok(legacyBtn !== null, 'status: Preview rules button present without a profile');
     await click(legacyBtn);
-    await waitText(ui.lastModal.children, 'legacy.example');
+    await waitText(ui.lastModal.children, 'No routing profile is assigned');
     ok(ui.lastModal && ui.lastModal.title === 'Rule preview',
         'status: legacy preview modal has the plain title');
     const legacyBox = { children: ui.lastModal.children };
-    ok(await waitText(legacyBox, 'No routing profile is assigned'),
-        'status: legacy preview explains the full-tunnel mode');
-    ok(await waitText(legacyBox, 'legacy.example'),
-        'status: legacy preview lists the do-not-bypass rules');
+    ok(await waitText(legacyBox, 'No routing profile is assigned, so traffic goes out directly.'),
+        'status: no-profile preview explains the direct-by-default state');
+    ok(await waitText(legacyBox, 'traffic goes out directly'),
+        'status: no-profile preview states the direct verdict');
 
     // ===== log.js =====
     console.log('== log.js');

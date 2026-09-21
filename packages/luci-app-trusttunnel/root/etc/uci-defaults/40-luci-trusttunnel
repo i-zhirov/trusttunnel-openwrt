@@ -55,7 +55,10 @@ if [ -n "$_removed" ]; then
 	logger -t trusttunnel "cleaned up duplicate trusttunnel firewall zones"
 fi
 
-# Create the zone and its forwarding when no trusttunnel zone exists.
+# Create the zone and its forwarding when no trusttunnel zone exists. The
+# zone carries NO device binding: it is inert until the routing helper
+# attaches a concrete tun device (a tun+ wildcard would absorb foreign tun
+# devices like OpenVPN's).
 if [ -z "$_zone_sec" ]; then
 	_new_zone=$(uci add firewall zone)
 	uci set "firewall.$_new_zone.name"='trusttunnel'
@@ -64,7 +67,6 @@ if [ -z "$_zone_sec" ]; then
 	uci set "firewall.$_new_zone.forward"='REJECT'
 	uci set "firewall.$_new_zone.masq"='1'
 	uci set "firewall.$_new_zone.mtu_fix"='1'
-	uci add_list "firewall.$_new_zone.device"='tun+'
 	_new_fwd=$(uci add firewall forwarding)
 	uci set "firewall.$_new_fwd.src"='lan'
 	uci set "firewall.$_new_fwd.dest"='trusttunnel'
@@ -72,38 +74,49 @@ if [ -z "$_zone_sec" ]; then
 	/etc/init.d/firewall reload >/dev/null 2>&1
 fi
 
-# Migrate an old concrete tt0 binding to the tun+ wildcard.
+# Migrate the zone to the device-less shape: old versions bound it to tt0
+# or to the tun+ wildcard, both of which claim devices that are not the
+# client's. The routing helper re-binds the concrete device on attach. A
+# binding that equals the CURRENTLY attached device (recorded by the
+# routing helper) is left alone: install.sh re-runs this script while a
+# running service is attached, and clearing the live binding would cut
+# the tunnel's firewall path.
 _migrated=""
 if [ -n "$_zone_sec" ]; then
 	# _devs comes from config_get, which shellcheck cannot trace.
 	config_get _devs "$_zone_sec" device
 	# shellcheck disable=SC2154
-	_has_wildcard=0
-	for _d in $_devs; do
-		[ "$_d" = "tun+" ] && _has_wildcard=1
-	done
-	if [ "$_has_wildcard" = "0" ]; then
-		uci -q delete "firewall.$_zone_sec.device"
-		uci add_list "firewall.$_zone_sec.device"='tun+'
-		_migrated=1
+	if [ -n "$_devs" ]; then
+		_attached=$(cat /var/etc/trusttunnel/device 2>/dev/null) || _attached=""
+		_keep=0
+		for _d in $_devs; do
+			[ "$_d" = "$_attached" ] && _keep=1
+		done
+		if [ "$_keep" = "0" ]; then
+			uci -q delete "firewall.$_zone_sec.device"
+			_migrated=1
+		fi
 	fi
 	# After a dedup there is nothing left to repair here: the pass kept
 	# the first trusttunnel zone and deleted the rest, so the surviving
-	# zone is exactly the one the migration block above just bound to
-	# tun+. There is deliberately no rebind pass over all remaining
-	# zones — one that ran without a name check used to rewrite the
-	# device list of every unrelated zone after the first one in file
-	# order (a stock wan zone lost its binding and gained tun+).
+	# zone is exactly the one the migration block above just unbound.
+	# There is deliberately no rebind pass over all remaining zones — one
+	# that ran without a name check used to rewrite the device list of
+	# every unrelated zone after the first one in file order (a stock wan
+	# zone lost its binding and gained tun+).
 fi
 if [ -n "$_migrated" ]; then
 	uci commit firewall
 	/etc/init.d/firewall reload >/dev/null 2>&1
-	logger -t trusttunnel "firewall zone migrated from tt0 to the tun+ wildcard"
+	logger -t trusttunnel "firewall zone unbound; the attached tun device is bound on start"
 fi
 
 # Seed the default routing profile on installs that predate it: create the
-# profile, move every legacy domains.direct value into its bypass rules and
-# point the endpoint at it.
+# profile and point the endpoint at it. A legacy install WITH a
+# domains.direct list keeps its full-tunnel behaviour — vpn mode with the
+# old direct list moved into the bypass rules. Without a direct list the
+# new direct-by-default default applies: bypass mode routes nothing until
+# the user adds VPN rules.
 _has_profile=""
 config_load trusttunnel
 config_foreach _count_profiles routing_profile
@@ -111,13 +124,25 @@ config_foreach _count_profiles routing_profile
 if [ -z "$_has_profile" ]; then
 	_prof=$(uci add trusttunnel routing_profile)
 	uci set "trusttunnel.$_prof.name"='Default'
-	uci set "trusttunnel.$_prof.mode"='vpn'
-	uci -q get trusttunnel.domains.direct 2>/dev/null | while IFS= read -r _d; do
-		[ -n "$_d" ] && uci add_list "trusttunnel.$_prof.bypass_rules"="$_d"
-	done
+	_direct_count=0
+	while IFS= read -r _d; do
+		[ -n "$_d" ] || continue
+		uci add_list "trusttunnel.$_prof.bypass_rules"="$_d"
+		_direct_count=$((_direct_count + 1))
+	done <<EOF
+$(uci -q get trusttunnel.domains.direct 2>/dev/null)
+EOF
+	if [ "$_direct_count" -gt 0 ]; then
+		uci set "trusttunnel.$_prof.mode"='vpn'
+		uci commit trusttunnel
+		logger -t trusttunnel "created the default routing profile; the old direct list moved into its bypass rules"
+	else
+		uci set "trusttunnel.$_prof.mode"='bypass'
+		uci commit trusttunnel
+		logger -t trusttunnel "created the default routing profile in bypass mode; traffic goes out directly until rules route it"
+	fi
 	uci set trusttunnel.endpoint.routing_profile='Default'
 	uci commit trusttunnel
-	logger -t trusttunnel "created the default routing profile; the old direct list moved into its bypass rules"
 fi
 
 # Seed the active-server selection on installs that predate it, and heal

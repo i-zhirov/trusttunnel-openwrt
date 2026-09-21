@@ -198,28 +198,34 @@ test('Preview rules checks the assigned profile rule by rule', async ({ page }) 
 	await expect(modal).toContainText('no effect');
 });
 
-test('Preview rules without a profile shows the do-not-bypass list', async ({ page }) => {
+test('Preview rules without a profile shows the direct-by-default state', async ({ page }) => {
+	// In tun mode a missing profile routes nothing: the preview explains
+	// the direct-by-default state and checks no rules at all.
 	await stubSet(page, {
-		status: { ...BASE, routing_profile: '', routing_mode: '', vpn_mode: 'general' },
-		checkDomain: {
-			domain: 'legacy.example', normalized: 'legacy.example',
-			verdict: 'direct',
-			reason: 'listed in the "do not bypass" list; the client sends it out by SNI'
-		}
+		status: { ...BASE, routing_profile: '', routing_mode: '', vpn_mode: 'selective' }
 	});
 	await openView(page, 'status');
 
 	await clickButton(page, 'Preview rules');
 	const modal = page.locator('#modal_overlay .modal');
 	await expect(modal).toContainText('Rule preview');
-	await expect(modal).toContainText('No routing profile is assigned');
+	await expect(modal).toContainText(
+		'No routing profile is assigned, so traffic goes out directly.');
 
-	await waitForFrames(page, 'luci.trusttunnel', 'check_domain', 1);
 	const frames = await framesFor(page, 'luci.trusttunnel', 'check_domain');
-	expect(frames[0].args.domain).toBe('legacy.example');
+	expect(frames.length).toBe(0);
 
-	await expect(modal).toContainText('The "do not bypass" list');
-	await expect(modal).toContainText('legacy.example');
+	await expect(modal).toContainText('traffic goes out directly');
+	await expect(modal).not.toContainText('The "do not bypass" list');
+});
+
+test('no profile: the facts state the direct-by-default mode', async ({ page }) => {
+	await stubSet(page, {
+		status: { ...BASE, routing_profile: '', routing_mode: '', vpn_mode: 'selective' }
+	});
+	await openView(page, 'status');
+
+	await expect(page.locator('#maincontent')).toContainText('Direct — no routing profile');
 });
 
 test('the 10 s poll refreshes the verdict in place', async ({ page }) => {

@@ -6,7 +6,7 @@ a LuCI control page and delivers the tunnel to the LAN. Targets OpenWrt
 
 The tunnel is delivered in one of two **operation modes** (`main.mode`):
 
-- **TUN mode** (the default) routes the whole LAN through the tunnel: LAN
+- **TUN mode** (the default) routes the LAN through the tunnel: LAN
   traffic is marked with fwmark `0x9527`, a policy rule sends marked
   packets to routing table `880`, and the client's tun device carries
   them, backed by a blackhole killswitch.
@@ -20,15 +20,18 @@ tunnel except the bypass list) or **Bypass** (only the VPN list through
 the tunnel) — and two rule lists. Several servers can be saved; one is
 **active** at a time (`main.endpoint`), and switching it takes effect on
 the next reload. One profile is assigned to each server via its
-`endpoint.routing_profile` and enforced by the client itself; without
-one (or with a stale name), everything goes into the tunnel and the legacy
-flat `domains.direct` list is applied as the exclusions.
+`endpoint.routing_profile` and enforced by the client itself; the profile
+also decides what the kernel marks (see Behaviour). **Traffic goes out
+directly unless a profile explicitly routes it**: without an assigned
+profile (or with a stale name) nothing is marked and nothing enters the
+tunnel in TUN mode, while the proxy keeps tunneling everything except the
+legacy flat `domains.direct` list.
 
 On the router the package touches only the LuCI app, the client package
 (binaries under `/opt/trusttunnel_client`) and `/etc/config/trusttunnel` —
-plus, in TUN mode, a `trusttunnel` firewall zone bound to `tun+` with a
-`lan → trusttunnel` forwarding rule and the routing chain above. Proxy
-mode uses none of the routing or firewall parts.
+plus, in TUN mode, a `trusttunnel` firewall zone bound to the attached
+tun device with a `lan → trusttunnel` forwarding rule and the routing
+chain above. Proxy mode uses none of the routing or firewall parts.
 
 ## Requirements
 
@@ -127,14 +130,16 @@ tabs:
   router's LAN address) to serve the whole LAN — the client then
   **requires** the user/pass pair and refuses to start without it;
   `127.0.0.1:1080` serves the router itself and needs no credentials.
-- **Routing profiles**: the Default profile (VPN mode) is already seeded
-  here. Every profile gets a mode — **VPN** (everything is tunneled
-  except the bypass-list entries) or **Bypass** (only the VPN-list
-  entries are tunneled) — and two rule lists. A **Rule preview** button
-  shows how each entry of the profile is treated; the profile is assigned
-  to a server with its picker on the Server tab (each server carries its
-  own). The Status page offers the same preview for whichever profile is
-  assigned right now.
+- **Routing profiles**: the Default profile (bypass mode, no rules) is
+  already seeded here — a fresh install routes nothing until rules are
+  added, so BitTorrent and other non-SNI traffic stays direct unless you
+  explicitly route it. Every profile gets a mode — **VPN** (everything is
+  tunneled except the bypass-list entries) or **Bypass** (only the
+  VPN-list entries are tunneled) — and two rule lists. A **Rule preview**
+  button shows how each entry of the profile is treated; the profile is
+  assigned to a server with its picker on the Server tab (each server
+  carries its own). The Status page offers the same preview for whichever
+  profile is assigned right now.
 - **Advanced**: rarely needed — the MTU, the LAN interfaces, the
   blackhole switch, router-traffic routing, the client's own DNS
   upstreams, and the internal routing parameters (firewall mark,
@@ -170,8 +175,10 @@ uci commit trusttunnel
 ```
 
 The routing-profile block is optional: without it (or with a name that
-matches no profile), the client falls back to the legacy `domains.direct`
-list.
+matches no profile), the client falls back to the direct-by-default rule
+in TUN mode — traffic goes out directly until a profile explicitly
+routes it. In proxy mode the fallback keeps the legacy `domains.direct`
+list as the "do not bypass" exclusions.
 
 Several servers can be saved, one active. The shipped `endpoint` section
 already carries `name 'Default'` and is selected by `main.endpoint`. To
@@ -280,21 +287,32 @@ The page also carries three tools:
 
 ## Behaviour
 
-- **Marking and routing.** LAN traffic forwarded into the `trusttunnel`
-  zone is marked with fwmark `0x9527`; a policy rule sends marked packets
-  to table `880`, whose default route leads to the client's tun device.
-  Traffic originating on the router itself is not marked by default
-  (`include_router_traffic` is off); it leaves through the ordinary
-  default route.
+- **Marking and routing.** In TUN mode the `trusttunnel` zone is bound to
+  the attached tun device (never a `tun+` wildcard, which would absorb
+  foreign tun devices like OpenVPN's). LAN traffic is marked with fwmark
+  `0x9527` — but only as far as the assigned routing profile allows: a
+  VPN-mode profile marks everything except the IP/CIDR entries of its
+  bypass list; a bypass-mode profile whose VPN list is purely IP/CIDR
+  marks only those destinations; a bypass profile with a domain entry
+  marks everything and lets the client split by SNI; **no profile marks
+  nothing**. A policy rule sends marked packets to table `880`, whose
+  default route leads to the client's tun device. Traffic originating on
+  the router itself is not marked by default (`include_router_traffic`
+  is off); it leaves through the ordinary default route.
 - **Selective routing.** Inside the tunnel the client decides where each
   connection goes. VPN mode keeps everything in the tunnel except the
   entries in the bypass list; Bypass mode puts only the VPN-list entries
   into the tunnel. Domain entries are matched by TLS SNI; IP addresses
-  and CIDR ranges by the destination.
-- **Killswitch.** Whenever the tun interface is down, the blackhole route
-  (metric `1000`) in table `880` swallows marked traffic. The generated
-  config turns the client's own killswitch off (`killswitch_enabled =
-  false`); the routing table does the protecting.
+  and CIDR ranges by the destination — and IP/CIDR bypass entries are
+  already kept out at the kernel: listed destinations never enter the
+  tun at all, so they work even while the client is down.
+- **Killswitch.** The blackhole route (metric `1000`) in table `880`
+  exists only while a tun device is attached (attach arms it, detach
+  removes it). While the client is connecting or dead, marked traffic
+  falls through to the direct route instead of being swallowed — a
+  crashed client must not blackhole the LAN. The generated config turns
+  the client's own killswitch off (`killswitch_enabled = false`); the
+  routing table does the protecting while the tunnel is up.
 - **DNS.** Nothing intercepts or rewrites DNS: the generated config sets
   `change_system_dns = false`, and the router's resolver keeps serving
   the LAN.
@@ -309,8 +327,8 @@ The page also carries three tools:
 - **Proxy mode.** With `main.mode=proxy` the generated config carries
   `[listener.socks]` instead of `[listener.tun]` — the client accepts
   exactly one listener. The routing helper, the hotplug reattach and the
-  `tun+` firewall zone are not involved; the killswitch, MTU,
-  LAN-interface and routing options have no effect.
+  firewall zone are not involved; the killswitch, MTU, LAN-interface and
+  routing options have no effect.
 
 ## Updating
 
@@ -346,17 +364,21 @@ untouched.
   created by the client, not by the package: if it exists but the carrier
   is down, the client has not established the connection — the client log
   says why.
-- **Marked traffic is dropped.** When the route is not attached to the
-  device, marked traffic falls into the blackhole; the "Route attached to
-  the device" check reports it. Restart the service.
+- **Marked traffic is dropped.** While the tun device exists but its
+  route is not attached, marked traffic falls into the blackhole; the
+  "Route attached to the device" check reports it. Restart the service.
+  When the tun device is gone entirely, the blackhole is removed with it
+  and marked traffic falls through to the direct route.
 - **Nothing goes through the tunnel.** Check the marking chain: the
   traffic must be forwarded from a listed LAN interface into the
-  `trusttunnel` zone (the `lan → trusttunnel` forwarding rule).
+  `trusttunnel` zone (the `lan → trusttunnel` forwarding rule) and the
+  assigned routing profile must route it (no profile means direct).
   "Compare the external address" shows the same IP both ways when the
   tunnel is not used.
 - **The firewall zone is missing from the live ruleset.** The kernel
   checks report it; run `/etc/init.d/firewall reload` — the uci-defaults
-  script recreates the zone on the next boot.
+  script recreates the zone on the next boot, and the routing helper
+  binds it to the attached tun device on service start.
 - **The interface shows a new value, the client behaves as before.**
   Save & Apply updates the applied state only after regenerating the
   client configuration; when the interface and the applied state diverge,
@@ -370,10 +392,15 @@ untouched.
 - Domain rules are matched by the connection's TLS SNI once the traffic is
   inside the tunnel. Connections without a TLS SNI (plain IP, non-TLS)
   can be matched only by IP or CIDR rules. DNS is not involved in the
-  selection.
+  selection. BitTorrent peer connections have no SNI: they stay direct
+  unless an IP/CIDR rule routes them (the default bypass profile routes
+  nothing).
 - The client's tun device is created and named by the client itself; the
-  package attaches the tunnel route to whatever device appears (via
-  hotplug) and records it in `/var/etc/trusttunnel/device`.
+  package attaches the tunnel route to whatever client device appears (via
+  hotplug, judged by the ifindex snapshot written at service start) and
+  records it in `/var/etc/trusttunnel/device`. Foreign tun devices
+  (OpenVPN and friends) are never attached, and the firewall zone binds
+  the attached device by name, never a `tun+` wildcard.
 - **Proxy mode** does not route anything automatically: only apps and
   devices explicitly configured to use the SOCKS5 listener get the
   tunnel. DNS for proxied connections is resolved by the client through
@@ -469,7 +496,7 @@ configuration.
 | `skip_verification` | `0` | Accept any certificate, which removes the protection against a substituted server. Pin the certificate instead whenever you can. |
 | `certificate` | — | Pinned server certificate (PEM). Empty means the system trust store, which requires the `ca-bundle` package. |
 | `dns_upstream` | — | DNS used by the client itself — for example the exclusion domains it pre-resolves. Empty means the client default (AdGuard DNS unfiltered). |
-| `routing_profile` | `Default` | The routing profile THIS server uses while it is the active one. Empty, or a name that no longer matches any profile, falls back to the legacy `domains.direct` list. |
+| `routing_profile` | `Default` | The routing profile THIS server uses while it is the active one. Empty, or a name that no longer matches any profile, falls back to the direct-by-default rule in TUN mode (nothing is routed) and to the legacy `domains.direct` list in proxy mode. |
 
 ### Section `network`
 
@@ -477,7 +504,7 @@ configuration.
 |---|---|---|
 | `mtu` | `1350` | Tunnel MTU. Too high a value makes small pages load while TLS handshakes and large downloads stall. |
 | `lan_devices` | — | LAN interfaces whose forwarded traffic is considered; empty means the device of the `lan` network, with `br-lan` as the last-resort fallback |
-| `blackhole_on_down` | `1` | Add the blackhole route so marked traffic is dropped instead of leaking to the provider when the tunnel is down. |
+| `blackhole_on_down` | `1` | Arm the blackhole route while a tun device is attached, so marked traffic is dropped instead of leaking to the provider when the tunnel is down. While no device is attached, marked traffic falls through to the direct route. |
 | `include_router_traffic` | `0` | Also route traffic originated by the router itself. |
 | `fwmark` | `0x9527` | The firewall mark, decimal or `0x`-prefixed hex. Change only on a conflict with mwan3, SQM or another package that marks packets. |
 | `table` | `880` | The routing table id; anything except `0` and the reserved `253–255`. |
@@ -487,7 +514,7 @@ configuration.
 | Option | Default | Meaning |
 |---|---|---|
 | `name` | — | Unique name; the ACTIVE server's `routing_profile` option assigns the profile by it. |
-| `mode` | `vpn` | `vpn` — tunnel everything except the bypass rules; `bypass` — tunnel only the VPN rules. |
+| `mode` | `bypass` | `vpn` — tunnel everything except the bypass rules; `bypass` — tunnel only the VPN rules (the default: traffic goes out directly until rules route it). |
 | `vpn_rules` | — | Sent through the tunnel. In bypass mode these are the only tunneled destinations; in VPN mode the list has no effect. |
 | `bypass_rules` | — | Always sent out directly. In VPN mode these are the only direct destinations; in bypass mode the list has no effect. |
 
@@ -495,7 +522,7 @@ configuration.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `direct` | — | The flat "do not bypass" list, applied only when no routing profile is assigned (or the assigned name no longer matches any). |
+| `direct` | — | The flat "do not bypass" list, applied in proxy mode when no routing profile is assigned (or the assigned name no longer matches any). In TUN mode the fallback routes nothing, so the list has no effect there. |
 
 Rule entries in every list accept a plain domain, a `*.domain` wildcard,
 an IP address, an `IP:port` pair, or a CIDR range.
@@ -507,13 +534,16 @@ an IP address, an `IP:port` pair, or a CIDR range.
 - `/opt/trusttunnel_client/` — the client binaries (`trusttunnel_client`
   and `setup_wizard`)
 - `/var/etc/trusttunnel/` — generated files (`settings.tsv`,
-  `client.toml`, `endpoint.pem`, `device`); overwritten whenever the
-  service starts or settings are applied — never edit them
+  `client.toml`, `endpoint.pem`, `device`, `tun_since`); overwritten
+  whenever the service starts or settings are applied — never edit them
 
 ## Notes and caveats
 
-- **Firewall zone.** Because the zone binds the `tun+` wildcard, tun
-  devices created by other software fall under it too.
+- **Firewall zone.** The zone is bound to the concrete attached tun
+  device by the routing helper on attach, so tun devices created by
+  other software are never claimed by the package. The zone section
+  itself stays in the firewall config without a device binding while
+  the service is off.
 - **Repositories and signing.** The repositories are served from the
   GitHub Pages site of this project
   (`https://i-zhirov.github.io/trusttunnel-openwrt`), in the official

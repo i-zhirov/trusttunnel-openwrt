@@ -111,6 +111,7 @@ one generated client config, and one routing helper. The chain is:
 /var/etc/trusttunnel/client.toml    (gen-config; the client binary's config)
 /var/etc/trusttunnel/endpoint.pem   (pinned cert, written by init script)
 /var/etc/trusttunnel/device         (attached tun device name, routing helper)
+/var/etc/trusttunnel/tun_since      (ifindex snapshot for hotplug ownership)
 ```
 
 ### The records schema
@@ -134,7 +135,8 @@ selects how the tunnel is delivered:
 
 - **tun mode** — the classic wiring: `[listener.tun]` in `client.toml`,
   kernel routing via fwmark → table 880 → the client's tun device,
-  hotplug reattach, the `tun+` firewall zone, MTU.
+  hotplug reattach, the firewall zone bound to the attached tun device,
+  MTU.
 - **proxy mode** — `[listener.socks]` in `client.toml` (address +
   optional user/pass auth) instead; no kernel routing, no tun device, no
   hotplug, no zone. The client accepts EXACTLY ONE listener, so
@@ -157,29 +159,41 @@ sl column makes plain field splits unreliable).
 
 `endpoint.routing_profile` names a `routing_profile` section by its `name`
 option. `uci-export` (to emit the profile's records), `gen-config` and the
-backend resolve the name; an empty or stale name falls back to the legacy
-`domains.direct` list.
+backend resolve the name; an empty or stale name falls back to the
+direct-by-default rule (in tun mode nothing is routed; in proxy mode the
+legacy `domains.direct` exclusions keep applying).
 
 - **VPN mode** (`mode='vpn'`) → client `vpn_mode = "general"`, exclusions =
   `routing_profile.bypass_rules`.
 - **Bypass mode** (`mode='bypass'`) → client `vpn_mode = "selective"`,
   exclusions = `routing_profile.vpn_rules` (the tunneled set).
-- **No/unknown profile** → `vpn_mode = "general"`, exclusions =
-  `domains.direct`.
+- **No/unknown profile** → the direct-by-default fallback: in tun mode
+  `vpn_mode = "selective"` with nothing tunneled; in proxy mode the
+  legacy `general` with `domains.direct` exclusions stays (the SOCKS
+  listener is the explicit routing there).
 
 Rule entries accept a plain domain, `*.domain`, an IP, `IP:port`, or CIDR.
-Domain matching happens inside the client (by SNI).
+Domain matching happens inside the client (by SNI); IP/CIDR entries are
+additionally enforced at the kernel by the routing helper (see below), so
+listed destinations never enter the tun at all.
 
 ### Kernel routing state (`/usr/libexec/trusttunnel/routing`)
 
 Subcommands: `dump | up | meter | attach | reattach | detach | down | status`.
-- `up`: blackhole default routes (metric 1000) in table 880 → fwmark rule
-  (priority 30820) → the nft ruleset (table `inet trusttunnel`, sets
-  `tt_endpoint4/6`, a prerouting chain that marks traffic arriving on a
-  LAN device and destined outside the endpoint sets and the private
-  ranges with fwmark `0x9527`). Endpoint addresses are resolved BEFORE
-  the ruleset lands (marked traffic would otherwise blackhole DNS).
-  `up` refuses to run when the records declare proxy mode.
+- `up`: fwmark rule (priority 30820, guarded on the rule's own
+  fwmark+table, not on the bare table number) → the nft ruleset (table
+  `inet trusttunnel`, sets `tt_endpoint4/6` plus the selection sets
+  `tt_route4/6` and `tt_bypass4/6`). The prerouting chain marks LAN
+  traffic destined outside the endpoint sets and the private ranges —
+  but only as far as the assigned profile allows: vpn mode marks
+  everything except the IP/CIDR bypass entries, a purely address-based
+  bypass profile marks only its VPN destinations, a bypass profile with
+  a domain entry marks everything (the client splits by SNI), and no
+  profile marks nothing (direct by default). The output chain mirrors
+  the selection when `include_router_traffic` is on. Endpoint addresses
+  are resolved BEFORE the ruleset lands (marked traffic would otherwise
+  blackhole DNS). `up` installs NO blackhole and refuses to run when the
+  records declare proxy mode.
 - `meter`: the proxy-mode usage meter — byte counters on the SOCKS
   listener port in the same table: `tt_meter_in` (prerouting,
   `tcp dport <port> counter`, requests into the listener = tx) and
@@ -187,14 +201,22 @@ Subcommands: `dump | up | meter | attach | reattach | detach | down | status`.
   Port-only matching works for localhost and LAN-exposed listeners
   alike; a non-numeric port is refused. `meter` refuses in tun mode (the
   mirror of `up` refusing proxy mode — the two rulesets never coexist).
-  `down` removes it like any other table content.
-- `attach`: point table 880's default route at the client tun device
-  (metric 1) and record the device name in `$OUT_DIR/device`.
-- `down`: remove everything; the client's device is never deleted.
+- `attach`: arm the blackhole (metric 1000, only while a device is
+  attached — `blackhole_on_down=0` removes a stale one instead), point
+  table 880's default route at the client tun device (metric 1), bind
+  the `trusttunnel` firewall zone to the CONCRETE device name (never a
+  `tun+` wildcard, which would absorb foreign tun devices) and record
+  the device name in `$OUT_DIR/device`.
+- `detach`: remove the device route, the blackhole and the zone binding
+  (marked traffic falls through to the direct route while no tun device
+  exists) and forget the device record.
+- `down`: remove everything — the nft table, the fwmark rule and only
+  this package's own routes (a table flush would wipe foreign routes in
+  table 880); the client's device is never deleted.
 - `status`: additionally reports `meter up` / `meter rx <bytes>` /
   `meter tx <bytes>` while both counter rules exist (a stale table after
   a port change reports no meter).
-- Overrides for tests: `TT_IP`, `TT_NFT`, `TT_LIBDIR`.
+- Overrides for tests: `TT_IP`, `TT_NFT`, `TT_UCI`, `TT_FW`, `TT_LIBDIR`.
 
 ### Service lifecycle (`/etc/init.d/trusttunnel`)
 
@@ -224,17 +246,26 @@ procd service, `USE_PROCD=1`, `START=95`, `STOP=10`. Notable behaviors:
 
 On `ACTION=add` for a non-persistent tun device (`tun_flags` sysfs marker,
 `IFF_PERSIST` bit 0x800 clear) belonging to a running service, reattaches
-the routing table's default route to the new device. Foreign devices and
-devices that would displace a working tunnel are ignored.
+the routing table's default route to the new device — but only when the
+device's ifindex is above the `$OUT_DIR/tun_since` snapshot written by the
+init script right before the client starts (foreign tun devices such as
+OpenVPN's predate it and are never attached). A `remove`/`unbind` event for
+the recorded device runs `routing detach`, so the blackhole dies with the
+tun device instead of swallowing LAN traffic after a client crash. Devices
+that would displace a working tunnel are ignored.
 
 ### uci-defaults (`/etc/uci-defaults/40-luci-trusttunnel`)
 
 First-boot / reinstall setup: dedups the `trusttunnel` firewall zone and
-forwarding, creates them when missing (zone bound to `tun+`, `lan →
-trusttunnel` forwarding), migrates old concrete `tt0` bindings to `tun+`,
-seeds the Default routing profile (migrating `domains.direct` into its
-bypass rules), registers the rc.d link and clears LuCI caches.
-Idempotent; also run immediately by `install.sh`.
+forwarding, creates them when missing (a DEVICE-LESS zone, `lan →
+trusttunnel` forwarding; the routing helper binds the concrete tun on
+attach), clears any legacy `tt0`/`tun+` bindings the same way, seeds the
+Default routing profile (in `vpn` mode when a legacy `domains.direct`
+list exists — its values move into the bypass rules, preserving the old
+full-tunnel semantics — and in `bypass` mode otherwise, the
+direct-by-default default), creates the UI-only `about` section that keys
+the Versions tab on the Settings page, registers the rc.d link and clears
+LuCI caches. Idempotent; also run immediately by `install.sh`.
 
 ### rpcd backend (`/usr/share/rpcd/ucode/luci.trusttunnel`)
 
@@ -271,12 +302,13 @@ file compiles under the pinned ucode.
 
 - `status.js` — verdict banner, facts (state/mode/server/proxy address,
   traffic), Start/Stop buttons and a rules preview for the assigned
-  profile (or the legacy `domains.direct` list without one) that checks
-  each effective rule via `check_domain`; polls every 10s. There is no
-  restart button: from the UI it is stop + start, and the
-  routing-preserving restart is internal to the settings apply path.
-  The verdict is mode-aware: the "working" gate is `device_up` in tun
-  mode and `listener_up` in proxy mode. The traffic row shows the
+  profile (in proxy mode without one the legacy `domains.direct` list is
+  previewed; in tun mode the preview states the direct-by-default
+  state) that checks each effective rule via `check_domain`; polls every
+  10s. There is no restart button: from the UI it is stop + start, and
+  the routing-preserving restart is internal to the settings apply
+  path. The verdict is mode-aware: the "working" gate is `device_up` in
+  tun mode and `listener_up` in proxy mode. The traffic row shows the
   poll-delta rates (a 10 s average) and the cumulative totals from
   `rx_bytes`/`tx_bytes`; a counter reset (reconnected tunnel)
   rebaselines the snapshot, and null counters hide the row.
@@ -672,7 +704,7 @@ package managers rely on. No branch ever holds packages.
 - **Hardcoded paths** (keep consistent): `/etc/config/trusttunnel`,
   `/etc/init.d/trusttunnel`, `/opt/trusttunnel_client`,
   `/usr/libexec/trusttunnel/{uci-export,gen-config,routing,records.sh}`,
-  `/var/etc/trusttunnel/{settings.tsv,client.toml,endpoint.pem,device}`,
+  `/var/etc/trusttunnel/{settings.tsv,client.toml,endpoint.pem,device,tun_since}`,
   `/etc/uci-defaults/40-luci-trusttunnel`,
   `/etc/hotplug.d/net/40-trusttunnel`. Kernel constants: fwmark `0x9527`,
   table `880`, rule priority `30820`, blackhole metric `1000`.
@@ -681,7 +713,9 @@ package managers rely on. No branch ever holds packages.
   leftovers from earlier versions of the package). Do not add such touches.
 - **Killswitch**: the generated config keeps the client's own killswitch
   off (`killswitch_enabled = false`); the routing table blackhole is the
-  killswitch. `change_system_dns = false` — DNS is never intercepted.
+  killswitch — armed on attach and removed on detach, so a dead client
+  falls through to the direct route instead of blackholing the LAN.
+  `change_system_dns = false` — DNS is never intercepted.
 - **Keys**: `key-build.pub` / `opkg-key.pub` are public; never commit
   private keys. Repo signing keys rotate — run `install.sh` again on a
   router to refresh them.
