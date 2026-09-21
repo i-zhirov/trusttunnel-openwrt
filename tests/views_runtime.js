@@ -238,7 +238,7 @@ const canned = {
     // renders to prove the poll refreshes the tail in place.
     log: function () { return { lines: logLines.slice() }; },
     versions: function () {
-        return { package: '1.0.20-r1', client_package: '1.0.49-r1', client: '1.0.49' };
+        return { package: '1.0.20-r1', client_package: '1.1.5-r1', client: '1.1.5' };
     },
     diagnose: function () {
         return {

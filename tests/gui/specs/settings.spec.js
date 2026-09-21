@@ -101,7 +101,7 @@ test('the Versions tab reports the installed package versions', async ({ page })
 	await expect(pane).toContainText('TrustTunnel package');
 	await expect(pane).toContainText('1.0.15-r1');
 	await expect(pane).toContainText('Client package');
-	await expect(pane).toContainText('1.0.49-1');
+	await expect(pane).toContainText('1.1.5-1');
 	await expect(pane).toContainText('Client binary');
 	await expect(pane).toContainText('1.1.5');
 });
