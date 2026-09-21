@@ -738,11 +738,10 @@ jobs:
           #
           # Only the client version the current build ships may come
           # from prior releases: the package managers install the
-          # highest version, so an old client (the vendor's 1.1.5
-          # segfaults on IPv4-only routers; the current build pins
-          # 1.0.49) must never shadow the fresh build. Prior files of
-          # the same version are duplicates the current placement
-          # overwrites anyway — they matter only for dropped arches.
+          # highest version, so an old client must never shadow the
+          # fresh build. Prior files of the same version are duplicates
+          # the current placement overwrites anyway — they matter only
+          # for dropped arches.
           # The version-revision tail is the first two dash-segments
           # (<ver> is dotted digits, <rev> is r<digits>); the final
           # dash segment is NOT enough, the arch may contain dashes.
@@ -845,9 +844,8 @@ jobs:
       # freshly built packages win on a same-name collision (a dispatch
       # run at the latest tag). The [0-9] anchor keeps the old -lite
       # packages and the dropped i18n packages out of the feed, and the
-      # same version filter as the apk step keeps an old client (the
-      # vendor's 1.1.5 segfaults on IPv4-only routers) from shadowing the
-      # fresh build — opkg installs the highest version.
+      # same version filter as the apk step keeps an old client from
+      # shadowing the fresh build — opkg installs the highest version.
       - name: Assemble and sign the opkg repositories
         env:
           SIGN_KEY: ${{ secrets.TT_OPKG_SIGN_KEY }}

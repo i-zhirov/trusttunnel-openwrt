@@ -246,7 +246,7 @@ const canned = {
     // renders to prove the poll refreshes the tail in place.
     log: function () { return { lines: logLines.slice() }; },
     versions: function () {
-        return { package: '1.0.20-r1', client_package: '1.0.49-r1', client: '1.0.49' };
+        return { package: '1.0.20-r1', client_package: '1.1.5-r1', client: '1.1.5' };
     },
     diagnose: function () {
         return {
@@ -746,8 +746,8 @@ async function main() {
     ok(hasText(versionsTree, 'TrustTunnel package') && hasText(versionsTree, 'Client package') &&
         hasText(versionsTree, 'Client binary'),
         'versions: the three version rows render');
-    ok(hasText(versionsTree, '1.0.20-r1') && hasText(versionsTree, '1.0.49-r1') &&
-        hasText(versionsTree, '1.0.49'),
+    ok(hasText(versionsTree, '1.0.20-r1') && hasText(versionsTree, '1.1.5-r1') &&
+        hasText(versionsTree, '1.1.5'),
         'versions: the backend values render');
     ok(!hasText(versionsTree, 'not installed'),
         'versions: installed packages show no fallback text');
