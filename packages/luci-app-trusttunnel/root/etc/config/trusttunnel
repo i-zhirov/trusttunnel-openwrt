@@ -28,12 +28,16 @@ config main 'main'
 	option endpoint 'Default'
 
 # The kernel wiring for tun mode: the marked table, the fwmark and the
-# killswitch. These options are inert while main.mode is 'proxy'.
+# killswitch. These options are inert while main.mode is 'proxy'. The
+# blackhole is armed while a tun device is attached; setting
+# blackhole_on_down to 1 arms it even without a device (strict
+# killswitch: marked traffic is dropped whenever it cannot reach the
+# tunnel instead of falling through to the direct route).
 config network 'network'
 	option mtu '1350'
 	option table '880'
 	option fwmark '0x9527'
-	option blackhole_on_down '1'
+	option blackhole_on_down '0'
 	option include_router_traffic '0'
 	option lan_devices ''
 
@@ -46,9 +50,14 @@ config proxy 'proxy'
 
 # Named rule sets; the ACTIVE endpoint's routing_profile option assigns
 # the one in use by name, so each saved server can carry its own profile.
+# The Default profile is in bypass mode: traffic goes out DIRECTLY unless
+# a rule in its VPN list explicitly routes it through the tunnel
+# (BitTorrent and other non-SNI traffic stays direct by default). Switch
+# the mode to 'vpn' for the full-tunnel behaviour (everything except the
+# bypass rules goes through the tunnel).
 config routing_profile
 	option name 'Default'
-	option mode 'vpn'
+	option mode 'bypass'
 
 # The legacy flat exclusion list; consulted only when no routing profile
 # is assigned.

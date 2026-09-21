@@ -6,8 +6,9 @@
 # real uci toolchain and /lib/functions.sh from the image do the work;
 # /etc/init.d/firewall, /etc/init.d/trusttunnel and logger are stubs that
 # record their calls, so the assertions observe side effects instead of
-# guessing at them. Six scenarios cover the contract: fresh, duplicated,
-# legacy (tt0 binding), upgrade (profile seed), side-effects, idempotent.
+# guessing at them. Seven scenarios cover the contract: fresh, duplicated,
+# legacy (tt0 binding), upgrade (profile seed with a direct list),
+# seed-direct (profile seed without one), side-effects, idempotent.
 #
 # Selectors:
 #   TT_UCD_SCRIPT  path of the script under test (default: the package's
@@ -242,8 +243,8 @@ EOF
         "fresh: zone masq enabled"
     assert_contains "$ucd_out" "firewall.@zone[0].mtu_fix='1'" \
         "fresh: zone mtu_fix enabled"
-    assert_contains "$ucd_out" "firewall.@zone[0].device='tun+'" \
-        "fresh: zone binds the tun+ wildcard"
+    assert_eq "0" "$(ucd_grep_count "device='" "$ucd_out")" \
+        "fresh: the zone carries no device binding (the routing helper binds the concrete tun on attach)"
     assert_contains "$ucd_out" "firewall.@forwarding[0].src='lan'" \
         "fresh: forwarding from lan"
     assert_contains "$ucd_out" "firewall.@forwarding[0].dest='trusttunnel'" \
@@ -317,14 +318,16 @@ EOF
         "duplicated: the first forwarding is kept"
     assert_eq "0" "$(ucd_grep_count "marker='c'" "$ucd_out")" \
         "duplicated: the third forwarding is removed"
-    assert_contains "$ucd_out" "RELOADS=2" \
-        "duplicated: one reload for the dedup and one for the tun+ migration"
+    assert_contains "$ucd_out" "RELOADS=1" \
+        "duplicated: one reload for the dedup (the surviving zone has no binding to migrate)"
     assert_eq "1" "$(ucd_grep_count 'cleaned up duplicate trusttunnel firewall zones' "$ucd_out")" \
         "duplicated: the dedup log line appears exactly once"
-    assert_eq "1" "$(ucd_grep_count 'firewall zone migrated from tt0 to the tun+ wildcard' "$ucd_out")" \
-        "duplicated: the migration log line appears exactly once"
-    assert_eq "1" "$(ucd_grep_count "device='tun+'" "$ucd_out")" \
-        "duplicated: only the trusttunnel zone binds the tun+ wildcard"
+    assert_eq "0" "$(ucd_grep_count 'firewall zone unbound' "$ucd_out")" \
+        "duplicated: no unbind needed (the surviving zone carries no binding)"
+    assert_eq "0" "$(ucd_grep_count "device='tun+'" "$ucd_out")" \
+        "duplicated: no zone keeps the tun+ wildcard"
+    assert_eq "1" "$(ucd_grep_count "device='eth0.1'" "$ucd_out")" \
+        "duplicated: the unrelated zone keeps its own device binding"
 }
 
 scenario_legacy() {
@@ -345,14 +348,14 @@ EOF
         "legacy: the script exits 0"
     assert_eq "1" "$(ucd_grep_count "name='trusttunnel'" "$ucd_out")" \
         "legacy: the existing zone stays"
-    assert_contains "$ucd_out" "device='tun+'" \
-        "legacy: the zone binds the tun+ wildcard after migration"
+    assert_eq "0" "$(ucd_grep_count "device='" "$ucd_out")" \
+        "legacy: the zone is unbound after migration (the attached tun is bound on start)"
     assert_eq "0" "$(ucd_grep_count "device='tt0'" "$ucd_out")" \
         "legacy: the old tt0 binding is gone"
     assert_contains "$ucd_out" "RELOADS=1" \
         "legacy: firewall reloaded exactly once"
-    assert_eq "1" "$(ucd_grep_count 'firewall zone migrated from tt0 to the tun+ wildcard' "$ucd_out")" \
-        "legacy: the migration log line appears exactly once"
+    assert_eq "1" "$(ucd_grep_count 'firewall zone unbound; the attached tun device is bound on start' "$ucd_out")" \
+        "legacy: the unbind log line appears exactly once"
     assert_eq "0" "$(ucd_grep_count "dest='trusttunnel'" "$ucd_out")" \
         "legacy: no forwarding created (creation only fires without a zone)"
 }
@@ -408,10 +411,10 @@ EOF
         "upgrade: the proxy section is seeded"
     assert_contains "$ucd_tt1" "proxy.address='127.0.0.1:1080'" \
         "upgrade: the proxy section carries the default listener address"
-    assert_contains "$ucd_out" "RELOADS1=0" \
-        "upgrade: the firewall block is untouched on run 1"
-    assert_contains "$ucd_out" "RELOADS2=0" \
-        "upgrade: the firewall block is untouched on run 2"
+    assert_contains "$ucd_out" "RELOADS1=1" \
+        "upgrade: one reload on run 1 (the tun+ binding is unbound)"
+    assert_contains "$ucd_out" "RELOADS2=1" \
+        "upgrade: run 2 adds no reload (the binding stays unbound)"
     assert_contains "$ucd_out" "FW_IDENTICAL=yes" \
         "upgrade: the firewall state is identical after run 2"
     assert_contains "$ucd_out" "TT_IDENTICAL=yes" \
@@ -424,6 +427,72 @@ EOF
         "upgrade: the proxy seed log line appears exactly once"
     assert_eq "1" "$(ucd_grep_count '@routing_profile\[[0-9]*\]=routing_profile' "$ucd_tt2")" \
         "upgrade: no second profile after run 2"
+}
+
+scenario_seed_direct() {
+    ucd_d_dir=$UCD_FIXTURE_ROOT/seed-direct
+    mkdir -p "$ucd_d_dir"
+    cat > "$ucd_d_dir/firewall" <<'EOF'
+config defaults
+	option input 'ACCEPT'
+EOF
+    cat > "$ucd_d_dir/trusttunnel" <<'EOF'
+config endpoint 'endpoint'
+	option host 'vpn.example.com'
+
+config domains 'domains'
+EOF
+    ucd_stubs "$ucd_d_dir"
+    ucd_run seed-direct 1 ""
+
+    ucd_out=$(cat "$ucd_d_dir/out")
+    ucd_tt1=$(ucd_block TT1 "$ucd_out")
+
+    assert_contains "$ucd_out" "SCRIPT_EXIT=0" \
+        "seed-direct: run 1 exits 0"
+    assert_contains "$ucd_tt1" "name='Default'" \
+        "seed-direct: the seeded profile is named Default"
+    assert_contains "$ucd_tt1" "mode='bypass'" \
+        "seed-direct: without a legacy direct list the default is bypass mode (direct unless routed)"
+    assert_contains "$ucd_tt1" "endpoint.routing_profile='Default'" \
+        "seed-direct: the endpoint references the seeded profile"
+    assert_eq "0" "$(ucd_grep_count 'bypass_rules' "$ucd_tt1")" \
+        "seed-direct: no rules are seeded"
+    assert_contains "$ucd_out" 'created the default routing profile in bypass mode; traffic goes out directly until rules route it' \
+        "seed-direct: the bypass seed log line appears exactly once"
+    assert_contains "$ucd_out" "TT_IDENTICAL=yes" \
+        "seed-direct: the trusttunnel state is identical after run 2"
+}
+
+scenario_live_binding() {
+    ucd_l_dir=$UCD_FIXTURE_ROOT/live-binding
+    mkdir -p "$ucd_l_dir"
+    cat > "$ucd_l_dir/firewall" <<'EOF'
+config zone
+	option name 'trusttunnel'
+	list device 'tun0'
+EOF
+    ucd_trusttunnel_default "$ucd_l_dir"
+    ucd_stubs "$ucd_l_dir"
+
+    # install.sh re-runs this script while a running service is attached:
+    # the recorded device must keep its live zone binding, or the
+    # reinstall would cut the tunnel's firewall path.
+    ucd_extra='mkdir -p /var/etc/trusttunnel
+printf "tun0\n" > /var/etc/trusttunnel/device'
+
+    ucd_run live-binding 0 "$ucd_extra"
+
+    ucd_out=$(cat "$ucd_l_dir/out")
+
+    assert_contains "$ucd_out" "SCRIPT_EXIT=0" \
+        "live-binding: the script exits 0"
+    assert_contains "$ucd_out" "device='tun0'" \
+        "live-binding: the attached device binding survives the migration"
+    assert_contains "$ucd_out" "RELOADS=0" \
+        "live-binding: no firewall reload (nothing migrated)"
+    assert_eq "0" "$(ucd_grep_count 'firewall zone unbound' "$ucd_out")" \
+        "live-binding: no unbind log line"
 }
 
 scenario_side_effects() {
@@ -569,11 +638,13 @@ ucd_matches() {
     esac
 }
 
-for ucd_scenario in fresh duplicated legacy upgrade side-effects idempotent stale; do
+for ucd_scenario in fresh duplicated legacy upgrade seed-direct live-binding side-effects idempotent stale; do
     if [ -z "$TT_UCD_FILTER" ] || ucd_matches "$ucd_scenario"; then
         echo "== scenario: $ucd_scenario"
         case $ucd_scenario in
             side-effects) scenario_side_effects ;;
+            seed-direct) scenario_seed_direct ;;
+            live-binding) scenario_live_binding ;;
             *) scenario_$ucd_scenario ;;
         esac
     fi

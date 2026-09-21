@@ -19,6 +19,10 @@ mkdir -p "$scratch/var/etc/trusttunnel" "$scratch/etc/init.d" \
 cp tests/fixtures/records/minimal.tsv "$scratch/var/etc/trusttunnel/settings.tsv"
 printf '0x1001\n' > "$scratch/sys/class/net/tun0/tun_flags"
 printf '0x1001\n' > "$scratch/sys/class/net/tun1/tun_flags"
+# ifindex values: tun0 is the client's own (created after the service
+# start), tun1 a foreign device that already existed (index 50).
+printf '100\n' > "$scratch/sys/class/net/tun0/ifindex"
+printf '50\n' > "$scratch/sys/class/net/tun1/ifindex"
 
 # Stub of the procd "running" probe: exit code from a state file (default 0).
 cat > "$scratch/etc/init.d/trusttunnel" <<'STUB'
@@ -58,16 +62,20 @@ chmod +x "$scratch/40-trusttunnel.test"
 # sysfs dir — none of that may leak into a later scenario). Recorders and
 # stub rc overrides are cleared, the device record is removed, settings.tsv
 # is re-copied from the fixture, and the tun0/tun1 sysfs dirs are recreated
-# with non-persistent flags. Scenario deltas are applied AFTER this call.
+# with non-persistent flags and their ifindex values. Scenario deltas are
+# applied AFTER this call.
 reset_state() {
 	rm -f "$scratch/routing_calls" "$scratch/log_lines" \
-	      "$scratch/var/etc/trusttunnel/device" "$scratch/init_rc" \
+	      "$scratch/var/etc/trusttunnel/device" \
+	      "$scratch/var/etc/trusttunnel/tun_since" "$scratch/init_rc" \
 	      "$scratch/routing_rc"
 	cp tests/fixtures/records/minimal.tsv \
 	   "$scratch/var/etc/trusttunnel/settings.tsv"
 	mkdir -p "$scratch/sys/class/net/tun0" "$scratch/sys/class/net/tun1"
 	printf '0x1001\n' > "$scratch/sys/class/net/tun0/tun_flags"
 	printf '0x1001\n' > "$scratch/sys/class/net/tun1/tun_flags"
+	printf '100\n' > "$scratch/sys/class/net/tun0/ifindex"
+	printf '50\n' > "$scratch/sys/class/net/tun1/ifindex"
 }
 
 run_hotplug() {
@@ -83,7 +91,8 @@ attach_line="attach $scratch/var/etc/trusttunnel/settings.tsv $scratch/var/etc/t
 # --- filters: event and device pre-checks -------------------------------------
 
 scn_f1() {
-	# F1: a non-add event is ignored before anything else.
+	# F1: a remove event for an unrecorded device is ignored before the
+	# tun checks (the removal path only acts on the recorded device).
 	ACT=remove IFACE=tun0 DEVNAME=''; reset_state
 	run_hotplug
 	assert_eq "0" "$?" "non-add event exits 0"
@@ -204,6 +213,80 @@ group_guards() {
 	scn_g7
 }
 
+# --- ownership: the ifindex snapshot separates client from foreign -------
+
+scn_o1() {
+	# O1: a tun device at or below the service-start snapshot was created
+	# by somebody else (OpenVPN and friends) and must never be attached.
+	ACT=add IFACE=tun1 DEVNAME=''; reset_state
+	printf '80\n' > "$scratch/var/etc/trusttunnel/tun_since"
+	run_hotplug
+	assert_eq "0" "$?" "foreign pre-existing tun exits 0"
+	assert_eq "<none>" "$(calls)" "foreign pre-existing tun never reaches routing"
+}
+
+scn_o2() {
+	# O2: a tun device above the snapshot is the client's own.
+	ACT=add IFACE=tun0 DEVNAME=''; reset_state
+	printf '80\n' > "$scratch/var/etc/trusttunnel/tun_since"
+	run_hotplug
+	assert_eq "$attach_line" "$(calls)" "a device above the snapshot attaches"
+}
+
+scn_o3() {
+	# O3: without a snapshot (an old service incarnation) the gate is
+	# open; the recorded-device guard still protects a working tunnel
+	# (a live recorded device blocks foreign events — see G3).
+	ACT=add IFACE=tun1 DEVNAME=''; reset_state
+	printf 'tun1\n' > "$scratch/var/etc/trusttunnel/device"
+	run_hotplug
+	assert_eq "${attach_line%tun0}tun1" "$(calls)" "no snapshot leaves the recorded-device guard as the only filter"
+}
+
+group_ownership() {
+	scn_o1
+	scn_o2
+	scn_o3
+}
+
+# --- removal: the recorded device dying must detach ----------------------
+
+detach_line="detach $scratch/var/etc/trusttunnel/settings.tsv $scratch/var/etc/trusttunnel"
+
+scn_r1() {
+	# R1: the recorded device is removed (the client died): detach, so
+	# the blackhole goes with it and marked traffic falls through to the
+	# direct route.
+	ACT=remove IFACE=tun0 DEVNAME=''; reset_state
+	printf 'tun0\n' > "$scratch/var/etc/trusttunnel/device"
+	run_hotplug
+	assert_eq "0" "$?" "recorded device removal exits 0"
+	assert_eq "$detach_line" "$(calls)" "recorded device removal detaches"
+}
+
+scn_r2() {
+	# R2: a remove event for a device that is not recorded is ignored.
+	ACT=remove IFACE=tun0 DEVNAME=''; reset_state
+	printf 'tun1\n' > "$scratch/var/etc/trusttunnel/device"
+	run_hotplug
+	assert_eq "0" "$?" "foreign device removal exits 0"
+	assert_eq "<none>" "$(calls)" "foreign device removal never reaches routing"
+}
+
+scn_r3() {
+	# R3: a remove event with no device record is ignored.
+	ACT=unbind IFACE=tun0 DEVNAME=''; reset_state
+	run_hotplug
+	assert_eq "0" "$?" "unbind without a record exits 0"
+	assert_eq "<none>" "$(calls)" "unbind without a record never reaches routing"
+}
+
+group_removal() {
+	scn_r1
+	scn_r2
+	scn_r3
+}
+
 # --- attach: the routing call and the log -------------------------------------
 
 scn_a1() {
@@ -272,12 +355,14 @@ group_invariants() {
 # --- dispatcher ---------------------------------------------------------------
 
 if [ "$#" -eq 0 ]; then
-	set -- filters guards attach invariants
+	set -- filters guards ownership removal attach invariants
 fi
 for tt_group in "$@"; do
 	case $tt_group in
 		filters) group_filters ;;
 		guards) group_guards ;;
+		ownership) group_ownership ;;
+		removal) group_removal ;;
 		attach) group_attach ;;
 		invariants) group_invariants ;;
 		*)

@@ -346,11 +346,18 @@ return {
 					client_installed: access(CLIENT) ? true : false,
 					routing_profile: pname,
 					// Only meaningful when a profile is assigned; without
-					// one the effective mode is the legacy general.
+					// one the effective mode is the direct-by-default
+					// fallback.
 					routing_mode: pmode,
-					// The effective client vpn_mode: selective for a
-					// bypass-mode profile, general otherwise.
-					vpn_mode: pmode == 'bypass' ? 'selective' : 'general',
+					// The effective client vpn_mode mirrors gen-config:
+					// general for a vpn-mode profile and for the proxy
+					// fallback (the SOCKS listener IS the explicit routing
+					// there, so the legacy full-tunnel semantics stay);
+					// selective for a bypass-mode profile and for the
+					// direct-by-default fallback (no profile) in tun mode.
+					vpn_mode: pmode == 'vpn' ? 'general'
+					         : (pmode == 'bypass' ? 'selective'
+					         : (mode == 'proxy' ? 'general' : 'selective')),
 					// The SOCKS listener fields mean something only in
 					// proxy mode; in tun mode the address is unused and
 					// no listener exists.
@@ -544,9 +551,11 @@ return {
 				// and a recognizable mode its rules decide (in vpn mode
 				// the bypass rules go direct, in bypass mode the VPN
 				// rules go through the tunnel); an unknown mode falls
-				// back to the legacy flat "do not bypass" list — this
-				// mirrors gen-config, which treats anything other than
-				// bypass/vpn as the legacy general mode.
+				// back like gen-config does. In proxy mode the fallback
+				// keeps the legacy "do not bypass" list (the SOCKS
+				// listener is the explicit routing); in tun mode the
+				// fallback routes nothing — traffic goes out directly
+				// unless a profile explicitly routes it.
 				if (length(pname) && (pmode == 'bypass' || pmode == 'vpn'))
 					list_key = pmode == 'bypass' ? 'routing_profile.vpn_rules' : 'routing_profile.bypass_rules';
 				else
@@ -581,12 +590,23 @@ return {
 							: 'the assigned profile is in VPN mode, so everything else is tunneled'
 					};
 
+				// The fallback (no profile, a stale name or an unknown
+				// mode): in proxy mode the legacy semantics stay — the
+				// proxied connections tunnel except the "do not bypass"
+				// list. In tun mode nothing is routed by default.
+				if (first(rec, 'main.mode', 'tun') == 'proxy')
+					return {
+						domain: raw, normalized: lc_raw,
+						verdict: in_list ? 'direct' : 'tunnel',
+						reason: in_list
+							? 'listed in the "do not bypass" list; the proxy sends it out directly'
+							: 'proxy mode: connections pointed at the SOCKS listener go through the tunnel'
+					};
+
 				return {
 					domain: raw, normalized: lc_raw,
-					verdict: in_list ? 'direct' : 'tunnel',
-					reason: in_list
-						? 'listed in the "do not bypass" list; the client matches it by SNI'
-						: 'no exclusions: all LAN traffic is tunneled (full-tunnel mode)'
+					verdict: 'direct',
+					reason: 'no routing profile is assigned — traffic goes out directly'
 				};
 			}
 		},
@@ -665,7 +685,7 @@ return {
 				if (length(pname))
 					push(checks, check('config', 'Routing profile', 'ok', pname + ' (' + pmode + ')', ''));
 				else
-					push(checks, check('config', 'Routing profile', 'warn', 'none — legacy full-tunnel mode',
+					push(checks, check('config', 'Routing profile', 'warn', 'none — direct by default',
 						'Assign a routing profile on the Settings page to control what goes through the tunnel.'));
 
 				// --- Prerequisites ---
@@ -784,8 +804,11 @@ return {
 
 					if (rs.table)
 						push(checks, check('kernel', 'Routing-table entry', 'ok', 'found', ''));
+					else if (running)
+						push(checks, check('kernel', 'Routing-table entry', 'warn', 'empty',
+							'The tunnel is not attached yet — the blackhole is armed on attach, so marked traffic falls through to the direct route.'));
 					else
-						push(checks, check('kernel', 'Routing-table entry', running ? 'fail' : 'skip', 'not found', ''));
+						push(checks, check('kernel', 'Routing-table entry', 'skip', 'not found', ''));
 
 					if (rs.nft)
 						push(checks, check('kernel', 'nft ruleset', 'ok', 'found', ''));

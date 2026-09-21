@@ -121,7 +121,7 @@ const uciData = {
                 anti_dpi: '0', post_quantum: '1', skip_verification: '0',
                 has_ipv6: '1', routing_profile: '' },
     network:  { '.type': 'network', '.name': 'network', mtu: '1350', table: '880',
-                fwmark: '0x9527', blackhole_on_down: '1', include_router_traffic: '0' },
+                fwmark: '0x9527', blackhole_on_down: '0', include_router_traffic: '0' },
     proxy:    { '.type': 'proxy', '.name': 'proxy', address: '127.0.0.1:1080',
                 username: '', password: '' },
     cfg1:     { '.type': 'routing_profile', '.name': 'cfg1', name: 'Default', mode: 'vpn' },
@@ -480,23 +480,35 @@ async function main() {
     ok(await waitText(modalBox, 'through the tunnel'),
         'status: preview renders verdicts for the checked rules');
 
-    // Without an assigned profile the same button previews the legacy
-    // "do not bypass" list.
+    // Without an assigned profile the same button previews the
+    // direct-by-default state in tun mode: nothing is routed at all.
     const legacyStatus = Object.assign({}, canned.status(), {
-        routing_profile: '', routing_mode: '', vpn_mode: 'general'
+        routing_profile: '', routing_mode: '', vpn_mode: 'selective'
     });
     const legacyTree = statusView.render(legacyStatus);
     const legacyBtn = findButtons(legacyTree).find(b => hasText(b, 'Preview rules'));
     ok(legacyBtn !== null, 'status: Preview rules button present without a profile');
     await click(legacyBtn);
-    await waitText(ui.lastModal.children, 'legacy.example');
+    await waitText(ui.lastModal.children, 'No routing profile is assigned');
     ok(ui.lastModal && ui.lastModal.title === 'Rule preview',
         'status: legacy preview modal has the plain title');
     const legacyBox = { children: ui.lastModal.children };
-    ok(await waitText(legacyBox, 'No routing profile is assigned'),
-        'status: legacy preview explains the full-tunnel mode');
-    ok(await waitText(legacyBox, 'legacy.example'),
-        'status: legacy preview lists the do-not-bypass rules');
+    ok(await waitText(legacyBox, 'No routing profile is assigned, so traffic goes out directly.'),
+        'status: no-profile preview explains the direct-by-default state');
+    ok(await waitText(legacyBox, 'traffic goes out directly'),
+        'status: no-profile preview states the direct verdict');
+
+    // An assigned profile with an unrecognized mode falls back the same
+    // way in tun mode (direct by default): the facts row must not claim
+    // a full tunnel.
+    const unknownModeStatus = Object.assign({}, canned.status(), {
+        routing_profile: 'Default', routing_mode: '', vpn_mode: 'selective'
+    });
+    const unknownModeTree = statusView.render(unknownModeStatus);
+    ok(hasText(unknownModeTree, 'Direct — unknown profile mode'),
+        'status: an unrecognized profile mode renders the direct-by-default facts row');
+    ok(!hasText(unknownModeTree, 'Everything through VPN'),
+        'status: an unrecognized profile mode in tun mode is not described as a full tunnel');
 
     // ===== log.js =====
     console.log('== log.js');

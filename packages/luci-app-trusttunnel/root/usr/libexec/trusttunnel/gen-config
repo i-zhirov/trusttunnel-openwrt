@@ -11,9 +11,13 @@
 # The routing profile resolution mirrors the GUI: the assigned profile
 # is resolved by name into routing_profile.* records. A bypass-mode
 # profile tunnels only its vpn_rules; a vpn-mode profile tunnels
-# everything except its bypass_rules; anything else (no assignment, a
-# stale name, an unknown mode) falls back to the legacy domains.direct
-# list with the general mode.
+# everything except its bypass_rules. Anything else (no assignment, a
+# stale name, an unknown mode) falls back to the direct-by-default
+# rule in tun mode: selective mode with nothing tunneled, so traffic
+# goes out directly unless explicitly routed. Proxy mode keeps the
+# legacy general+domains.direct fallback: pointing an app at the SOCKS
+# listener IS the explicit routing there, so the proxy keeps tunneling
+# everything except the legacy direct list.
 #
 # The operation mode (main.mode, default tun) picks the listener block:
 # tun mode emits [listener.tun] with the routing owned by the package,
@@ -66,7 +70,7 @@ fi
 
 # Resolve the routing profile for vpn_mode and the exclusion list. The
 # mode is consulted only when a profile is assigned by name; any other
-# situation takes the legacy branch.
+# situation takes the fallback branch.
 tt_profile=$(tt_get endpoint.routing_profile)
 tt_mode=
 if [ -n "$tt_profile" ] && [ "$tt_profile" = "$(tt_get routing_profile.name)" ]; then
@@ -82,8 +86,19 @@ case $tt_mode in
         tt_exclusions_key=routing_profile.bypass_rules
         ;;
     *)
-        tt_vpn_mode=general
-        tt_exclusions_key=domains.direct
+        # The direct-by-default fallback: no profile (or a stale name or
+        # an unknown mode) must not sweep traffic into the tunnel. In tun
+        # mode nothing is routed unless a profile explicitly says so — an
+        # absent vpn_rules key yields the empty exclusions list. In proxy
+        # mode the app itself is the explicit routing, so the legacy
+        # full-tunnel semantics (everything except domains.direct) stay.
+        if [ "$(tt_get main.mode)" = "proxy" ]; then
+            tt_vpn_mode=general
+            tt_exclusions_key=domains.direct
+        else
+            tt_vpn_mode=selective
+            tt_exclusions_key=routing_profile.vpn_rules
+        fi
         ;;
 esac
 
