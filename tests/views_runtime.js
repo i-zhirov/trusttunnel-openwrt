@@ -108,12 +108,18 @@ const dom = {
 // the configuration object. The data lives in state.values; sections()
 // and get() read it.
 const uciData = {
-    main:     { '.type': 'main', '.name': 'main', enabled: '1', log_level: 'info', mode: 'tun' },
-    endpoint: { '.type': 'endpoint', '.name': 'endpoint',
+    main:     { '.type': 'main', '.name': 'main', enabled: '1', log_level: 'info', mode: 'tun',
+                endpoint: 'Default' },
+    endpoint: { '.type': 'endpoint', '.name': 'endpoint', name: 'Default',
                 hostname: 'kz.hexbrains.com', address: ['kz.hexbrains.com:443'],
                 username: 'iceman', password: 'secret', protocol: 'http2',
                 anti_dpi: '0', post_quantum: '1', skip_verification: '0',
                 has_ipv6: '1', routing_profile: 'Test' },
+    cfg3:     { '.type': 'endpoint', '.name': 'cfg3', name: 'Backup',
+                hostname: 'backup.example.com', address: ['backup.example.com:443'],
+                username: 'backup', password: 'backuppass', protocol: 'http2',
+                anti_dpi: '0', post_quantum: '1', skip_verification: '0',
+                has_ipv6: '1', routing_profile: '' },
     network:  { '.type': 'network', '.name': 'network', mtu: '1350', table: '880',
                 fwmark: '0x9527', blackhole_on_down: '1', include_router_traffic: '0' },
     proxy:    { '.type': 'proxy', '.name': 'proxy', address: '127.0.0.1:1080',
@@ -226,11 +232,13 @@ const canned = {
             enabled: true, running: true, mode: 'tun',
             device: 'tun0', device_up: true,
             rule: true, table: true, nft: true,
+            server: 'Default',
             endpoint_hostname: 'kz.hexbrains.com',
             addresses: ['kz.hexbrains.com:443'],
             client_installed: true, routing_profile: 'Test',
             routing_mode: 'bypass', vpn_mode: 'selective',
-            proxy_address: null, listener_up: null
+            proxy_address: null, listener_up: null,
+            rx_bytes: 1048576, tx_bytes: 524288
         };
     },
     service: function () { return { code: 0 }; },
@@ -309,7 +317,11 @@ const ui = {
     showModal: function (title, children) { ui.lastModal = { title: title, children: children }; },
     hideModal: function () {},
     addNotification: function () {},
-    createHandlerFn: function (self, fn) { return fn; }
+    createHandlerFn: function (self, fn) {
+        if (typeof fn === 'string')
+            fn = self[fn];
+        return fn.bind(self);
+    }
 };
 
 const pollTasks = [];
@@ -352,6 +364,12 @@ function findButtons(node) {
     return out;
 }
 
+function findInputs(node) {
+    const out = [];
+    walk(node, n => { if (n.tag === 'input') out.push(n); });
+    return out;
+}
+
 function click(buttonNode) {
 	return Promise.resolve(buttonNode.attrs.click && buttonNode.attrs.click());
 }
@@ -390,6 +408,13 @@ async function main() {
     // The client log is its own view now (log.js); the status page only
     // polls the verdict and the facts.
     ok(!hasText(statusTree, 'Client log'), 'status: the client log moved to its own view');
+    // The control row is Start / Stop / Preview rules: the restart verb
+    // is deliberately absent (from the UI it is stop + start).
+    const statusButtons = findButtons(statusTree).map(b => String(b.children[0]));
+    for (const label of ['Start', 'Stop', 'Preview rules'])
+        ok(statusButtons.indexOf(label) !== -1, 'status: ' + label + ' button present');
+    ok(statusButtons.indexOf('Restart service') === -1,
+        'status: no restart button (it would duplicate Stop + Start)');
     // The verdict and facts boxes render their content immediately
     // (E('div', {}, node) passes the node as a child — the bare
     // two-argument form treats it as attributes), and the poll refreshes
@@ -401,9 +426,40 @@ async function main() {
     ok(hasText(statusTree, 'State'), 'status: facts table has a State row');
     ok(hasText(statusTree, 'working'), 'status: State row says working');
     ok(hasText(statusTree, 'Server'), 'status: facts table has a Server row');
-    ok(hasText(statusTree, 'kz.hexbrains.com'), 'status: Server row shows the hostname');
+    ok(hasText(statusTree, 'Default — kz.hexbrains.com'),
+        'status: Server row names the active server with the hostname');
     ok(hasText(statusTree, 'Profile Test — bypass, only the VPN rules are tunneled'),
         'status: Mode row shows the Test bypass profile');
+    // The traffic row renders the cumulative counters; the rates are the
+    // poll delta, so they only appear once a later snapshot exists (the
+    // test cannot wait 0.5 s, so it pins the totals, which are
+    // deterministic from the canned counters).
+    ok(hasText(statusTree, 'Traffic'), 'status: facts table has a Traffic row');
+    ok(hasText(statusTree, 'Total 1.0 MiB down, 512.0 KiB up'),
+        'status: Traffic row shows the cumulative totals');
+
+    // Without counters (proxy mode without the meter, tun mode without a
+    // device yet) the traffic row is hidden, not blank.
+    const noCountersStatus = Object.assign({}, canned.status(), {
+        rx_bytes: null, tx_bytes: null
+    });
+    const noCountersTree = statusView.render(noCountersStatus);
+    ok(!hasText(noCountersTree, 'Traffic'),
+        'status: no Traffic row without counters');
+
+    // Re-entering the view starts the traffic baseline fresh: the rates
+    // are poll deltas, so a baseline from a previous visit would paint
+    // a rate averaged over the whole away interval. Simulate 10 minutes
+    // of absence with a faked clock and a fresh load().
+    const realNow = Date.now;
+    Date.now = function () { return realNow() + 600000; };
+    const reentryData = await statusView.load();
+    const reentryTree = statusView.render(Object.assign({}, canned.status(), {
+        rx_bytes: 11534336, tx_bytes: 5767168
+    }));
+    Date.now = realNow;
+    ok(hasText(reentryTree, 'Down —') && hasText(reentryTree, 'Up —'),
+        'status: a re-entered view shows placeholder rates, not a stale average');
 
     // Preview rules: the button opens the modal for the assigned profile
     // (Test, bypass mode) and checks every VPN rule against the backend
@@ -465,6 +521,30 @@ async function main() {
         'log: the poll refreshes the tail in place');
     ok(!hasText(logTree, 'line one'), 'log: the refreshed content replaced the old lines');
 
+    // The export button downloads the whole ring buffer as a text file:
+    // stub the browser download APIs and capture what the handler builds.
+    const exported = { name: null, text: null };
+    global.Blob = function (parts) { exported.text = String(parts.join('')); };
+    global.URL = { createObjectURL: function () { return 'blob:mock'; }, revokeObjectURL: function () {} };
+    global.document = {
+        body: {
+            appendChild: function (a) {
+                exported.name = a.attrs.download;
+                a.click = function () {};
+            },
+            removeChild: function () {}
+        }
+    };
+    const exportBtn = findButtons(logTree).find(b => String(b.children[0]) === 'Export client logs');
+    ok(exportBtn !== null, 'log: Export client logs button present');
+    await click(exportBtn);
+    await Promise.resolve();
+    await Promise.resolve();
+    ok(exported.name !== null && /^trusttunnel-client-\d{8}-\d{6}\.log$/.test(exported.name),
+        'log: the export names the file with a timestamp');
+    ok(exported.text.indexOf('line three') !== -1 && exported.text.indexOf('line four') !== -1,
+        'log: the export carries the log lines');
+
     // ===== settings.js =====
     console.log('== settings.js');
     const settingsView = loadView('settings.js');
@@ -487,10 +567,11 @@ async function main() {
         if (s.type === 'routing_profile')
             profileSecs.push(s);
     ok(profileSecs.length === 1, 'settings: a routing_profile section is created');
-    // The endpoint section is split into inner tabs: map-level tabs key
-    // their panes by the UCI section type, so two sections of the same
-    // type would collide; section-level tabs use their own names. The
-    // routing profile picker lives on the General (main) tab.
+    // The endpoint sections are repeatable and split into inner tabs:
+    // map-level tabs key their panes by the UCI section type, so two
+    // sections of the same type would collide; section-level tabs use
+    // their own names. Every server carries a unique name, its own
+    // routing profile and its own DNS upstreams.
     const endpointSec = form_lastMap.sections.find(s => s.type === 'endpoint');
     ok(endpointSec && endpointSec.tabs.length === 2 &&
         endpointSec.tabs[0].name === 'connection' && endpointSec.tabs[1].name === 'security',
@@ -498,27 +579,28 @@ async function main() {
     ok(endpointSec && endpointSec.options.length > 0 &&
         endpointSec.options.every(o => o.tab === 'connection' || o.tab === 'security'),
         'settings: every endpoint option lives on an inner tab');
-    const rpSec = form_lastMap.sections.find(s =>
-        s.options.some(o => o.name === 'routing_profile'));
-    const rpOpt = rpSec && rpSec.options.find(o => o.name === 'routing_profile');
+    ok(endpointSec && endpointSec.options.some(o => o.name === 'name'),
+        'settings: every server carries a unique name field');
+    const rpOpt = endpointSec && endpointSec.options.find(o => o.name === 'routing_profile');
     ok(rpOpt && rpOpt.values.indexOf('Default') !== -1 && rpOpt.values.indexOf('Test') !== -1,
         'settings: the routing profile select lists Default and Test');
-    // The Versions tab is a NamedSection of the UI-only 'about' type
-    // (map-level tabs key panes by the section type, so the section must
-    // exist for the tab to render its rows).
-    const aboutSec = form_lastMap.sections.find(s => s.type === 'about');
-    ok(aboutSec && aboutSec.title === 'Versions',
-        'settings: the Versions tab section is created');
-    ok(aboutSec && [ '_package', '_client_package', '_client' ].every(n =>
-        aboutSec.options.some(o => o.name === n)),
-        'settings: the Versions section carries the three version rows');
-    ok(hasText(settingsTree, 'Versions'), 'settings: the Versions tab title renders');
+    ok(rpOpt && rpOpt.values.indexOf('') !== -1,
+        'settings: the routing profile select offers the none option');
+    ok(endpointSec && endpointSec.options.some(o => o.name === 'dns_upstream'),
+        'settings: the DNS upstreams live in the server form');
+    const advSec = form_lastMap.sections.find(s => s.type === 'network');
+    ok(advSec && !advSec.options.some(o => o.name === 'dns_upstream'),
+        'settings: the Advanced tab no longer writes the endpoint DNS list');
 
-    // The operation mode picker lives on the General tab and the SOCKS
-    // listener settings on their own Proxy tab.
+    // The operation mode picker and the ACTIVE server picker live on the
+    // General tab, the SOCKS listener settings on their own Proxy tab.
     const mainSec = form_lastMap.sections.find(s => s.type === 'main');
     ok(mainSec && mainSec.options.some(o => o.name === 'mode'),
         'settings: the operation mode picker exists on General');
+    const actOpt = mainSec && mainSec.options.find(o => o.name === 'endpoint');
+    ok(actOpt && actOpt.values.indexOf('Default') !== -1 &&
+        actOpt.values.indexOf('Backup') !== -1,
+        'settings: the active server picker lists every saved server');
     const proxySec = form_lastMap.sections.find(s => s.type === 'proxy');
     ok(proxySec && proxySec.options.some(o => o.name === 'address') &&
         proxySec.options.some(o => o.name === 'username') &&
@@ -526,7 +608,10 @@ async function main() {
         'settings: the proxy section exposes address and authentication');
 
     // Import flow: open the modal, paste a config, press Import, verify the
-    // values land in pending UCI only (uci.set recorded, nothing else).
+    // values land in pending UCI only (uci.set recorded, nothing else). The
+    // handler is invoked without a section id here (the button always
+    // passes one), so it falls back to the ACTIVE server — in the mock the
+    // section named Default, whose id is 'endpoint'.
     settingsView.handleImport();
     const modal = ui.lastModal;
     ok(modal && modal.title === 'Import server settings', 'settings: Import modal opens');
@@ -543,9 +628,28 @@ async function main() {
     // uci.set records [sid, opt, val]
     const importSet = uciSets.find(c => c[0] === 'endpoint' && c[1] === 'hostname');
     ok(importSet && importSet[2] === 'import.example.com',
-        'settings: Import applies the hostname to pending UCI');
+        'settings: Import applies the hostname to the active server');
     ok(uciSets.some(c => c[0] === 'endpoint' && c[1] === 'address'),
-        'settings: Import applies the address list to pending UCI');
+        'settings: Import applies the address list to the active server');
+
+    // With several saved servers the import lands in the server whose
+    // Import button was pressed: the handler receives that server's
+    // section id and must not touch the active one. The canned import
+    // result is fixed, so only the target section is asserted.
+    uciSets.length = 0;
+    settingsView.handleImport(null, 'cfg3');
+    let m2 = ui.lastModal, ta2 = null, btn2 = null;
+    walk(m2.children, n => {
+        if (n.tag === 'textarea') ta2 = n;
+        if (n.tag === 'button' && hasText(n, 'Import')) btn2 = n;
+    });
+    ta2.value = 'hostname = "other.example.com"\naddresses = ["other.example.com:443"]\n';
+    await click(btn2);
+    await Promise.resolve();
+    ok(uciSets.some(c => c[0] === 'cfg3' && c[1] === 'hostname'),
+        'settings: the import targets the server instance that owns the button');
+    ok(!uciSets.some(c => c[0] === 'endpoint'),
+        'settings: the other servers are left untouched');
 
     // A pending import_config shows a loading state: the Import button is
     // disabled and spins until the backend answers, then applies the
@@ -576,31 +680,77 @@ async function main() {
     console.log('== diagnostics.js');
     const diagView = loadView('diagnostics.js');
     const diagTree = diagView.render();
-    // the render returns E('div', cbi-map, [h2, 4 sections]) — the variadic
+    // the render returns E('div', cbi-map, [h2, 1 section]) — the variadic
     // regression would drop everything after the h2 (children.length === 1)
     eq(diagTree.tag, 'div', 'diagnostics: root is a div');
-    eq(diagTree.children.length, 5, 'diagnostics: root has h2 + 4 sections');
+    eq(diagTree.children.length, 2, 'diagnostics: root has h2 + 1 section');
     const diagButtons = findButtons(diagTree).map(b => String(b.children[0]));
-    for (const label of ['Re-run checks', 'Run checks', 'Ping server', 'Compare addresses'])
+    for (const label of ['Run checks', 'Copy report'])
         ok(diagButtons.indexOf(label) !== -1, 'diagnostics: ' + label + ' button present');
-    // the diagnose call resolves asynchronously; let the microtasks run
+    // The report serializes the last run; with the chain on demand there
+    // is nothing to copy before the first run, so the button starts
+    // disabled and enables only after a successful run.
+    const copyBtn = findButtons(diagTree).find(b => String(b.children[0]) === 'Copy report');
+    ok(copyBtn && copyBtn.attrs.disabled !== undefined,
+        'diagnostics: Copy report starts disabled');
+    // the chain runs on demand: rendering alone must not call diagnose
+    ok(hasText(diagTree, 'not run yet'), 'diagnostics: nothing runs until Run checks is pressed');
+    ok(rpcCalls.indexOf('diagnose') === -1, 'diagnostics: no diagnose call on render');
+    // run the chain: the diagnose call resolves asynchronously; let the
+    // microtasks run
+    const diagRunBtn = findButtons(diagTree).find(b => String(b.children[0]) === 'Run checks');
+    await click(diagRunBtn);
     await Promise.resolve();
     await Promise.resolve();
     ok(hasText(diagTree, 'everything checks out'), 'diagnostics: verdict banner renders');
     ok(hasText(diagTree, 'Server address'), 'diagnostics: the checks table renders');
+    ok(copyBtn.disabled === false, 'diagnostics: Copy report enables after a run');
+
+    // ===== tools.js =====
+    console.log('== tools.js');
+    const toolsView = loadView('tools.js');
+    const toolsTree = toolsView.render();
+    eq(toolsTree.tag, 'div', 'tools: root is a div');
+    eq(toolsTree.children.length, 4, 'tools: root has h2 + 3 sections');
+    const toolsButtons = findButtons(toolsTree).map(b => String(b.children[0]));
+    for (const label of ['Run checks', 'Ping server', 'Compare addresses'])
+        ok(toolsButtons.indexOf(label) !== -1, 'tools: ' + label + ' button present');
+    ok(hasText(toolsTree, 'Check a domain') && hasText(toolsTree, 'Ping the server') &&
+        hasText(toolsTree, 'Compare the external address'),
+        'tools: the three tool sections render');
+    // run the domain check tool (fill the input first, then press Run)
+    const domainInput = findInputs(toolsTree).find(i => i.attrs && i.attrs.placeholder === 'youtube.com');
+    domainInput.value = 'telegram.org';
+    const domainBtn = findButtons(toolsTree).find(b => String(b.children[0]) === 'Run checks');
+    await click(domainBtn);
+    ok(await waitText(toolsTree, 'assigned profile in VPN mode'),
+        'tools: the domain check renders the verdict');
     // run the Ping tool
-    const pingBtn = findButtons(diagTree).find(b => String(b.children[0]) === 'Ping server');
+    const pingBtn = findButtons(toolsTree).find(b => String(b.children[0]) === 'Ping server');
     await click(pingBtn);
-    await Promise.resolve();
-    ok(hasText(diagTree, 'kz.hexbrains.com') && hasText(diagTree, '95'),
-        'diagnostics: the ping tool renders results');
+    ok(await waitText(toolsTree, 'kz.hexbrains.com') && hasText(toolsTree, '95'),
+        'tools: the ping tool renders results');
     // run the Compare tool
-    const cmpBtn = findButtons(diagTree).find(b => String(b.children[0]) === 'Compare addresses');
+    const cmpBtn = findButtons(toolsTree).find(b => String(b.children[0]) === 'Compare addresses');
     await click(cmpBtn);
-    await Promise.resolve();
-    await Promise.resolve();
-    ok(hasText(diagTree, '104.238.24.115') && hasText(diagTree, '178.46.214.219'),
-        'diagnostics: the address compare tool renders both egresses');
+    ok(await waitText(toolsTree, '104.238.24.115') && hasText(toolsTree, '178.46.214.219'),
+        'tools: the address compare tool renders both egresses');
+
+    // ===== versions.js =====
+    console.log('== versions.js');
+    const versionsView = loadView('versions.js');
+    const versionsData = await versionsView.load();
+    const versionsTree = versionsView.render(versionsData);
+    eq(versionsTree.tag, 'div', 'versions: root is a div');
+    eq(versionsTree.children.length, 2, 'versions: root has h2 + 1 section');
+    ok(hasText(versionsTree, 'TrustTunnel package') && hasText(versionsTree, 'Client package') &&
+        hasText(versionsTree, 'Client binary'),
+        'versions: the three version rows render');
+    ok(hasText(versionsTree, '1.0.20-r1') && hasText(versionsTree, '1.1.5-r1') &&
+        hasText(versionsTree, '1.1.5'),
+        'versions: the backend values render');
+    ok(!hasText(versionsTree, 'not installed'),
+        'versions: installed packages show no fallback text');
 
     // ===== summary =====
     console.log('== ' + total + ' assertions, ' + failed + ' failed');

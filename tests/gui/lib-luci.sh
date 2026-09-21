@@ -14,14 +14,17 @@
 #                          must not fail the gate)
 #   tt_gui_fetch_luci <cache>
 #                          one fetch attempt: download the tarball and
-#                          extract modules/luci-base/htdocs into <cache>
+#                          extract the luci-base htdocs AND the bootstrap
+#                          theme htdocs into <cache>. The theme carries the
+#                          cascade.css/mobile.css production pages link, so
+#                          the dev server renders with the real styling.
 #   tt_gui_ensure_luci <cache>
-#                          fetch when the cache is missing or carries another
-#                          ref (a .ref marker); return 0 when the fetch
-#                          succeeded or was not needed, 1 when it failed.
-#                          The caller then verifies the expected files
-#                          itself (run.sh FAILs on a broken cache, dev.sh
-#                          errors out).
+#                          fetch when the cache is missing, carries another
+#                          ref (a .ref marker) or lacks the theme css (older
+#                          cache layouts); return 0 when the fetch succeeded
+#                          or was not needed, 1 when it failed. The caller
+#                          then verifies the expected files itself (run.sh
+#                          FAILs on a broken cache, dev.sh errors out).
 #
 # The ref is the LuCI generation the views target (openwrt-25.12 branch).
 # The loader (luci.js) and the module APIs move between generations;
@@ -48,24 +51,29 @@ tt_gui_retry() {
 
 # tt_gui_fetch_luci <cache> — one attempt: download to a temp file first,
 # then extract. A pipe would hide a mid-stream curl failure inside tar's
-# exit status.
+# exit status. The theme htdocs extract to
+# <cache>/themes/luci-theme-bootstrap/htdocs, next to the luci-base tree.
 tt_gui_fetch_luci() {
 	_cache=$1
 	curl -fsSL -o "$_cache/luci.tar.gz" "$tt_gui_luci_url" \
 		&& tar -xz -C "$_cache" --strip-components=1 \
-			-f "$_cache/luci.tar.gz" "luci-$TT_GUI_LUCI_REF/modules/luci-base/htdocs"
+			-f "$_cache/luci.tar.gz" \
+			"luci-$TT_GUI_LUCI_REF/modules/luci-base/htdocs" \
+			"luci-$TT_GUI_LUCI_REF/themes/luci-theme-bootstrap/htdocs"
 }
 
-# tt_gui_ensure_luci <cache> — fetch when the cache is missing or stale
-# (.ref marker mismatch). Returns 0 when the resources are in place (fetch
-# succeeded or was not needed), 1 when the fetch failed.
+# tt_gui_ensure_luci <cache> — fetch when the cache is missing, stale (.ref
+# marker mismatch) or predates the theme fetch (no cascade.css).
+# Returns 0 when the resources are in place (fetch succeeded or was not
+# needed), 1 when the fetch failed.
 tt_gui_ensure_luci() {
 	_cache=$1
 
 	mkdir -p "$_cache"
-	if [ ! -f "$_cache/.ref" ] || [ "$(cat "$_cache/.ref")" != "$TT_GUI_LUCI_REF" ]; then
+	if [ ! -f "$_cache/.ref" ] || [ "$(cat "$_cache/.ref")" != "$TT_GUI_LUCI_REF" ] ||
+		[ ! -f "$_cache/themes/luci-theme-bootstrap/htdocs/luci-static/bootstrap/cascade.css" ]; then
 		echo "  fetching luci-base @ $TT_GUI_LUCI_REF ..."
-		rm -rf "$_cache/modules"
+		rm -rf "$_cache/modules" "$_cache/themes"
 		if ! tt_gui_retry 3 5 tt_gui_fetch_luci "$_cache"; then
 			return 1
 		fi

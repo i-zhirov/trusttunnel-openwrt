@@ -1,4 +1,5 @@
 main.enabled	1
+endpoint.name	Default
 endpoint.hostname	vpn.example.com
 endpoint.address	1.2.3.4:443
 endpoint.username	alice

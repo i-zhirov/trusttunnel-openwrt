@@ -10,23 +10,6 @@ var callDiagnose = rpc.declare({
 	method: 'diagnose'
 });
 
-var callPing = rpc.declare({
-	object: 'luci.trusttunnel',
-	method: 'ping',
-	params: [ 'target' ]
-});
-
-var callProbe = rpc.declare({
-	object: 'luci.trusttunnel',
-	method: 'probe'
-});
-
-var callCheckDomain = rpc.declare({
-	object: 'luci.trusttunnel',
-	method: 'check_domain',
-	params: [ 'domain' ]
-});
-
 var alertClass = {
 	ok: 'success',
 	warn: 'warning',
@@ -65,6 +48,7 @@ var groupTitle = {
 };
 
 var DIAG_TEXT = {
+	'Active server': _('Active server'),
 	'Server address': _('Server address'),
 	'Endpoint credentials': _('Endpoint credentials'),
 	'TLS SNI': _('TLS SNI'),
@@ -78,6 +62,10 @@ var DIAG_TEXT = {
 	'Carrier state': _('Carrier state'),
 	'MTU matches config': _('MTU matches config'),
 	'SOCKS listener': _('SOCKS listener'),
+	'Usage meter': _('Usage meter'),
+	'listener port metered': _('listener port metered'),
+	'no counter rules': _('no counter rules'),
+	'The meter is installed by the init script at start; a failed install leaves the traffic row hidden. Restart the service.': _('The meter is installed by the init script at start; a failed install leaves the traffic row hidden. Restart the service.'),
 	'none — legacy full-tunnel mode': _('none — legacy full-tunnel mode'),
 	'request error': _('request error'),
 	'Marking rule': _('Marking rule'),
@@ -87,6 +75,7 @@ var DIAG_TEXT = {
 	'Server reachable': _('Server reachable'),
 	'Traffic takes the tunnel': _('Traffic takes the tunnel'),
 	'Set the address on the Settings page or import the server config.': _('Set the address on the Settings page or import the server config.'),
+	'Select one of the saved servers as the active one on the Settings page.': _('Select one of the saved servers as the active one on the Settings page.'),
 	'The user name and the password must both be filled in.': _('The user name and the password must both be filled in.'),
 	'Without it the TLS session uses the plain address, which many servers reject.': _('Without it the TLS session uses the plain address, which many servers reject.'),
 	'Assign a routing profile on the Settings page to control what goes through the tunnel.': _('Assign a routing profile on the Settings page to control what goes through the tunnel.'),
@@ -103,10 +92,17 @@ var DIAG_TEXT = {
 	'The device exists but the tunnel is not established yet; that is on the client, not the routing. Open the Client log tab.': _('The device exists but the tunnel is not established yet; that is on the client, not the routing. Open the Client log tab.'),
 	'Check the address and whether the router itself can reach the internet.': _('Check the address and whether the router itself can reach the internet.'),
 	'The tunnel is up, yet traffic is not going through it.': _('The tunnel is up, yet traffic is not going through it.'),
-	'The direct probe followed the tunnel — the marking rules may still carry the output chain from an include_router_traffic=1 configuration, or the router shares its public address with the endpoint. Reload the service, or judge by a LAN client.': _('The direct probe followed the tunnel — the marking rules may still carry the output chain from an include_router_traffic=1 configuration, or the router shares its public address with the endpoint. Reload the service, or judge by a LAN client.'),
+	'The probe that should take the tunnel egressed directly — the client may send it out directly (a stale config or an exclusion match), the marking rules may still carry the output chain from an include_router_traffic=1 configuration, or the router shares its public address with the endpoint. Reload the service, or judge by a LAN client.': _('The probe that should take the tunnel egressed directly — the client may send it out directly (a stale config or an exclusion match), the marking rules may still carry the output chain from an include_router_traffic=1 configuration, or the router shares its public address with the endpoint. Reload the service, or judge by a LAN client.'),
+	'nothing is tunneled by config': _('nothing is tunneled by config'),
+	'The assigned profile runs in bypass mode and its VPN rules are empty: the client sends every connection out directly. Add rules to the profile, or switch it to VPN mode.': _('The assigned profile runs in bypass mode and its VPN rules are empty: the client sends every connection out directly. Add rules to the profile, or switch it to VPN mode.'),
+	'the tunneled rules cannot be probed': _('the tunneled rules cannot be probed'),
+	'The profile tunnels only IP, CIDR or *.domain rules, which a plain HTTPS request cannot reach through the tunnel.': _('The profile tunnels only IP, CIDR or *.domain rules, which a plain HTTPS request cannot reach through the tunnel.'),
+	'the echo services are bypassed by config': _('the echo services are bypassed by config'),
+	'The profile sends the probe services (api.ipify.org, ifconfig.me, icanhazip.com) out directly; the tunnel path cannot be compared from the router.': _('The profile sends the probe services (api.ipify.org, ifconfig.me, icanhazip.com) out directly; the tunnel path cannot be compared from the router.'),
 	'A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.': _('A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.'),
 	'A request bound to the device can fail on a healthy tunnel because the default route lives in the marked table. Judge by a LAN client instead.': _('A request bound to the device can fail on a healthy tunnel because the default route lives in the marked table. Judge by a LAN client instead.'),
 	'unset': _('unset'),
+	'none selected': _('none selected'),
 	'binary missing': _('binary missing'),
 	'not present': _('not present'),
 	'not bound': _('not bound'),
@@ -262,11 +258,13 @@ var renderDiagnose = function (res) {
 var handleDiagnose = function (container) {
 	dom.content(container, E('p', { 'class': 'spinning' }, _('Running checks — this can take up to half a minute…')));
 
-	callDiagnose().then(function (res) {
+	return callDiagnose().then(function (res) {
 		lastDiagnose = res;
 		dom.content(container, renderDiagnose(res));
+		return true;
 	}).catch(function (err) {
 		dom.content(container, E('div', { 'class': 'alert-message danger' }, err.message || String(err)));
+		return false;
 	});
 };
 
@@ -290,103 +288,6 @@ var handleCopyReport = function () {
 	]);
 };
 
-var handleCheckDomain = function (input, container) {
-	var d = input.value.trim();
-
-	if (!d)
-		return;
-
-	dom.content(container, E('p', { 'class': 'spinning' }, _('Checking…')));
-
-	callCheckDomain(d).then(function (res) {
-		if (res.error) {
-			dom.content(container, E('p', res.error));
-			return;
-		}
-
-		var tunnel = res.verdict && res.verdict.indexOf('tunnel') === 0;
-
-		dom.content(container, E('table', { 'class': 'cbi-section-table' }, [
-			E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, _('Normalized')),
-				E('td', { 'class': 'cbi-section-table-cell' }, E('code', res.normalized))
-			]),
-			E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, _('Verdict')),
-				E('td', { 'class': 'cbi-section-table-cell' },
-					E('span', { 'style': 'font-weight:bold; color:' + (tunnel ? '#2e7d32' : '#c62828') + ';' },
-						tunnel ? _('through the tunnel') : _('direct')
-					)
-				)
-			]),
-			E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, _('Why')),
-				E('td', { 'class': 'cbi-section-table-cell' }, res.reason)
-			])
-		]));
-	}).catch(function (err) {
-		dom.content(container, E('p', err.message || String(err)));
-	});
-};
-
-var handlePing = function (container) {
-	dom.content(container, E('p', { 'class': 'spinning' }, _('Pinging…')));
-
-	callPing('').then(function (res) {
-		if (res.error) {
-			dom.content(container, E('p', res.error));
-			return;
-		}
-
-		var rows = [ E('tr', { 'class': 'cbi-section-table-row' }, [
-			E('th', { 'class': 'cbi-section-table-cell' }, _('Host')),
-			E('th', { 'class': 'cbi-section-table-cell' }, _('Loss')),
-			E('th', { 'class': 'cbi-section-table-cell' }, _('min / avg / max'))
-		]) ];
-
-		(res.results || []).forEach(function (r) {
-			rows.push(E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, r.host),
-				E('td', { 'class': 'cbi-section-table-cell' }, r.loss + '%'),
-				E('td', { 'class': 'cbi-section-table-cell' },
-					r.avg === null ? '—' : r.min + ' / ' + r.avg + ' / ' + r.max + ' ms'
-				)
-			]));
-		});
-
-		dom.content(container, E('table', { 'class': 'cbi-section-table' }, rows));
-	}).catch(function (err) {
-		dom.content(container, E('p', err.message || String(err)));
-	});
-};
-
-var handleProbe = function (container) {
-	dom.content(container, E('p', { 'class': 'spinning' }, _('Checking…')));
-
-	callProbe().then(function (res) {
-		var cell = function (entry) {
-			if (entry && entry.ip)
-				return E('code', entry.ip);
-
-			return E('span', { 'style': 'color:#c62828;' },
-				(entry && entry.error) ? entry.error : '');
-		};
-
-		dom.content(container, E('table', { 'class': 'cbi-section-table' }, [
-			E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, _('Through the tunnel')),
-				E('td', { 'class': 'cbi-section-table-cell' }, cell(res.tunnel))
-			]),
-			E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, _('Directly')),
-				E('td', { 'class': 'cbi-section-table-cell' }, cell(res.direct))
-			])
-		]));
-	}).catch(function (err) {
-		dom.content(container, E('p', err.message || String(err)));
-	});
-};
-
 return view.extend({
 	handleSaveApply: null,
 	handleSave: null,
@@ -394,93 +295,50 @@ return view.extend({
 
 	render: function () {
 		var diagnoseBox = E('div');
-		var domainBox = E('div');
-		var pingBox = E('div');
-		var probeBox = E('div');
 
-		var domainInput = E('input', {
-			'class': 'cbi-input-text',
-			'placeholder': 'youtube.com',
-			'style': 'width:16em;'
-		});
+		// The chain walk is slow (it pings and probes) and touches the
+		// network; it runs only when the user presses Run checks. The
+		// 'not run yet' word comes from verdictWord(), the same phrasing
+		// the banner would use for a run that produced no verdict; the
+		// info banner keeps the empty state looking like the verdict
+		// banner instead of stray text.
+		dom.content(diagnoseBox, E('div', { 'class': 'alert-message info' }, verdictWord('')));
 
-		domainInput.addEventListener('keydown', function (ev) {
-			if (ev.keyCode !== 13)
-				return;
-
-			ev.preventDefault();
-			handleCheckDomain(domainInput, domainBox);
-		});
-
-		handleDiagnose(diagnoseBox);
+		// The report serializes the LAST run; with the chain running on
+		// demand there is nothing to copy until the first run finished,
+		// so the button stays disabled until then (a click that silently
+		// did nothing would look broken).
+		var copyBtn = E('button', {
+			'class': 'cbi-button cbi-button-neutral',
+			'disabled': 'disabled',
+			'click': ui.createHandlerFn(this, function () {
+				handleCopyReport();
+			})
+		}, _('Copy report'));
 
 		// Children as an ARRAY: current LuCI's E() (DOM.create) reads only
 		// arguments[2], so variadic children are silently dropped — this
 		// used to render nothing but the page title.
 		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', _('Diagnostics')),
+			E('h2', { 'class': 'cbi-map-title' }, _('Diagnostics')),
 
 			E('div', { 'class': 'cbi-section' }, [
+				E('h3', _('Checks')),
 				E('div', { 'class': 'cbi-section-descr' },
 					_('Checks the whole chain — configuration, prerequisites, service, kernel state and network — and says what to do about anything it finds.')
 				),
 				E('button', {
 					'class': 'cbi-button cbi-button-action',
 					'click': ui.createHandlerFn(this, function () {
-						handleDiagnose(diagnoseBox);
-					})
-				}, _('Re-run checks')),
-				' ',
-				E('button', {
-					'class': 'cbi-button cbi-button-neutral',
-					'click': ui.createHandlerFn(this, function () {
-						handleCopyReport();
-					})
-				}, _('Copy report')),
-				diagnoseBox
-			]),
-
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', _('Check a domain')),
-				E('div', { 'class': 'cbi-section-descr' },
-					_('The tool to reach for when a particular site does not work: it says whether that domain goes through the tunnel, and why.')
-				),
-				domainInput,
-				E('button', {
-					'class': 'cbi-button cbi-button-action',
-					'click': ui.createHandlerFn(this, function () {
-						handleCheckDomain(domainInput, domainBox);
+						handleDiagnose(diagnoseBox).then(function (ok) {
+							if (ok)
+								copyBtn.disabled = false;
+						});
 					})
 				}, _('Run checks')),
-				domainBox
-			]),
-
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', _('Ping the server')),
-				E('div', { 'class': 'cbi-section-descr' },
-					_('Loss and round-trip time for every configured address.')
-				),
-				E('button', {
-					'class': 'cbi-button cbi-button-action',
-					'click': ui.createHandlerFn(this, function () {
-						handlePing(pingBox);
-					})
-				}, _('Ping server')),
-				pingBox
-			]),
-
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', _('Compare the external address')),
-				E('div', { 'class': 'cbi-section-descr' },
-					_('Shows the address seen through the tunnel next to the one seen directly. The same address in both means traffic is not using the tunnel.')
-				),
-				E('button', {
-					'class': 'cbi-button cbi-button-action',
-					'click': ui.createHandlerFn(this, function () {
-						handleProbe(probeBox);
-					})
-				}, _('Compare addresses')),
-				probeBox
+				' ',
+				copyBtn,
+				diagnoseBox
 			])
 		]);
 	}

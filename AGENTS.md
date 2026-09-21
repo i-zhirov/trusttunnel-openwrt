@@ -33,7 +33,8 @@ packages/
   luci-app-trusttunnel/       The LuCI app package (feed-style root/ tree)
     Makefile                  OpenWrt package metadata
     htdocs/luci-static/resources/view/trusttunnel/
-      settings.js status.js log.js diagnostics.js   LuCI client-side views
+      settings.js status.js log.js diagnostics.js tools.js versions.js
+                                                                        LuCI client-side views
     root/etc/config/trusttunnel              Default UCI config
     root/etc/init.d/trusttunnel              procd service script
     root/etc/uci-defaults/40-luci-trusttunnel  First-boot setup
@@ -140,16 +141,17 @@ selects how the tunnel is delivered:
   `gen-config` must never emit both blocks.
 
 The mode gates: `gen-config` (listener block), the init script's
-`mode_is_proxy()` (skip `routing up`/attach in `start_service`, skip the
-routing reload in `apply_settings`), the `routing` helper (refuses `up` in
-proxy mode — defense in depth), the hotplug hook (exits early), the
-backend (`status.mode`/`proxy_address`/`listener_up`, `probe` via
-`curl --socks5-hostname`, `diagnose`'s kernel group and tunnel check) and
-the views (mode picker, Proxy tab, verdict/facts). `main.mode` maps to
-`restart_full` and `proxy.*` to `restart` in the change classifier; the
-listener state is detected through `/proc/net/tcp{,6}` (local port in hex,
-anchored grep — the fixed-width sl column makes plain field splits
-unreliable).
+`mode_is_proxy()` (skip `routing up`/attach in `start_service`, install
+the usage meter instead; skip the routing reload in `apply_settings`),
+the `routing` helper (refuses `up` in proxy mode and `meter` in tun mode
+— defense in depth, the two rulesets never coexist), the hotplug hook
+(exits early), the backend (`status.mode`/`proxy_address`/`listener_up`,
+`probe` via `curl --socks5-hostname`, `diagnose`'s kernel group and
+tunnel check) and the views (mode picker, Proxy tab, verdict/facts).
+`main.mode` maps to `restart_full` and `proxy.*` to `restart` in the
+change classifier; the listener state is detected through
+`/proc/net/tcp{,6}` (local port in hex, anchored grep — the fixed-width
+sl column makes plain field splits unreliable).
 
 ### Routing profiles (the core feature)
 
@@ -170,7 +172,7 @@ Domain matching happens inside the client (by SNI).
 
 ### Kernel routing state (`/usr/libexec/trusttunnel/routing`)
 
-Subcommands: `dump | up | attach | reattach | detach | down | status`.
+Subcommands: `dump | up | meter | attach | reattach | detach | down | status`.
 - `up`: blackhole default routes (metric 1000) in table 880 → fwmark rule
   (priority 30820) → the nft ruleset (table `inet trusttunnel`, sets
   `tt_endpoint4/6`, a prerouting chain that marks traffic arriving on a
@@ -178,9 +180,20 @@ Subcommands: `dump | up | attach | reattach | detach | down | status`.
   ranges with fwmark `0x9527`). Endpoint addresses are resolved BEFORE
   the ruleset lands (marked traffic would otherwise blackhole DNS).
   `up` refuses to run when the records declare proxy mode.
+- `meter`: the proxy-mode usage meter — byte counters on the SOCKS
+  listener port in the same table: `tt_meter_in` (prerouting,
+  `tcp dport <port> counter`, requests into the listener = tx) and
+  `tt_meter_out` (output, `tcp sport <port> counter`, responses = rx).
+  Port-only matching works for localhost and LAN-exposed listeners
+  alike; a non-numeric port is refused. `meter` refuses in tun mode (the
+  mirror of `up` refusing proxy mode — the two rulesets never coexist).
+  `down` removes it like any other table content.
 - `attach`: point table 880's default route at the client tun device
   (metric 1) and record the device name in `$OUT_DIR/device`.
 - `down`: remove everything; the client's device is never deleted.
+- `status`: additionally reports `meter up` / `meter rx <bytes>` /
+  `meter tx <bytes>` while both counter rules exist (a stale table after
+  a port change reports no meter).
 - Overrides for tests: `TT_IP`, `TT_NFT`, `TT_LIBDIR`.
 
 ### Service lifecycle (`/etc/init.d/trusttunnel`)
@@ -193,8 +206,10 @@ procd service, `USE_PROCD=1`, `START=95`, `STOP=10`. Notable behaviors:
   the tunnel runs on demand while "start on boot" is off (and stays off
   at the next boot). Then the client binary, the trust store, records +
   config regeneration, a wait for a default route and for the clock to
-  catch up, `routing up` (tun mode only), the client with `procd` and an
-  attach of an already-existing tun device (tun mode only).
+  catch up, `routing up` (tun mode only; proxy mode installs the usage
+  meter instead — a failed meter only warns, it must not take the
+  tunnel down), the client with `procd` and an attach of an
+  already-existing tun device (tun mode only).
 - `reload_service` → `apply_settings`: classifies the diff between the
   current records and the new export (`changed_keys` →
   `classify_change`), producing `noop | reload | restart | restart_full`,
@@ -218,8 +233,7 @@ First-boot / reinstall setup: dedups the `trusttunnel` firewall zone and
 forwarding, creates them when missing (zone bound to `tun+`, `lan →
 trusttunnel` forwarding), migrates old concrete `tt0` bindings to `tun+`,
 seeds the Default routing profile (migrating `domains.direct` into its
-bypass rules), creates the UI-only `about` section that keys the Versions
-tab on the Settings page, registers the rc.d link and clears LuCI caches.
+bypass rules), registers the rc.d link and clears LuCI caches.
 Idempotent; also run immediately by `install.sh`.
 
 ### rpcd backend (`/usr/share/rpcd/ucode/luci.trusttunnel`)
@@ -229,7 +243,10 @@ Exposes `luci.trusttunnel` RPC methods (the ACL grants read on
 `service import_config`):
 
 - `status` — service state, device, rule/table/nft flags, endpoint,
-  routing profile and effective `vpn_mode`.
+  routing profile and effective `vpn_mode`, plus the cumulative usage
+  counters (`rx_bytes`/`tx_bytes`, null when no counters exist: the tun
+  device's `/proc/net/dev` in tun mode, the meter rules in proxy mode;
+  the view diffs consecutive polls for rates).
 - `versions` — what is installed, read-only: the luci app and client
   package versions as apk/opkg report them (apk on 25.12+, opkg
   fallback for 22.03–24.10), plus the client binary's own `--version`;
@@ -252,29 +269,34 @@ file compiles under the pinned ucode.
 
 ### LuCI views
 
-- `status.js` — verdict banner, facts (state/mode/server/proxy address),
-  Start/Stop/Restart buttons, a rules preview for the assigned profile
-  (or the legacy `domains.direct` list without one) that checks each
-  effective rule via `check_domain`; polls every 10s. The verdict is
-  mode-aware: the "working" gate is `device_up` in tun mode and
-  `listener_up` in proxy mode.
+- `status.js` — verdict banner, facts (state/mode/server/proxy address,
+  traffic), Start/Stop buttons and a rules preview for the assigned
+  profile (or the legacy `domains.direct` list without one) that checks
+  each effective rule via `check_domain`; polls every 10s. There is no
+  restart button: from the UI it is stop + start, and the
+  routing-preserving restart is internal to the settings apply path.
+  The verdict is mode-aware: the "working" gate is `device_up` in tun
+  mode and `listener_up` in proxy mode. The traffic row shows the
+  poll-delta rates (a 10 s average) and the cumulative totals from
+  `rx_bytes`/`tx_bytes`; a counter reset (reconnected tunnel)
+  rebaselines the snapshot, and null counters hide the row.
 - `log.js` — a tail of the system-log lines written by the client and
   the service (the `log` RPC), fetched during `load()` so the first
   paint already shows it, then refreshed in place by a 10 s poll; the
-  status verdicts and the backend diagnose hints point users here.
+  status verdicts and the backend diagnose hints point users here. The
+  Export client logs button re-fetches the whole ring buffer (5000
+  lines) and downloads it as a timestamped text file via a Blob —
+  purely client-side, no backend or ACL surface.
 - `settings.js` — a single tabbed `form.Map` whose sections become tabs
-  (General, Server, Proxy, Routing profiles, Advanced, Versions), plus
-  the Import… modal that calls `import_config` and applies results to
+  (General, Server, Proxy, Routing profiles, Advanced), plus the
+  Import… modal that calls `import_config` and applies results to
   pending UCI (nothing is written until Save & Apply). The endpoint
   section splits into Connection and Security inner tabs
   (`s.tab`/`s.taboption`) — map-level tabs key panes by the UCI section
   type, so two sections of the same type would collide. The General tab
   carries the operation-mode picker (`main.mode`), the Proxy tab the
   SOCKS5 listener settings (address + optional user/pass pair, validated
-  both-or-neither). The Versions tab is a `NamedSection` of the UI-only
-  `about` section type: it carries no UCI options, its DummyValue rows
-  read the `versions` RPC result, and uci-defaults creates the section
-  on installs that predate it. Extra tools: a read-only service line on
+  both-or-neither). Extra tools: a read-only service line on
   General (via the `status` RPC), a Test connection modal on Server
   (`ping`), and a per-profile rule preview (`check_domain`) whose
   verdicts only apply to the assigned profile. The routing profile
@@ -285,19 +307,28 @@ file compiles under the pinned ucode.
   result is no data source.
 - `diagnostics.js` — renders the diagnose checks grouped and ordered
   (config → prereq → service → kernel → network), problems first with a
-  toggle for the rest, plus domain-check, ping and address-compare tools
-  and a Copy report button that serializes the last run into a textarea.
+  toggle for the rest, plus a Copy report button that serializes the last
+  run into a textarea. The chain runs only on demand (Run checks).
   Backend strings are translated through the `DIAG_TEXT` map; new
   backend strings must be added there to be translatable.
+- `tools.js` — the ad-hoc helpers that moved off the Diagnostics page:
+  the domain verdict check, the endpoint ping and the tunnel-vs-direct
+  address comparison. Each tool runs only on demand.
+- `versions.js` — the Versions tab (moved out of the Settings page): a
+  read-only page listing the installed TrustTunnel package, client
+  package and client binary versions from the `versions` RPC. A missing
+  package shows "not installed", a failed RPC "unavailable".
 
 ## Packages and versioning
 
 ### `luci-app-trusttunnel/Makefile`
 
-- `PKG_VERSION` comes from `git describe --tags --abbrev=0` (tag `vX.Y.Z`
-  → version `X.Y.Z`), falling back to the last released version (currently
-  `1.0.26`). The fallback must track the latest release — the release
-  workflow fails a tag build whose artifact does not carry the tag.
+- `PKG_VERSION` is a plain constant in the Makefile — the version is set
+  by the release PR itself, not derived from a git tag (the release
+  workflow fails a build whose artifact does not carry `PKG_VERSION`,
+  and its version gate refuses a version not strictly higher than the
+  last released one). Keep it a literal `PKG_VERSION:=X.Y.Z` assignment:
+  the release workflow reads it with `sed`.
 - `LUCI_DEPENDS:=+trusttunnel-client +luci-base +ip-full +nftables +curl
   +ucode-mod-math`. **Do not add `kmod-tun` or `ca-bundle` here**: they
   belong on `trusttunnel-client`'s own DEPENDS and arrive transitively.
@@ -383,7 +414,10 @@ absent, so the plain suite runs anywhere.
   `goldens/healthy/*.json` (real tun device in a privileged container).
   **Do not edit `tests/backend/mod/luci/trusttunnel.uc`** — it is a copy
   overwritten by the test. Golden file names encode method + args
-  (`golden_call` in the script).
+  (`golden_call` in the script). `TT_REGEN=1` rewrites the goldens from
+  the live output instead of comparing — use it only to land a deliberate
+  backend change, and diff the result (a regen that touches anything
+  beyond the intended files means the backend moved behavior elsewhere).
 - `tests/test_uci_defaults.sh` — scenario harness running the real
   uci-defaults script in an OpenWrt rootfs container against scratch
   configs (fresh / duplicated / legacy / upgrade / side-effects /
@@ -400,7 +434,14 @@ absent, so the plain suite runs anywhere.
   and traffic contracts (through-tunnel traffic arrives with the
   endpoint's source address, private traffic stays direct, the blackhole
   killswitch swallows marked traffic, install/uci-defaults/reload are
-  idempotent). An early pure-shell `archparse` stage pins the ipk
+  idempotent). The later stages exercise the multiple-server model live:
+  `switch` saves a second endpoint as the Backup server, selects it via
+  `main.endpoint` + reload and asserts the records, client.toml and the
+  traffic follow it (and back), and `migrate` deletes the ACTIVE server's
+  section, asserts the dangling selector stops the service, then runs
+  the uci-defaults script exactly as the boot runs it and asserts the
+  selection is re-pointed at the remaining server, which brings the
+  tunnel back. An early pure-shell `archparse` stage pins the ipk
   arch/version derivation (`tests/integration/ipk-arch.sh`, shared with
   release.yml's opkg assembly) against every matrix arch-name shape — a
   last-underscore split once clipped `mipsel_24kc` to `24kc`, and the
@@ -476,8 +517,9 @@ Every step is a contract gate; the tree must pass all of them. Locally
 reproducible equivalents:
 
 - Executable bits of shipped scripts must be `100755` in the index.
-- Tag pushes must not regress the release: new tag's commit must be newer
-  than the previous tag's.
+- Release versioning is PR-gated: the release pipeline's version gate
+  fails a packages/** PR or main push whose app `PKG_VERSION` is not
+  strictly higher than the last released version.
 - `sh tests/run.sh` (includes the node-gated views runtime test, which
   skips without node).
 - `docker build -q -t tt-ucode-gate -f tests/backend/Dockerfile
@@ -514,8 +556,13 @@ same harness against the release's own artifacts.
 
 ## Release pipeline (`.github/workflows/release.yml`)
 
-Triggered by `v*` tag pushes (also builds a GitHub release) and
-`workflow_dispatch` (repos + site only; plain branch CI never publishes).
+Releases are PR-based: the app `PKG_VERSION` in the Makefile IS the
+version, and a release is any PR that bumps it. The workflow runs a
+preview on `packages/**` pull requests — the version gate, the SDK
+builds and the integration verification, never publishing (no secrets,
+so fork PRs are covered) — and publishes on main pushes and
+`workflow_dispatch`: the merge creates the `vX.Y.Z` tag and the GitHub
+release, the repositories and the site.
 
 - `build` — `luci-app-trusttunnel` via `openwrt/gh-action-sdk@v7` on
   25.12.5 (apk) and 22.03.7 (ipk). The SDK is pinned with `VERSION_PATH`
@@ -526,7 +573,8 @@ Triggered by `v*` tag pushes (also builds a GitHub release) and
   `feeds.conf.default` (update them together with the SDK bump).
   `FEED_DIR` must be an absolute path and must contain `.git` (luci.mk
   findrev derives the version from it). `fail-fast: false`; artifact file
-  names must match the tag.
+  names must match the Makefile's `PKG_VERSION` (the assertion runs on
+  every event, PR preview included).
 - `build-client` — the client package per subtarget arch (the full matrix
   is in the workflow; the ipk list is the apk list minus
   `aarch64_cortex-a76`). apk files get an `-<arch>` suffix and an
@@ -576,7 +624,9 @@ Triggered by `v*` tag pushes (also builds a GitHub release) and
   - verification: installs the built repos into fresh rootfs containers
     exactly as `install.sh` sets them up (25.12.0 apk; 23.05.6 and 24.10.8
     opkg) and runs the client `--version`.
-  - GitHub release upload (tag pushes only, single writer).
+  - GitHub release upload (`gh release create`, once per released
+    version, from the merge run; re-publishes skip it, dispatch runs
+    never create releases, single writer).
   - GitHub Pages site assembly: `repo-site/` templates + generated index
     pages — the releases index and the per-tree pages (each tree page
     lists its architectures, linking straight to the feed pages), the
@@ -635,10 +685,12 @@ package managers rely on. No branch ever holds packages.
 - **Keys**: `key-build.pub` / `opkg-key.pub` are public; never commit
   private keys. Repo signing keys rotate — run `install.sh` again on a
   router to refresh them.
-- **Version discipline**: `PKG_VERSION` fallback in the app Makefile must
-  equal the last released version; tags drive release contents; the CI
-  rejects tags older than the previous tag and packages that do not match
-  the tag.
+- **Version discipline**: the app Makefile's `PKG_VERSION` is the single
+  source of truth for release contents; every release PR must bump it
+  strictly above the last released version (the release pipeline's
+  version gate enforces this on packages/** PRs and main pushes), and
+  the pipeline fails a build whose artifact does not carry `PKG_VERSION`.
+  Tags are outputs of the pipeline, never inputs.
 - **Do not rebuild goldens casually**: backend behavior changes require
   updating the golden set in `tests/backend/goldens/` and its `healthy/`
   and proxy-mode variants, and the `driver.uc` normalizations must stay
@@ -656,7 +708,8 @@ package managers rely on. No branch ever holds packages.
 - **Verify a backend change**: `sh tests/backend/test_backend_contract.sh`
   (build the `tt-ucode-gate` image first if missing), plus the ucode
   import/compile gates from ci.yml.
-- **Release**: bump client vendor version/hashes if needed, ensure the
-  Makefile fallback equals the previous release, tag `vX.Y.Z` (tag must
-  point to a commit newer than the previous tag), push; the release
-  workflow builds, signs, verifies and publishes.
+- **Release**: bump `PKG_VERSION` in the app Makefile (strictly above
+  the last release), bump the client vendor version/hashes if needed,
+  open a PR — its preview runs the version gate, the SDK builds and the
+  integration verification; merging it builds, signs, verifies, creates
+  the `vX.Y.Z` tag + GitHub release and publishes.

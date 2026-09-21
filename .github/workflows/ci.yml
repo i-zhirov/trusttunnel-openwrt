@@ -3,16 +3,16 @@
 # Every step below is a contract gate: the tree must pass each one before
 # it is shippable.
 #
-# Checkout always fetches the full history (fetch-depth: 0) because the
-# release-tag check compares commit dates across tags, and the shellcheck
-# step is docker-based so it behaves identically on any machine.
+# The release version is not gated here: it lives in the app Makefile and
+# the release pipeline (release.yml) enforces it on packages/** PRs and
+# main pushes. Tags no longer trigger anything — the release pipeline
+# creates them itself on merge.
 
 name: CI
 
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]
   pull_request:
 
 # A per-ref group: a new push to the same branch or PR supersedes the
@@ -26,12 +26,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # The whole history (and with it all tags) is required by the
-      # release-tag check below, which compares commit dates across tags.
-      - name: Check out the repository with full history
+      - name: Check out the repository
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       # Every script the package ships must be executable in the index;
       # a file with the wrong mode would break installs and direct runs
@@ -55,26 +51,6 @@ jobs:
             fi
           done
           exit "$fail"
-
-      # On a tag push the new tag must point to a commit newer than the
-      # previous tag's commit: tagging an old commit would silently roll
-      # the release back.
-      - name: Check that the new tag is not older than the previous tag
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          new_tag="$GITHUB_REF_NAME"
-          new_ts=$(git log -1 --format=%ct "$new_tag") || exit 0
-          prev_tag=$(git tag --sort=-v:refname | awk -v t="$new_tag" 'BEGIN { seen = 0 } { if (seen) { print; exit } if ($0 == t) seen = 1 }')
-          if [ -z "$prev_tag" ]; then
-            echo "No previous tag to compare against; skipping the check."
-            exit 0
-          fi
-          old_ts=$(git log -1 --format=%ct "$prev_tag") || exit 0
-          if [ "$new_ts" -lt "$old_ts" ]; then
-            echo "::error::$new_tag points to commit $new_ts, older than the previous tag $prev_tag at $old_ts; refusing a version downgrade"
-            exit 1
-          fi
-          echo "$new_tag ($new_ts) is newer than the previous tag $prev_tag ($old_ts)."
 
       # The suite runs every tests/test_*.sh in a fresh temp directory
       # and reports the assertion totals per file; a single failing file

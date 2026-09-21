@@ -28,6 +28,7 @@
 // Usage: node tests/gui/stub/server.js --port 8123
 //        --app <repo>/packages/luci-app-trusttunnel/htdocs
 //        --luci <luci-base>/htdocs
+//        --theme <luci-theme-bootstrap>/htdocs   (optional: production styling)
 //        --goldens <repo>/tests/backend/goldens
 //
 // For a manual development loop (no docker, no build) run tests/gui/dev.sh:
@@ -46,6 +47,7 @@ function arg(name, def) {
 const PORT = +arg('--port', process.env.STUB_PORT || 8123);
 const APP_HTDOCS = arg('--app');
 const LUCI_HTDOCS = arg('--luci');
+const THEME_HTDOCS = arg('--theme');
 const GOLDENS = arg('--goldens');
 const VIEW_DIR = 'luci-static/resources/view/trusttunnel';
 
@@ -57,9 +59,13 @@ const VIEW_DIR = 'luci-static/resources/view/trusttunnel';
 
 const defaultUci = {
 	trusttunnel: {
-		main: { '.type': 'main', enabled: '0', log_level: 'info', mode: 'tun' },
+		main: {
+			'.type': 'main', enabled: '0', log_level: 'info', mode: 'tun',
+			endpoint: 'Default'
+		},
 		endpoint: {
-			'.type': 'endpoint', hostname: 'vpn.example.com', username: 'alice',
+			'.type': 'endpoint', name: 'Default', hostname: 'vpn.example.com',
+			username: 'alice',
 			password: 'secret', protocol: 'http2', anti_dpi: '0', post_quantum: '1',
 			skip_verification: '0', certificate: '', has_ipv6: '1',
 			custom_sni: '', client_random: '',
@@ -67,6 +73,17 @@ const defaultUci = {
 			// always carries at least one endpoint address.
 			address: [ '203.0.113.10:443' ],
 			routing_profile: 'Default'
+		},
+		// A second saved server: the endpoint sections are repeatable and
+		// main.endpoint names the ACTIVE one (the Default server above).
+		cfg02: {
+			'.type': 'endpoint', '.anonymous': true, name: 'Backup',
+			hostname: 'backup.example.com', username: 'bob', password: 'bobpass',
+			protocol: 'http2', anti_dpi: '0', post_quantum: '1',
+			skip_verification: '0', certificate: '', has_ipv6: '1',
+			custom_sni: '', client_random: '',
+			address: [ '198.51.100.20:443' ],
+			routing_profile: ''
 		},
 		network: {
 			'.type': 'network', mtu: '1350', table: '880', fwmark: '0x9527',
@@ -87,11 +104,7 @@ const defaultUci = {
 		},
 		// The legacy "do not bypass" list, consulted when no profile is
 		// assigned (and by the status page's rule preview in that case).
-		domains: { '.type': 'domains', '.anonymous': true, direct: [ 'legacy.example' ] },
-		// The UI-only section that keys the Versions tab (map-level tabs
-		// are keyed by the UCI section type); uci-defaults creates it on
-		// installs that predate it.
-		about: { '.type': 'about' }
+		domains: { '.type': 'domains', '.anonymous': true, direct: [ 'legacy.example' ] }
 	}
 };
 
@@ -202,7 +215,19 @@ function resolveUci(method, a) {
 		return {};
 	case 'delete':
 		state.uci[a.config] = state.uci[a.config] || {};
-		delete state.uci[a.config][a.section];
+		// rpcd's uci.delete takes an optional options list: with one it
+		// removes only those options (LuCI's save canonicalizes options
+		// at their defaults and empty optionals this way), without it the
+		// whole section. The option form must not nuke the section.
+		if (Array.isArray(a.options) && a.options.length) {
+			const sec = state.uci[a.config][a.section];
+			if (sec)
+				for (const k of a.options)
+					delete sec[k];
+		}
+		else {
+			delete state.uci[a.config][a.section];
+		}
 		return {};
 	case 'order':
 		return {};
@@ -324,11 +349,21 @@ function handleControl(req, res, body) {
 // ---------------------------------------------------------------------------
 
 function shell(view) {
+	// Production LuCI links the bootstrap theme css (and its mobile
+	// variant) from the media url base; without --theme the page stays
+	// unstyled, which is fine for logic-only work but hides layout
+	// problems.
+	const css = THEME_HTDOCS
+		? `<link rel="stylesheet" href="/luci-static/bootstrap/cascade.css">
+<link rel="stylesheet" media="only screen and (max-device-width: 854px)" href="/luci-static/bootstrap/mobile.css" />`
+		: '';
+
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>TrustTunnel | ${view}</title>
+${css}
 <script src="/luci-static/resources/cbi.js"></script>
 <script src="/luci-static/resources/luci.js?v=1"></script>
 <script>
@@ -380,6 +415,9 @@ L = new LuCI({
 
 function serveStatic(res, rel) {
 	const roots = [ path.join(APP_HTDOCS, 'luci-static'), path.join(LUCI_HTDOCS, 'luci-static') ];
+
+	if (THEME_HTDOCS)
+		roots.push(path.join(THEME_HTDOCS, 'luci-static'));
 
 	for (const root of roots) {
 		const file = path.join(root, rel);
@@ -445,12 +483,15 @@ const server = http.createServer((req, res) => {
 		return;
 	}
 
-	if (req.method === 'GET' && url.pathname.startsWith('/luci-static/resources/')) {
+	if (req.method === 'GET' && url.pathname.startsWith('/luci-static/')) {
+		// Everything under /luci-static/: the app overlay first, then the
+		// pinned luci-base tree, then the bootstrap theme (resources,
+		// cascade.css, mobile.css and the icons).
 		serveStatic(res, url.pathname.slice('/luci-static/'.length));
 		return;
 	}
 
-	const viewMatch = /^\/cgi-bin\/luci\/admin\/services\/trusttunnel\/(status|settings|diagnostics|log)$/.exec(url.pathname);
+	const viewMatch = /^\/cgi-bin\/luci\/admin\/services\/trusttunnel\/(status|settings|diagnostics|tools|log|versions)$/.exec(url.pathname);
 	if (req.method === 'GET' && viewMatch) {
 		res.writeHead(200, { 'Content-Type': 'text/html; charset=UTF-8' });
 		res.end(shell(viewMatch[1]));

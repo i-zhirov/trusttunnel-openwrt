@@ -44,12 +44,22 @@
 #      stop tears the routing down and a start restores it, install.sh /
 #      uci-defaults / reload are idempotent, and the endpoint log shows
 #      the tunneled CONNECTs;
-#  12. proxy      — proxy mode contract: the mode switch tears the tun
+#  13. proxy      — proxy mode contract: the mode switch tears the tun
 #      routing down and the client binds a SOCKS5 listener instead, the
 #      generated config carries [listener.socks] and never [listener.tun],
 #      SOCKS traffic arrives with the ENDPOINT's source address, direct
 #      traffic ignores the proxy, and switching back to tun mode restores
-#      the tunnel.
+#      the tunnel;
+#  14. switch     — the active-server contract: a second, twin endpoint
+#      container; the Backup server is saved next to the Default one and
+#      made active via main.endpoint + reload, and the records,
+#      client.toml and the traffic all follow the new selection, then
+#      back;
+#  15. migrate    — the boot-migration contract: the ACTIVE server's
+#      section is deleted (a CLI edit), the dangling selector stops the
+#      service, and the uci-defaults script — run exactly as the boot and
+#      install.sh run it — re-points the selection at the remaining
+#      server, which brings the tunnel back.
 #
 # Usage:
 #   TT_PM=apk sh tests/integration/run.sh                 # default
@@ -148,6 +158,7 @@ NET="ttit-$TT_PM-$SUFFIX"
 REPO_CID="ttit-repo-$SUFFIX"
 ROUTER_CID="ttit-router-$SUFFIX"
 ENDPOINT_CID="ttit-endpoint-$SUFFIX"
+ENDPOINT2_CID="ttit-endpoint2-$SUFFIX"
 TARGET_CID="ttit-target-$SUFFIX"
 DIRECT_CID="ttit-direct-$SUFFIX"
 
@@ -156,6 +167,7 @@ IP_BASE=${TT_LAB_SUBNET%/*}
 IP_BASE=${IP_BASE%.*}
 IP_REPO=$IP_BASE.10
 IP_ENDPOINT=$IP_BASE.20
+IP_ENDPOINT2=$IP_BASE.21
 IP_ROUTER=$IP_BASE.30
 IP_TARGET=$IP_BASE.40
 DIRECT_IP=""    # the direct target's address on the private direct network
@@ -223,6 +235,7 @@ teardown() {
 	[ -n "${ROUTER_CID:-}" ] && docker rm -f "$ROUTER_CID" >/dev/null 2>&1
 	[ -n "${REPO_CID:-}" ] && docker rm -f "$REPO_CID" >/dev/null 2>&1
 	[ -n "${ENDPOINT_CID:-}" ] && docker rm -f "$ENDPOINT_CID" >/dev/null 2>&1
+	[ -n "${ENDPOINT2_CID:-}" ] && docker rm -f "$ENDPOINT2_CID" >/dev/null 2>&1
 	[ -n "${TARGET_CID:-}" ] && docker rm -f "$TARGET_CID" >/dev/null 2>&1
 	[ -n "${DIRECT_CID:-}" ] && docker rm -f "$DIRECT_CID" >/dev/null 2>&1
 	[ -n "${DIRECT_NET:-}" ] && docker network rm "$DIRECT_NET" >/dev/null 2>&1
@@ -256,7 +269,7 @@ dump_logs() {
 			'cat /etc/apk/repositories.d/trusttunnel.list /etc/opkg/customfeeds.conf /etc/apk/keys/trusttunnel.pub 2>/dev/null; ls /etc/opkg/keys 2>/dev/null' \
 			> "$_logs/router-repo-config.txt" 2>/dev/null
 	fi
-	for _c in "$ENDPOINT_CID" "$TARGET_CID" "$DIRECT_CID" "$REPO_CID"; do
+	for _c in "$ENDPOINT_CID" "$ENDPOINT2_CID" "$TARGET_CID" "$DIRECT_CID" "$REPO_CID"; do
 		[ -n "$_c" ] || continue
 		docker logs "$_c" > "$_logs/$(basename "$_c").log" 2>&1
 	done
@@ -997,6 +1010,10 @@ st_asserts() {
 
 	_rp=$(docker exec "$ROUTER_CID" uci -q get trusttunnel.endpoint.routing_profile 2>/dev/null)
 	assert_eq "Default" "$_rp" "the endpoint is assigned the Default profile"
+	_name=$(docker exec "$ROUTER_CID" uci -q get trusttunnel.endpoint.name 2>/dev/null)
+	assert_eq "Default" "$_name" "the shipped endpoint carries the Default name"
+	_sel=$(docker exec "$ROUTER_CID" uci -q get trusttunnel.main.endpoint 2>/dev/null)
+	assert_eq "Default" "$_sel" "the shipped config selects the Default server"
 	_prof=$(docker exec "$ROUTER_CID" uci -q get 'trusttunnel.@routing_profile[0].name' 2>/dev/null)
 	assert_eq "Default" "$_prof" "the seeded routing profile is named Default"
 	_mode=$(docker exec "$ROUTER_CID" uci -q get 'trusttunnel.@routing_profile[0].mode' 2>/dev/null)
@@ -1267,7 +1284,9 @@ st_lifecycle() {
 	assert_eq "1" "$_n" "the firewall zone is not duplicated"
 	_n=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep -c \"dest='trusttunnel'\"" 2>/dev/null)
 	assert_eq "1" "$_n" "the lan to trusttunnel forwarding is not duplicated"
-	_n=$(docker exec "$ROUTER_CID" sh -c "uci show trusttunnel | grep -c \"name='Default'\"" 2>/dev/null)
+	# The profile name and the ACTIVE SERVER's name are both Default, so
+	# the count must scope to the routing_profile sections.
+	_n=$(docker exec "$ROUTER_CID" sh -c "uci show trusttunnel | grep -c \"@routing_profile\\[[0-9]*\\].name='Default'\"" 2>/dev/null)
 	assert_eq "1" "$_n" "the Default routing profile is not duplicated"
 	# install.sh rerun: exit 0 and no duplicated repository entry (the
 	# reinstalled service brings the tunnel back — install.sh restarts a
@@ -1293,7 +1312,7 @@ st_lifecycle() {
 	assert_eq "1" "$_n" "the reinstall does not duplicate the firewall zone"
 	_n=$(docker exec "$ROUTER_CID" sh -c "uci show firewall | grep -c \"dest='trusttunnel'\"" 2>/dev/null)
 	assert_eq "1" "$_n" "the reinstall does not duplicate the forwarding"
-	_n=$(docker exec "$ROUTER_CID" sh -c "uci show trusttunnel | grep -c \"name='Default'\"" 2>/dev/null)
+	_n=$(docker exec "$ROUTER_CID" sh -c "uci show trusttunnel | grep -c \"@routing_profile\\[[0-9]*\\].name='Default'\"" 2>/dev/null)
 	assert_eq "1" "$_n" "the reinstall does not duplicate the Default profile"
 	# A reload with nothing changed is a noop: the applied-state records
 	# match the fresh export, so nothing is regenerated and the tunnel
@@ -1387,7 +1406,15 @@ uci commit trusttunnel
 		sh -c '/usr/libexec/trusttunnel/routing status /var/etc/trusttunnel/settings.tsv' 2>/dev/null)
 	assert_contains "$_rs" "rule absent" "the mode switch removed the fwmark rule"
 	assert_contains "$_rs" "table absent" "the mode switch emptied the routing table"
-	assert_contains "$_rs" "nft absent" "the mode switch removed the nft table"
+	# Proxy mode now owns the meter table: the mode switch must have
+	# replaced the marking ruleset with the meter chains, never left the
+	# tun-mode ruleset behind.
+	assert_contains "$_rs" "meter up" "the mode switch installed the usage meter"
+	_nft=$(docker exec "$ROUTER_CID" sh -c 'nft list table inet trusttunnel' 2>/dev/null)
+	assert_eq "0" "$(printf '%s\n' "$_nft" | grep -c tt_endpoint)" \
+		"the mode switch removed the marking ruleset"
+	assert_contains "$_nft" "tt_meter_in" "the meter counts requests into the listener"
+	assert_contains "$_nft" "tt_meter_out" "the meter counts responses from the listener"
 	_tun=$(docker exec "$ROUTER_CID" sh -c 'ls /sys/class/net/ 2>/dev/null | grep -c "^tun"' 2>/dev/null)
 	assert_eq "0" "$_tun" "proxy mode creates no tun device"
 
@@ -1398,6 +1425,19 @@ uci commit trusttunnel
 	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 --socks5-hostname lan:lan-pass@127.0.0.1:1080 http://$IP_TARGET:8080/" 2>/dev/null)
 	assert_eq "REMOTE_ADDR=$IP_ENDPOINT" "$_got" \
 		"SOCKS traffic arrives with the endpoint's source address"
+
+	# The meter counts the listener traffic: after the request above both
+	# counter rules must carry bytes (dport = uploads into the listener,
+	# sport = responses from it).
+	_rs=$(docker exec "$ROUTER_CID" \
+		sh -c '/usr/libexec/trusttunnel/routing status /var/etc/trusttunnel/settings.tsv' 2>/dev/null)
+	_mrx=$(printf '%s\n' "$_rs" | awk '/^meter rx / { print $3; exit }')
+	_mtx=$(printf '%s\n' "$_rs" | awk '/^meter tx / { print $3; exit }')
+	if [ "${_mrx:-0}" -gt 0 ] && [ "${_mtx:-0}" -gt 0 ]; then
+		_tt_pass "the meter counted the SOCKS traffic in both directions"
+	else
+		_tt_fail "the meter counted the SOCKS traffic in both directions (rx=$_mrx tx=$_mtx)"
+	fi
 
 	# --- P3: traffic that does not use the proxy stays direct.
 	_src=$(docker exec "$ROUTER_CID" \
@@ -1419,6 +1459,184 @@ uci commit trusttunnel
 		"the restored tun mode carries traffic again"
 }
 
+# --- stage: switching the active server ------------------------------------------
+
+# wait_source <expected-ip> <label> — polls the lab target until the
+# tunneled traffic arrives from the expected source address. The poll IS
+# the wait: after the reload the client restarts, and the first curl that
+# succeeds after the restart already comes through the NEW tunnel, so a
+# fixed sleep would race it.
+wait_source() {
+	_want="REMOTE_ADDR=$1"
+	_i=0
+	_got=""
+	while [ "$_i" -lt 30 ]; do
+		_i=$((_i + 1))
+		_got=$(docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+		[ "$_got" = "$_want" ] && break
+		sleep 2
+	done
+	if [ "$_got" = "$_want" ]; then
+		_tt_pass "$2"
+		return 0
+	fi
+	_tt_fail "$2 (last source: $_got)"
+	return 1
+}
+
+st_switch() {
+	stage switch || return
+	echo "== switching the active server"
+
+	# A twin endpoint: the same fixture config and certificate as the
+	# first, on its own lab address. Both containers mount the same
+	# read-only srv directory (the endpoint writes nothing there).
+	if ! docker run -d --name "$ENDPOINT2_CID" --network "$NET" --ip "$IP_ENDPOINT2" \
+			-v "$SCRATCH/srv:/opt/tt:ro" "$IMG_ALPINE" \
+			sh -c 'cp /opt/tt/endpoint.bin /bin/trusttunnel_endpoint && chmod +x /bin/trusttunnel_endpoint && cd /opt/tt && trusttunnel_endpoint vpn.toml hosts.toml -l debug' \
+			>/dev/null 2>&1; then
+		_tt_fail "could not start the second endpoint container"
+		return
+	fi
+	_i=0
+	while [ "$_i" -lt 30 ]; do
+		_i=$((_i + 1))
+		docker logs "$ENDPOINT2_CID" 2>&1 | grep -q "Listening to TCP 0.0.0.0:8443" && break
+		sleep 1
+	done
+	_listen=$(docker logs "$ENDPOINT2_CID" 2>&1 | grep -E "Listening to (TCP|UDP) 0.0.0.0:8443" | tr '\n' ' ')
+	if printf '%s' "$_listen" | grep -q "TCP 0.0.0.0:8443" \
+			&& printf '%s' "$_listen" | grep -q "UDP 0.0.0.0:8443"; then
+		_tt_pass "the second endpoint listens on TCP and UDP 8443"
+	else
+		_tt_fail "the second endpoint did not come up"
+		docker logs "$ENDPOINT2_CID" 2>&1 | tail -5
+		return
+	fi
+
+	# Save the second server next to the first (the same fields the
+	# configure stage wrote for Default, incl. the pinned certificate)
+	# and switch the ACTIVE one. The reload applies the switch: the
+	# records change, the client restarts against the new config.
+	if docker exec "$ROUTER_CID" sh -c "
+uci add trusttunnel endpoint >/dev/null
+uci set trusttunnel.@endpoint[-1].name='Backup'
+uci set trusttunnel.@endpoint[-1].hostname='tt.test'
+uci add_list trusttunnel.@endpoint[-1].address='$IP_ENDPOINT2:8443'
+uci set trusttunnel.@endpoint[-1].username='router'
+uci set trusttunnel.@endpoint[-1].password='test-pass'
+uci set trusttunnel.@endpoint[-1].certificate=\"\$(cat /tmp/cert.pem)\"
+uci set trusttunnel.main.endpoint='Backup'
+uci commit trusttunnel
+/etc/init.d/trusttunnel reload" >/dev/null 2>&1; then
+		_tt_pass "the Backup server is saved and selected"
+	else
+		_tt_fail "saving the Backup server or the reload failed"
+		return
+	fi
+
+	# S1: the tunnel follows the selection — the lab target observes the
+	# SECOND endpoint's address as the source.
+	wait_source "$IP_ENDPOINT2" \
+		"switching the active server moves the tunnel to the new endpoint"
+
+	# S2: the records carry only the ACTIVE server: the Backup fields are
+	# there, the Default server's address never leaks into them.
+	_tsv=$(docker exec "$ROUTER_CID" cat /var/etc/trusttunnel/settings.tsv 2>/dev/null)
+	assert_contains "$_tsv" "endpoint.name	Backup" \
+		"the records name the active server"
+	assert_contains "$_tsv" "$IP_ENDPOINT2:8443" \
+		"the records carry the active server's address"
+	assert_eq "0" "$(printf '%s\n' "$_tsv" | grep -c "$IP_ENDPOINT:8443")" \
+		"the inactive server's address never reaches the records"
+
+	# S3: the generated client config follows the active server too.
+	_toml=$(docker exec "$ROUTER_CID" cat /var/etc/trusttunnel/client.toml 2>/dev/null)
+	assert_contains "$_toml" "\"$IP_ENDPOINT2:8443\"" \
+		"client.toml points at the active server"
+	assert_eq "0" "$(printf '%s' "$_toml" | grep -c "$IP_ENDPOINT:8443")" \
+		"client.toml never mentions the inactive server"
+
+	# S4: the second endpoint saw the tunneled requests (server-side
+	# confirmation, like A16 for the first endpoint).
+	_n=$(docker logs "$ENDPOINT2_CID" 2>/dev/null | grep -c "$IP_TARGET:8080")
+	if [ "$_n" -gt 0 ]; then
+		_tt_pass "the second endpoint saw the tunneled requests"
+	else
+		_tt_fail "the second endpoint never saw a request for the lab target"
+	fi
+
+	# S5: switching back restores the original endpoint.
+	docker exec "$ROUTER_CID" sh -c "uci set trusttunnel.main.endpoint='Default'
+uci commit trusttunnel
+/etc/init.d/trusttunnel reload" >/dev/null 2>&1
+	wait_source "$IP_ENDPOINT" \
+		"switching back restores the original endpoint"
+}
+
+# --- stage: the boot migration heals a deleted active server --------------------
+
+st_migrate() {
+	stage migrate || return
+	echo "== boot migration against a deleted active server"
+
+	# The switch stage left two servers saved with Default active. Remove
+	# the ACTIVE server's section the way a CLI edit would (the section is
+	# the named 'endpoint' one): the selector now names a section that no
+	# longer exists.
+	if docker exec "$ROUTER_CID" sh -c "uci delete trusttunnel.endpoint
+uci commit trusttunnel" >/dev/null 2>&1; then
+		_tt_pass "the active server section is deleted"
+	else
+		_tt_fail "deleting the active server section failed"
+		return
+	fi
+	if docker exec "$ROUTER_CID" sh -c 'uci -q get trusttunnel.endpoint >/dev/null 2>&1'; then
+		_tt_fail "the deleted endpoint section still resolves"
+	else
+		_tt_pass "the deleted section is gone"
+	fi
+	_sel=$(docker exec "$ROUTER_CID" uci -q get trusttunnel.main.endpoint 2>/dev/null)
+	assert_eq "Default" "$_sel" "the selector keeps the deleted name"
+
+	# M1: the dangling selector breaks the service. A reload exports no
+	# endpoint records, gen-config refuses, and the tunnel comes down —
+	# the lab target sees the router's own address again.
+	docker exec "$ROUTER_CID" /etc/init.d/trusttunnel reload >/dev/null 2>&1
+	_i=0
+	while [ "$_i" -lt 20 ]; do
+		_i=$((_i + 1))
+		[ -z "$(docker exec "$ROUTER_CID" sh -c 'ps | grep "[t]rusttunnel_client"' 2>/dev/null)" ] && break
+		sleep 1
+	done
+	_proc=$(docker exec "$ROUTER_CID" sh -c 'ps | grep "[t]rusttunnel_client"' 2>/dev/null)
+	assert_eq "" "$_proc" "the dangling selector keeps the client down"
+	_got=$(retry_out 4 2 docker exec "$ROUTER_CID" sh -c "curl -4 -s --max-time 20 http://$IP_TARGET:8080/" 2>/dev/null)
+	assert_eq "REMOTE_ADDR=$IP_ROUTER" "$_got" \
+		"without a healed selection the tunnel is down (direct traffic)"
+
+	# M2: the boot migration heals the reference: main.endpoint moves to
+	# the first remaining server (Backup). The script is the one the boot
+	# and install.sh run; the package manager consumes the router's copy
+	# on the apk path, so the tree's own file is executed.
+	if docker exec "$ROUTER_CID" \
+			sh /src/packages/luci-app-trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel \
+			>/dev/null 2>&1; then
+		_tt_pass "the boot migration runs on the live config"
+	else
+		_tt_fail "the boot migration failed on the live config"
+		return
+	fi
+	_sel=$(docker exec "$ROUTER_CID" uci -q get trusttunnel.main.endpoint 2>/dev/null)
+	assert_eq "Backup" "$_sel" "the migration re-points the selection at the remaining server"
+
+	# M3: the service comes back through the remaining server: the lab
+	# target observes the second endpoint's address again.
+	docker exec "$ROUTER_CID" /etc/init.d/trusttunnel start >/dev/null 2>&1
+	wait_source "$IP_ENDPOINT2" \
+		"after the migration the tunnel comes back through the remaining server"
+}
+
 # --- main -------------------------------------------------------------------------
 
 st_preflight
@@ -1435,5 +1653,7 @@ st_connect
 st_traffic
 st_lifecycle
 st_proxy
+st_switch
+st_migrate
 
 tt_test_summary

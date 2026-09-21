@@ -14,6 +14,7 @@ const LIBDIR = '/usr/libexec/trusttunnel';
 const OUTDIR = '/var/etc/trusttunnel';
 const RECORDS = OUTDIR + '/settings.tsv';
 const CLIENT = '/opt/trusttunnel_client/trusttunnel_client';
+const DEV_STATS = '/proc/net/dev';
 
 // Run a command and return { code, out }. With capture the output carries
 // stdout only and stderr is dropped — the right mode wherever the output is
@@ -139,11 +140,11 @@ function parse_ping(host, output) {
 }
 
 // Ask the routing helper about the applied kernel state. Returns a flat
-// object with the device name (when the helper reports one) and the four
-// presence flags; everything is false/empty when the records file is
-// absent or the helper fails.
+// object with the device name (when the helper reports one), the four
+// presence flags and the proxy-mode meter counters; everything is
+// false/empty when the records file is absent or the helper fails.
 function kernel_state() {
-	let out = { device: '', device_up: false, rule: false, table: false, nft: false };
+	let out = { device: '', device_up: false, rule: false, table: false, nft: false, meter_up: false, meter_rx: 0, meter_tx: 0 };
 
 	if (access(RECORDS) == null)
 		return out;
@@ -161,11 +162,49 @@ function kernel_state() {
 			out.table = true;
 		else if (line == 'nft present')
 			out.nft = true;
+		else if (line == 'meter up')
+			out.meter_up = true;
+		else if (match(line, /^meter rx /))
+			out.meter_rx = int(trim(substr(line, 9)));
+		else if (match(line, /^meter tx /))
+			out.meter_tx = int(trim(substr(line, 9)));
 		else if (match(line, /^client device /))
 			out.device = trim(substr(line, 14));
 	}
 
 	return out;
+}
+
+// Cumulative rx/tx bytes for a device from /proc/net/dev, or null when
+// the device has no line there (unknown name, or a device this netns
+// does not carry — the contract lab, for instance, never has a tun0).
+// The fields are column-aligned, so multiple spaces can separate them;
+// the regex mirrors parse_ping's literal-space style. Field order after
+// the interface name: rx_bytes, then seven more rx fields, then
+// tx_bytes.
+function dev_counters(dev) {
+	if (!length(dev))
+		return null;
+
+	let raw = readfile(DEV_STATS);
+	if (raw == null)
+		return null;
+
+	let lines = split(raw, '\n');
+	for (let i = 0; i < length(lines); i++) {
+		let c = index(lines[i], ':');
+		if (c < 0)
+			continue;
+		if (trim(substr(lines[i], 0, c)) != dev)
+			continue;
+
+		let m = match(substr(lines[i], c + 1),
+			/^ *([0-9]+) +([0-9]+) +([0-9]+) +([0-9]+) +([0-9]+) +([0-9]+) +([0-9]+) +([0-9]+) +([0-9]+)/);
+		if (m)
+			return { rx: +m[1], tx: +m[9] };
+	}
+
+	return null;
 }
 
 // The port of a "ip:port", "host:port" or "[v6]:port" listen address; an
@@ -278,15 +317,30 @@ return {
 
 				let running = run('/etc/init.d/trusttunnel running').code == 0;
 
+				// Usage counters: the tun device's kernel bytes in tun
+				// mode, the SOCKS listener meter rules in proxy mode.
+				// Null means no counters exist (no device, or a meter
+				// that was never installed); the view hides the row.
+				let dev = length(rs.device) ? rs.device : null;
+				let counters = null;
+				if (mode == 'tun')
+					counters = dev_counters(dev);
+				else if (rs.meter_up)
+					counters = { rx: rs.meter_rx, tx: rs.meter_tx };
+
 				return {
 					enabled: uci_value('trusttunnel.main.enabled') == '1',
 					running: running,
 					mode: mode,
-					device: length(rs.device) ? rs.device : null,
+					device: dev,
 					device_up: rs.device_up,
 					rule: rs.rule,
 					table: rs.table,
 					nft: rs.nft,
+					// The ACTIVE server's name (main.endpoint): the records
+					// carry only the active server's fields, so this is
+					// what distinguishes it when several are saved.
+					server: first(rec, 'endpoint.name', ''),
 					endpoint_hostname: first(rec, 'endpoint.hostname', ''),
 					addresses: rec['endpoint.address'] ?? [],
 					client_installed: access(CLIENT) ? true : false,
@@ -301,7 +355,12 @@ return {
 					// proxy mode; in tun mode the address is unused and
 					// no listener exists.
 					proxy_address: length(paddr) ? paddr : null,
-					listener_up: mode == 'proxy' ? socks_listening(paddr) : null
+					listener_up: mode == 'proxy' ? socks_listening(paddr) : null,
+					// Cumulative bytes through the tunnel: the tun device
+					// counters (kernel-maintained) or the meter rules.
+					// The view diffs consecutive polls for rates.
+					rx_bytes: counters ? counters.rx : null,
+					tx_bytes: counters ? counters.tx : null
 				};
 			}
 		},
@@ -363,7 +422,17 @@ return {
 				    action != 'restart' && action != 'reload')
 					return { error: 'unknown action' };
 
-				let r = run('/etc/init.d/trusttunnel ' + action);
+				// An explicit start (or restart) from the Status page
+				// runs the tunnel NOW even while main.enabled is off:
+				// the switch gates the automatic starts only. The marker
+				// env var is how start_service tells an explicit request
+				// apart from the boot, the wan-up trigger and the
+				// config-reload paths.
+				let cmd = (action == 'start' || action == 'restart')
+					? 'TT_START_NOW=1 /etc/init.d/trusttunnel ' + action
+					: '/etc/init.d/trusttunnel ' + action;
+
+				let r = run(cmd);
 
 				// A start is only a start once the service answers
 				// "running": procd forks the client asynchronously, so the
@@ -555,6 +624,7 @@ return {
 				let user = first(rec, 'endpoint.username', '');
 				let pass = first(rec, 'endpoint.password', '');
 				let addrs = rec['endpoint.address'] ?? [];
+				let server = first(rec, 'endpoint.name', '');
 				let pname = first(rec, 'routing_profile.name', '');
 				let pmode = first(rec, 'routing_profile.mode', '');
 				let mtu_cfg = first(rec, 'network.mtu', '1350');
@@ -563,6 +633,16 @@ return {
 				let paddr = first(rec, 'proxy.address', '');
 
 				// --- Configuration ---
+
+				// The active server is the root of the config: with none
+				// selected the records carry no endpoint fields at all, so
+				// this check explains why the address and the credentials
+				// checks below report unset.
+				if (length(server))
+					push(checks, check('config', 'Active server', 'ok', server, ''));
+				else
+					push(checks, check('config', 'Active server', 'fail', 'none selected',
+						'Select one of the saved servers as the active one on the Settings page.'));
 
 				if (length(addrs))
 					push(checks, check('config', 'Server address', 'ok', join(', ', addrs), ''));
@@ -623,7 +703,7 @@ return {
 					push(checks, check('service', 'Service running', 'ok', 'on', ''));
 				else
 					push(checks, check('service', 'Service running', 'fail', 'off',
-						'Press Start and look at the client log below.'));
+						'Press Start and open the Client log tab.'));
 
 				// --- Kernel ---
 
@@ -646,16 +726,29 @@ return {
 						push(checks, check('kernel', 'SOCKS listener', 'ok', 'bound at ' + paddr, ''));
 					else
 						push(checks, check('kernel', 'SOCKS listener', 'fail', 'not bound',
-							'The listener is bound by the client at start; a bind error or a port conflict keeps it down. See the client log below.'));
+							'The listener is bound by the client at start; a bind error or a port conflict keeps it down. Open the Client log tab.'));
+
+					// The usage meter is installed by the init script at
+					// start, so a running service without the counter
+					// rules is a degraded state worth a remark — the
+					// tunnel works, but the traffic row stays hidden and
+					// nothing would tell the user why.
+					if (!running)
+						push(checks, check('kernel', 'Usage meter', 'skip', 'the service is stopped', ''));
+					else if (rs.meter_up)
+						push(checks, check('kernel', 'Usage meter', 'ok', 'listener port metered', ''));
+					else
+						push(checks, check('kernel', 'Usage meter', 'warn', 'no counter rules',
+							'The meter is installed by the init script at start; a failed install leaves the traffic row hidden. Restart the service.'));
 				} else {
 					let dev_sys = length(dev) ? '/sys/class/net/' + dev : '';
 
 					if (!length(dev)) {
 						push(checks, check('kernel', 'Tunnel device', running ? 'fail' : 'skip', 'the client has not created it yet',
-							'The tun device is created by the client, not by this package. See the client log below.'));
+							'The tun device is created by the client, not by this package. Open the Client log tab.'));
 					} else if (access(dev_sys) == null) {
 						push(checks, check('kernel', 'Tunnel device', 'fail', 'the client has not created it yet',
-							'The tun device is created by the client, not by this package. See the client log below.'));
+							'The tun device is created by the client, not by this package. Open the Client log tab.'));
 					} else {
 						let dev_mtu = trim(readfile(dev_sys + '/mtu') ?? '');
 						push(checks, check('kernel', 'Tunnel device', 'ok',
@@ -681,7 +774,7 @@ return {
 							push(checks, check('kernel', 'Carrier state', 'ok', 'link up', ''));
 						else
 							push(checks, check('kernel', 'Carrier state', 'warn', 'link down',
-								'The device exists but the tunnel is not established yet; that is on the client, not the routing. See the client log.'));
+								'The device exists but the tunnel is not established yet; that is on the client, not the routing. Open the Client log tab.'));
 					}
 
 					if (rs.rule)
@@ -713,6 +806,94 @@ return {
 							'Run /etc/init.d/firewall reload — without the zone, traffic into the tunnel is dropped.'));
 				}
 
+				// The effective tunneled set: a bypass profile tunnels only
+				// its VPN rules, a VPN profile and the legacy fallback
+				// tunnel everything except their direct list. The tunnel
+				// probe must prove the tunnel with a destination the
+				// config actually sends through it.
+				let profiled = length(pname) && (pmode == 'bypass' || pmode == 'vpn');
+				let bypass_profile = profiled && pmode == 'bypass';
+				let direct_list = bypass_profile
+					? []
+					: (profiled ? (rec['routing_profile.bypass_rules'] ?? []) : (rec['domains.direct'] ?? []));
+				let tunneled_list = bypass_profile ? (rec['routing_profile.vpn_rules'] ?? []) : [];
+				let router_traffic = first(rec, 'network.include_router_traffic', '0') == '1';
+
+				// Echo services that report the caller's egress address,
+				// for the address comparison; the first one the effective
+				// config tunnels (full-tunnel paths) or does not bypass is
+				// used.
+				let ECHO_HOSTS = [ 'api.ipify.org', 'ifconfig.me', 'icanhazip.com' ];
+
+				// listed(rules, host) — the client's SNI matching: exact, or
+				// under a *.domain rule. A wildcard covers the subdomains,
+				// NOT the apex (verified against the vendor client:
+				// *.ipify.org tunnels api.ipify.org but ipify.org itself
+				// goes out directly), so the leading '*.' strips and only
+				// the suffix test applies — the apex must not match.
+				let listed = function(rules, host) {
+					let lc_host = lc(host);
+
+					for (let r in (rules ?? [])) {
+						let rule = lc(trim(r));
+
+						if (substr(rule, 0, 1) == '*') {
+							rule = substr(rule, 2);
+							if (substr(lc_host, -(length(rule) + 1)) == '.' + rule)
+								return true;
+						}
+						else if (rule == lc_host || substr(lc_host, -(length(rule) + 1)) == '.' + rule)
+							return true;
+					}
+
+					return false;
+				};
+
+				// probe_domain(rules) — the first rule a plain HTTPS
+				// request can reach through the tunnel: a bare domain
+				// only. A *.domain wildcard covers only the subdomains,
+				// and no canonical subdomain exists to probe, so wildcard
+				// rules — like IP, IP:port and CIDR rules — cannot be
+				// probed this way.
+				let probe_domain = function(rules) {
+					for (let r in (rules ?? [])) {
+						let rule = trim(r);
+
+						if (substr(rule, 0, 1) == '*')
+							continue;
+
+						if (match(rule, /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/) &&
+							!match(rule, /^\d{1,3}(\.\d{1,3}){3}$/))
+							return lc(rule);
+					}
+
+					return '';
+				};
+
+				// compare_egress(via, plain, router_traffic, ident_hint,
+				// err_hint) — the address comparison against an echo
+				// service. Identical egress means the tunneled leg leaked
+				// onto the direct path, unless include_router_traffic
+				// makes the plain leg tunneled too (then identical is the
+				// expected healthy state).
+				let compare_egress = function(via, plain, router_traffic, ident_hint, err_hint) {
+					let tip = trim(via.out);
+					let dip = trim(plain.out);
+
+					if (via.code == 0 && plain.code == 0 && tip == dip && router_traffic)
+						push(checks, check('network', 'Traffic takes the tunnel', 'ok',
+							'tunnel ' + tip + ' (router traffic is tunneled by config)', ''));
+					else if (via.code == 0 && plain.code == 0 && tip == dip)
+						push(checks, check('network', 'Traffic takes the tunnel', 'fail',
+							'identical addresses via both routes: ' + tip, ident_hint));
+					else if (via.code == 0 && plain.code == 0)
+						push(checks, check('network', 'Traffic takes the tunnel', 'ok',
+							'tunnel ' + tip + ' vs direct ' + dip, ''));
+					else
+						push(checks, check('network', 'Traffic takes the tunnel', 'fail',
+							length(tip) ? tip : 'request error', err_hint));
+				};
+
 				// --- Network ---
 
 				if (length(addrs)) {
@@ -743,39 +924,121 @@ return {
 					if (length(user))
 						auth = ' --proxy-user ' + shell_quote(user + ':' + first(rec, 'proxy.password', ''));
 
-					let via = run('curl -fsS --max-time 8 --socks5-hostname ' + shell_quote(paddr) + auth + ' https://api.ipify.org', true);
-					let plain = run('curl -fsS --max-time 8 https://api.ipify.org', true);
-					let tip = trim(via.out);
-					let dip = trim(plain.out);
+					let sock_cmd = 'curl -fsS --max-time 8 --socks5-hostname ' + shell_quote(paddr) + auth + ' https://';
+					let ident_hint = 'The tunnel is up, yet traffic is not going through it.';
+					let err_hint = 'A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.';
 
-					if (via.code == 0 && plain.code == 0 && tip == dip)
-						push(checks, check('network', 'Traffic takes the tunnel', 'fail',
-							'identical addresses via both routes: ' + tip,
-							'The tunnel is up, yet traffic is not going through it.'));
-					else if (via.code == 0 && plain.code == 0)
-						push(checks, check('network', 'Traffic takes the tunnel', 'ok',
-							'tunnel ' + tip + ' vs direct ' + dip, ''));
-					else
-						push(checks, check('network', 'Traffic takes the tunnel', 'fail',
-							length(tip) ? tip : 'request error',
-							'A request through the SOCKS listener can fail on a healthy tunnel while the client is still connecting. Judge by a LAN client instead.'));
+					if (!bypass_profile) {
+						let echo_host = '';
+						for (let h in ECHO_HOSTS)
+							if (!listed(direct_list, h)) { echo_host = h; break; }
+
+						if (!length(echo_host))
+							push(checks, check('network', 'Traffic takes the tunnel', 'warn',
+								'the echo services are bypassed by config',
+								'The profile sends the probe services (api.ipify.org, ifconfig.me, icanhazip.com) out directly; the tunnel path cannot be compared from the router.'));
+						else {
+							let via = run(sock_cmd + shell_quote(echo_host), true);
+							let plain = run('curl -fsS --max-time 8 https://' + shell_quote(echo_host), true);
+							compare_egress(via, plain, false, ident_hint, err_hint);
+						}
+					} else {
+						let echo_host = '';
+						for (let h in ECHO_HOSTS)
+							if (listed(tunneled_list, h)) { echo_host = h; break; }
+
+						if (length(echo_host)) {
+							let via = run(sock_cmd + shell_quote(echo_host), true);
+							let plain = run('curl -fsS --max-time 8 https://' + shell_quote(echo_host), true);
+							compare_egress(via, plain, false, ident_hint, err_hint);
+						} else if (!length(tunneled_list))
+							push(checks, check('network', 'Traffic takes the tunnel', 'warn',
+								'nothing is tunneled by config',
+								'The assigned profile runs in bypass mode and its VPN rules are empty: the client sends every connection out directly. Add rules to the profile, or switch it to VPN mode.'));
+						else {
+							let target = probe_domain(tunneled_list);
+
+							if (!length(target))
+								push(checks, check('network', 'Traffic takes the tunnel', 'warn',
+									'the tunneled rules cannot be probed',
+									'The profile tunnels only IP, CIDR or *.domain rules, which a plain HTTPS request cannot reach through the tunnel.'));
+							else {
+								let via = run(sock_cmd + shell_quote(target), true);
+
+								if (via.code == 0)
+									push(checks, check('network', 'Traffic takes the tunnel', 'ok',
+										'tunnel reaches ' + target, ''));
+								else
+									push(checks, check('network', 'Traffic takes the tunnel', 'fail',
+										'no response from ' + target + ' through the tunnel',
+										'The profile sends ' + target + ' through the tunnel; a failing probe means the tunnel or the server cannot reach it. Open the Client log tab.'));
+							}
+						}
+					}
 				} else if (running && length(dev)) {
-					let via = run('curl -fsS --max-time 8 --interface ' + shell_quote(dev) + ' https://api.ipify.org', true);
-					let plain = run('curl -fsS --max-time 8 https://api.ipify.org', true);
-					let tip = trim(via.out);
-					let dip = trim(plain.out);
+					// include_router_traffic=1 extends the output chain to
+					// router-originated traffic, so the plain probe follows
+					// the tunnel too: identical addresses are then the
+					// EXPECTED healthy state, not a failure — the direct
+					// path cannot be sampled from the router at all while
+					// the config tunnels everything it originates. Only
+					// with the option off do identical addresses mean the
+					// unmarked leg leaked into the tunnel path.
+					let ident_hint = 'The probe that should take the tunnel egressed directly — the client may send it out directly (a stale config or an exclusion match), the marking rules may still carry the output chain from an include_router_traffic=1 configuration, or the router shares its public address with the endpoint. Reload the service, or judge by a LAN client.';
+					let err_hint = 'A request bound to the device can fail on a healthy tunnel because the default route lives in the marked table. Judge by a LAN client instead.';
 
-					if (via.code == 0 && plain.code == 0 && tip == dip)
-						push(checks, check('network', 'Traffic takes the tunnel', 'fail',
-							'identical addresses via both routes: ' + tip,
-							'The tunnel is up, yet traffic is not going through it.'));
-					else if (via.code == 0 && plain.code == 0)
-						push(checks, check('network', 'Traffic takes the tunnel', 'ok',
-							'tunnel ' + tip + ' vs direct ' + dip, ''));
-					else
-						push(checks, check('network', 'Traffic takes the tunnel', 'fail',
-							length(tip) ? tip : 'request error',
-							'A request bound to the device can fail on a healthy tunnel because the default route lives in the marked table. Judge by a LAN client instead.'));
+					if (!bypass_profile) {
+						let echo_host = '';
+						for (let h in ECHO_HOSTS)
+							if (!listed(direct_list, h)) { echo_host = h; break; }
+
+						if (!length(echo_host))
+							push(checks, check('network', 'Traffic takes the tunnel', 'warn',
+								'the echo services are bypassed by config',
+								'The profile sends the probe services (api.ipify.org, ifconfig.me, icanhazip.com) out directly; the tunnel path cannot be compared from the router.'));
+						else {
+							let via = run('curl -fsS --max-time 8 --interface ' + shell_quote(dev) + ' https://' + shell_quote(echo_host), true);
+							let plain = run('curl -fsS --max-time 8 https://' + shell_quote(echo_host), true);
+							compare_egress(via, plain, router_traffic, ident_hint, err_hint);
+						}
+					} else {
+						// A bypass profile tunnels only its VPN rules: the
+						// address comparison works only when one of the
+						// echo services is listed, otherwise the
+						// reachability of the first probeable rule through
+						// the tunnel is the honest signal.
+						let echo_host = '';
+						for (let h in ECHO_HOSTS)
+							if (listed(tunneled_list, h)) { echo_host = h; break; }
+
+						if (length(echo_host)) {
+							let via = run('curl -fsS --max-time 8 --interface ' + shell_quote(dev) + ' https://' + shell_quote(echo_host), true);
+							let plain = run('curl -fsS --max-time 8 https://' + shell_quote(echo_host), true);
+							compare_egress(via, plain, router_traffic, ident_hint, err_hint);
+						} else if (!length(tunneled_list))
+							push(checks, check('network', 'Traffic takes the tunnel', 'warn',
+								'nothing is tunneled by config',
+								'The assigned profile runs in bypass mode and its VPN rules are empty: the client sends every connection out directly. Add rules to the profile, or switch it to VPN mode.'));
+						else {
+							let target = probe_domain(tunneled_list);
+
+							if (!length(target))
+								push(checks, check('network', 'Traffic takes the tunnel', 'warn',
+									'the tunneled rules cannot be probed',
+									'The profile tunnels only IP, CIDR or *.domain rules, which a plain HTTPS request cannot reach through the tunnel.'));
+							else {
+								let via = run('curl -fsS --max-time 8 --interface ' + shell_quote(dev) + ' https://' + shell_quote(target), true);
+
+								if (via.code == 0)
+									push(checks, check('network', 'Traffic takes the tunnel', 'ok',
+										'tunnel reaches ' + target, ''));
+								else
+									push(checks, check('network', 'Traffic takes the tunnel', 'fail',
+										'no response from ' + target + ' through the tunnel',
+										'The profile sends ' + target + ' through the tunnel; a failing probe means the tunnel or the server cannot reach it. Open the Client log tab.'));
+							}
+						}
+					}
 				}
 
 				let counts = { ok: 0, warn: 0, fail: 0, skip: 0 };

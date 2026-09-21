@@ -8,7 +8,7 @@
 
 const { expect } = require('@playwright/test');
 
-const VIEWS = [ 'status', 'settings', 'diagnostics', 'log' ];
+const VIEWS = [ 'status', 'settings', 'diagnostics', 'tools', 'log', 'versions' ];
 const VIEW_URL = view => '/cgi-bin/luci/admin/services/trusttunnel/' + view;
 
 // All views render a .cbi-map root after their load()/render() cycle.
@@ -80,12 +80,20 @@ function watchErrors(page) {
 	return errors;
 }
 
-// A <button> with the given visible text inside the #view container.
-function button(page, text) {
-	return page.locator('#view button', { hasText: text }).first();
+// Click a <button> with the given visible text inside the #view container.
+//
+// The bootstrap theme pins .cbi-page-actions (and the tabbed-map tab bar)
+// to the viewport edges; Playwright's auto-scroll aligns elements to the
+// nearest edge, which can land the target under the sticky bar and make
+// the click "intercept pointer events". Centering the element first — what
+// a user does by hand — keeps the click point clear of both bars.
+async function clickButton(page, text) {
+	const loc = page.locator('#view button', { hasText: text }).first();
+	await loc.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest' }));
+	await loc.click();
 }
 
 module.exports = {
 	VIEWS, VIEW_URL, openView, stubControl, stubSet, stubReset, stubState,
-	frames, framesFor, waitForFrames, installClock, watchErrors, button
+	frames, framesFor, waitForFrames, installClock, watchErrors, clickButton
 };

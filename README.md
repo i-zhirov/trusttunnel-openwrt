@@ -17,8 +17,10 @@ The tunnel is delivered in one of two **operation modes** (`main.mode`):
 Both modes share the same server settings and the same **named routing
 profiles**: each profile has a mode — **VPN** (everything through the
 tunnel except the bypass list) or **Bypass** (only the VPN list through
-the tunnel) — and two rule lists. One profile is assigned to the server
-via `endpoint.routing_profile` and enforced by the client itself; without
+the tunnel) — and two rule lists. Several servers can be saved; one is
+**active** at a time (`main.endpoint`), and switching it takes effect on
+the next reload. One profile is assigned to each server via its
+`endpoint.routing_profile` and enforced by the client itself; without
 one (or with a stale name), everything goes into the tunnel and the legacy
 flat `domains.direct` list is applied as the exclusions.
 
@@ -104,17 +106,21 @@ tabs:
   (TUN routes the whole LAN; Proxy runs a SOCKS5 listener instead), the
   service switch ("start on boot") — the service starts at boot only
   while it is on; the Start button on the Status page runs it on demand
-  even while it is off — the log level, and the routing-profile selector
-  that assigns the profile to the server. After Save & Apply, start the
-  service with the Start button on the Status page.
-- **Server**: the endpoint the client dials, split into **Connection**
-  and **Security** inner tabs. The **Import…** button takes what your
-  server produces — the text of a config file, or a `tt://` link — and
-  populates each endpoint field the server is able to fill: addresses,
-  the TLS host name, credentials, the transport, `custom_sni`,
-  `client_random`, plus anti-DPI, IPv6 and certificate-verification
-  switches. Everything can also be typed by hand, and a **Test
-  connection** button pings every configured address.
+  even while it is off — the log level, and the **Active server**
+  selector that picks which saved server the tunnel uses right now.
+  After Save & Apply, start the service with the Start button on the
+  Status page.
+- **Server**: the saved servers — several can be stored, one is active
+  (see General). Every server is its own block with **Connection** and
+  **Security** inner tabs, a unique **name**, its own routing-profile
+  picker and DNS upstreams; **Add** stores another server, **Delete**
+  removes one. The **Import…** button takes what your server produces —
+  the text of a config file, or a `tt://` link — and populates that
+  server's fields: addresses, the TLS host name, credentials, the
+  transport, `custom_sni`, `client_random`, plus anti-DPI, IPv6 and
+  certificate-verification switches. Everything can also be typed by
+  hand, and a **Test connection** button pings the ACTIVE server's
+  addresses.
 - **Proxy**: the SOCKS5 listener used in proxy mode — the listen
   address (`IP:port`, default `127.0.0.1:1080`) and optional user/pass
   authentication (set both or neither). Bind `0.0.0.0:1080` (or the
@@ -126,8 +132,9 @@ tabs:
   except the bypass-list entries) or **Bypass** (only the VPN-list
   entries are tunneled) — and two rule lists. A **Rule preview** button
   shows how each entry of the profile is treated; the profile is assigned
-  to the server with the selector on the General tab. The Status page
-  offers the same preview for whichever profile is assigned right now.
+  to a server with its picker on the Server tab (each server carries its
+  own). The Status page offers the same preview for whichever profile is
+  assigned right now.
 - **Advanced**: rarely needed — the MTU, the LAN interfaces, the
   blackhole switch, router-traffic routing, the client's own DNS
   upstreams, and the internal routing parameters (firewall mark,
@@ -166,6 +173,26 @@ The routing-profile block is optional: without it (or with a name that
 matches no profile), the client falls back to the legacy `domains.direct`
 list.
 
+Several servers can be saved, one active. The shipped `endpoint` section
+already carries `name 'Default'` and is selected by `main.endpoint`. To
+save another server, add a second `endpoint` section with its own unique
+`name`, and switch the active one at any time — the service picks the
+new server up on the next reload:
+
+```sh
+uci add trusttunnel endpoint
+uci set trusttunnel.@endpoint[-1].name='Backup'
+uci set trusttunnel.@endpoint[-1].hostname='tt.example.net'
+uci add_list trusttunnel.@endpoint[-1].address='198.51.100.8:443'
+uci set trusttunnel.main.endpoint='Backup'
+uci commit trusttunnel
+/etc/init.d/trusttunnel reload
+```
+
+Only the ACTIVE server's settings are in effect — and only its
+credentials and pinned certificate ever reach the generated client
+configuration.
+
 The same configuration in **proxy mode** — a LAN-accessible SOCKS5
 listener with authentication:
 
@@ -198,7 +225,10 @@ TrustTunnel** (Settings is covered under Configuration).
   ("working" only when everything is), a Mode row — the assigned profile
   and which half of its rules goes through the tunnel, or "Everything
   through VPN" without a profile — the server host name, and in proxy
-  mode the listener address. Start / Stop / Restart buttons.
+  mode the listener address. A **Traffic** row shows the current
+  download/upload rates (a ten-second average) and the cumulative bytes
+  through the tunnel: the tun device's kernel counters in tun mode, the
+  listener-port counters in proxy mode. Start / Stop / Restart buttons.
 - **Preview rules**: shows how each rule of the assigned profile is
   treated right now — or the legacy "do not bypass" list when no profile
   is assigned.
@@ -221,7 +251,7 @@ problem.
 | Configuration | endpoint address, credentials, TLS host name, assigned routing profile |
 | Prerequisites | client binary, `/dev/net/tun` (TUN mode only) |
 | Service | enabled at boot, running now |
-| Kernel state | TUN mode: tunnel device and its MTU, route attached to the device, tunnel carrier, fwmark rule, routing table, nftables table, firewall zone. Proxy mode: the SOCKS listener (bound on the configured address or not). |
+| Kernel state | TUN mode: tunnel device and its MTU, route attached to the device, tunnel carrier, fwmark rule, routing table, nftables table, firewall zone. Proxy mode: the SOCKS listener (bound on the configured address or not) and the usage meter (counter rules on the listener port). |
 | Network | endpoint reachable, traffic actually going through the tunnel (via the device in TUN mode, via the listener in proxy mode) |
 
 Four verdicts, and the distinction matters:
@@ -334,9 +364,6 @@ untouched.
 
 ## Limitations
 
-- One server per router: the endpoint holds a single host name and one set
-  of credentials. Several `address` entries are just that one server's
-  addresses.
 - Only forwarded LAN traffic is routed by default; traffic originating on
   the router itself leaves through the ordinary default route unless
   `include_router_traffic` is on.
@@ -406,6 +433,7 @@ the service starts or settings are applied — they must not be edited.
 |---|---|---|
 | `enabled` | `0` | The service switch: the service starts at boot when it is on. An explicit Start from the Status page runs it even while it is off — but it stays off at the next boot, and the automatic starts (boot, WAN up, config reload) are still refused |
 | `mode` | `tun` | The operation mode: `tun` routes the whole LAN through the client automatically; `proxy` runs a SOCKS5 listener instead (see the `proxy` section) |
+| `endpoint` | `Default` | The ACTIVE server: the `name` of the `endpoint` section the tunnel uses right now. The other saved servers stay configured but unused |
 | `log_level` | `info` | `info`, `debug` or `trace`; the last two are noisy, leave them on only while investigating something |
 
 ### Section `proxy`
@@ -418,10 +446,16 @@ Used in proxy mode only.
 | `username` | — | Optional SOCKS5 authentication; set it together with `password`, or leave both empty for an open proxy. Mandatory for any listener outside the loopback. |
 | `password` | — | The SOCKS5 password; emitted only when `username` is set |
 
-### Section `endpoint`
+### Section `endpoint` (repeatable; one section per saved server)
+
+Exactly one of the sections is ACTIVE, selected by `main.endpoint` by
+its `name`. Only the ACTIVE server's options take effect, and only its
+credentials and pinned certificate ever reach the generated client
+configuration.
 
 | Option | Default | Meaning |
 |---|---|---|
+| `name` | — | Unique name; `main.endpoint` selects the ACTIVE server by it. Required. |
 | `hostname` | — | TLS host name, used for the TLS session rather than for routing; many servers refuse the connection without it. Required. |
 | `address` | — | `host:port` or `[ipv6]:port`, repeatable. With several addresses the client measures them and picks the fastest. At least one required. |
 | `username` | — | Required. |
@@ -435,7 +469,7 @@ Used in proxy mode only.
 | `skip_verification` | `0` | Accept any certificate, which removes the protection against a substituted server. Pin the certificate instead whenever you can. |
 | `certificate` | — | Pinned server certificate (PEM). Empty means the system trust store, which requires the `ca-bundle` package. |
 | `dns_upstream` | — | DNS used by the client itself — for example the exclusion domains it pre-resolves. Empty means the client default (AdGuard DNS unfiltered). |
-| `routing_profile` | `Default` | The name of the assigned routing profile. Empty, or a name that no longer matches any profile, falls back to the legacy `domains.direct` list. |
+| `routing_profile` | `Default` | The routing profile THIS server uses while it is the active one. Empty, or a name that no longer matches any profile, falls back to the legacy `domains.direct` list. |
 
 ### Section `network`
 
@@ -452,7 +486,7 @@ Used in proxy mode only.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `name` | — | Unique name; the endpoint assigns a profile by it. |
+| `name` | — | Unique name; the ACTIVE server's `routing_profile` option assigns the profile by it. |
 | `mode` | `vpn` | `vpn` — tunnel everything except the bypass rules; `bypass` — tunnel only the VPN rules. |
 | `vpn_rules` | — | Sent through the tunnel. In bypass mode these are the only tunneled destinations; in VPN mode the list has no effect. |
 | `bypass_rules` | — | Always sent out directly. In VPN mode these are the only direct destinations; in bypass mode the list has no effect. |

@@ -67,6 +67,10 @@ logger() { echo "logger $*" >> "$CALL_LOG"; }
 await_default_route() { return 0; }
 await_clock() { return 0; }
 highest_ifindex() { echo 0; }
+# The attach retries until the client's tun appears; on the developer
+# machine no tun ever appears, so the stub answers with a device at once
+# (the retry loop must not sleep through its whole bound in every test).
+fresh_client_tuns() { echo tun0; }
 procd_open_instance() { echo "procd_open_instance" >> "$CALL_LOG"; }
 procd_set_param() { echo "procd_set_param $1" >> "$CALL_LOG"; }
 procd_close_instance() { echo "procd_close_instance" >> "$CALL_LOG"; }
@@ -77,10 +81,18 @@ start() { start_service; }
 stop() { stop_service; }
 
 # There is no /lib/functions.sh on the developer machine: config_load is a
-# no-op and config_get_bool is driven by the test's env vars. The only
-# values the init script reads are main.enabled and
-# endpoint.skip_verification (provision_ca_store short-circuits on it).
+# no-op and config_get_bool is driven by the test's env vars. The values
+# the init script reads are main.enabled, main.endpoint (the active-server
+# resolution) and the active endpoint's skip_verification (provision_ca_store
+# short-circuits on it). The endpoint sections are modeled as one
+# self-named section per word of TT_ENDPOINT_SECTIONS, selected by
+# TT_ACTIVE_SERVER.
 config_load() { :; }
+config_foreach() {
+	for _s in ${TT_ENDPOINT_SECTIONS:-Default}; do
+		"$1" "$_s"
+	done
+}
 config_get_bool() {
 	_var=$1
 	_sec=$2
@@ -88,12 +100,22 @@ config_get_bool() {
 	_def=${4:-0}
 	case "$_sec.$_opt" in
 		main.enabled) _val=${MAIN_ENABLED:-$_def} ;;
-		endpoint.skip_verification) _val=${SKIP_VERIFICATION:-$_def} ;;
+		*.skip_verification) _val=${SKIP_VERIFICATION:-$_def} ;;
 		*) _val=$_def ;;
 	esac
 	eval "$_var=$_val"
 }
-config_get() { :; }
+config_get() {
+	_var=$1
+	_sec=$2
+	_opt=$3
+	_val=""
+	case "$_opt" in
+		endpoint) _val="${TT_ACTIVE_SERVER:-Default}" ;;
+		name) _val="$_sec" ;;
+	esac
+	eval "$_var=\"\$_val\""
+}
 
 # The applied-state record: tun mode, so a successful start must run
 # `routing up` — the marker must not skip the kernel wiring.

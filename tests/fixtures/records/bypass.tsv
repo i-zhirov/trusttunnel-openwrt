@@ -1,4 +1,7 @@
 main.enabled	1
+# The ACTIVE server is Main; its assigned profile is named Games — the
+# server name and the profile name are independent concepts.
+endpoint.name	Main
 endpoint.hostname	vpn.example.com
 endpoint.address	1.2.3.4:443
 endpoint.username	alice

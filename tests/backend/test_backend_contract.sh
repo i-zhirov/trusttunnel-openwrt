@@ -20,6 +20,25 @@
 #   goldens/proxy-healthy/*.json — proxy mode with a live listener on the
 #                              configured address and a tunnel-answering
 #                              curl stub
+#   goldens/bypass/*.json     — a bypass profile with an empty VPN-rules
+#                              list: nothing is tunneled by config, so the
+#                              tunnel check becomes a remark instead of a
+#                              misleading failure
+#   goldens/bypass-rule/*.json — the bypass profile with one tunneled
+#                              domain rule: the check probes that rule
+#                              through the tunnel (the "tunnel reaches"
+#                              ok branch)
+#   goldens/bypass-rule-off/*.json — the same rule but the via leg fails:
+#                              the "no response through the tunnel"
+#                              failure branch
+#   goldens/bypass-wildcard/*.json — a bypass profile whose only rule is a
+#                              *.domain wildcard: the apex is not tunneled
+#                              by the client, so nothing is probeable and
+#                              the check remarks instead of probing
+#   goldens/vpn-wildcard-bypass/*.json — a VPN profile with a wildcard
+#                              bypass rule covering the echo service: the
+#                              echo selection must skip it and pick the
+#                              next host (the stub answers only there)
 #
 # Docker-gated like test_uci_defaults.sh: without docker the test reports
 # SKIP (exit 77, tt_skip), which the suite runner counts as skipped — the
@@ -92,6 +111,10 @@ run_call() {
 }
 
 # Compare every golden in a directory against the live backend in a lab.
+# TT_REGEN=1 rewrites the goldens from the live output instead of
+# comparing (the counterpart to "do not rebuild goldens casually": the
+# rewritten set must be diffed and only the intended files may change —
+# anything else means the backend moved behavior elsewhere).
 check_goldens() {
 	lab="$1"
 	dir="$2"
@@ -103,6 +126,10 @@ check_goldens() {
 		[ -n "$call" ] || continue
 		method=${call%%	*}
 		args=${call#*	}
+		if [ "${TT_REGEN:-0}" = 1 ]; then
+			run_call "$lab" "$method" "$args" > "$g"
+			continue
+		fi
 		assert_eq "$(cat "$g")" "$(run_call "$lab" "$method" "$args")" "golden $name"
 	done
 }
@@ -112,8 +139,11 @@ LAB_HEALTHY="tt-contract-healthy"
 LAB_STOPPED="tt-contract-stopped"
 LAB_PROXY="tt-contract-proxy"
 LAB_PROXY_HEALTHY="tt-contract-proxy-healthy"
-docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" "$LAB_STOPPED" "$LAB_PROXY" "$LAB_PROXY_HEALTHY" >/dev/null 2>&1
-trap 'docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" "$LAB_STOPPED" "$LAB_PROXY" "$LAB_PROXY_HEALTHY" >/dev/null 2>&1' EXIT
+LAB_BYPASS="tt-contract-bypass"
+LAB_WILDCARD="tt-contract-wildcard"
+LAB_WILDCARD_ECHO="tt-contract-wildcard-echo"
+docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" "$LAB_STOPPED" "$LAB_PROXY" "$LAB_PROXY_HEALTHY" "$LAB_BYPASS" "$LAB_WILDCARD" "$LAB_WILDCARD_ECHO" >/dev/null 2>&1
+trap 'docker rm -f "$LAB_BAKED" "$LAB_HEALTHY" "$LAB_STOPPED" "$LAB_PROXY" "$LAB_PROXY_HEALTHY" "$LAB_BYPASS" "$LAB_WILDCARD" "$LAB_WILDCARD_ECHO" >/dev/null 2>&1' EXIT
 
 # --- Phase A: the baked rootfs state (no tun device) ---------------------
 docker run --rm -d --name "$LAB_BAKED" -v "$(pwd)":/ws tt-backend-rootfs sleep 300 >/dev/null || tt_skip "cannot start the lab container"
@@ -228,6 +258,7 @@ main.mode	proxy
 proxy.address	0.0.0.0:1080
 proxy.username	lan
 proxy.password	lan-pass
+endpoint.name	Default
 endpoint.hostname	vpn.example.com
 endpoint.username	alice
 endpoint.password	s3cret
@@ -259,6 +290,13 @@ case "$1" in
 		echo "rule absent"
 		echo "table absent"
 		echo "nft absent"
+		# The usage meter (installed by the init script at start,
+		# independently of the listener being bound) reports fixed
+		# counters; the nonzero values pin the rx/tx mapping — a zero
+		# could hide a parse bug.
+		echo "meter up"
+		echo "meter rx 4096"
+		echo "meter tx 2048"
 		;;
 	up|attach|reattach|detach|down) exit 0 ;;
 	*) exit 1 ;;
@@ -283,6 +321,11 @@ case "$1" in
 		echo "rule absent"
 		echo "table absent"
 		echo "nft absent"
+		# The usage meter of a running proxy-mode service: fixed nonzero
+		# counters pin the rx/tx mapping (see phase D).
+		echo "meter up"
+		echo "meter rx 4096"
+		echo "meter tx 2048"
 		;;
 	up|attach|reattach|detach|down) exit 0 ;;
 	*) exit 1 ;;
@@ -322,5 +365,148 @@ while [ "$_i" -lt 20 ]; do
 	sleep 1
 done
 check_goldens "$LAB_PROXY_HEALTHY" "$BASE/goldens/proxy-healthy"
+
+# --- Phase F: bypass profile with an empty VPN-rules list -------------------
+# Bypass mode tunnels only the VPN rules; an empty list means the client
+# sends every connection out directly. The tunnel probe cannot compare
+# egress addresses for a destination that is not tunneled, so the check
+# must report the config as a remark instead of a misleading failure.
+# Pins the "nothing is tunneled by config" warn branch.
+BYPASS_RECORDS='main.enabled	1
+main.log_level	debug
+endpoint.hostname	vpn.example.com
+endpoint.username	alice
+endpoint.password	s3cret
+endpoint.protocol	http2
+endpoint.anti_dpi	1
+endpoint.post_quantum	0
+endpoint.skip_verification	1
+endpoint.has_ipv6	0
+endpoint.custom_sni	vpn.example.com
+endpoint.client_random	0a0b0c/0f0f0f
+endpoint.routing_profile	Default
+endpoint.address	1.2.3.4:443
+endpoint.address	[2001:db8::1]:443
+endpoint.dns_upstream	tls://1.1.1.1
+routing_profile.name	Default
+routing_profile.mode	bypass
+network.mtu	1400
+network.table	880
+network.fwmark	0x9527
+network.blackhole_on_down	1
+network.include_router_traffic	0
+network.lan_devices	br-lan
+domains.direct	legacy.example'
+
+docker run --rm -d --name "$LAB_BYPASS" -v "$(pwd)":/ws tt-backend-rootfs sleep 300 >/dev/null || tt_skip "cannot start the bypass lab container"
+printf '%s\n' "$BYPASS_RECORDS" | docker exec -i "$LAB_BYPASS" sh -c 'cat > /var/etc/trusttunnel/settings.tsv' >/dev/null 2>&1
+check_goldens "$LAB_BYPASS" "$BASE/goldens/bypass"
+
+# --- Phase G: the bypass profile with one tunneled domain rule --------------
+# The same state plus one VPN rule: the check probes that rule through the
+# tunnel (the baked curl stub answers ok), pinning the "tunnel reaches"
+# ok branch.
+docker exec "$LAB_BYPASS" sh -c "printf 'routing_profile.vpn_rules\ttelegram.org\n' >> /var/etc/trusttunnel/settings.tsv" >/dev/null 2>&1
+check_goldens "$LAB_BYPASS" "$BASE/goldens/bypass-rule"
+
+# --- Phase H: the tunneled rule is unreachable through the tunnel -----------
+# The via leg fails: the check reports the rule as unreachable through the
+# tunnel — the "no response from ... through the tunnel" failure branch.
+docker exec "$LAB_BYPASS" sh -c '
+cat > /usr/bin/curl <<"EOF"
+#!/bin/sh
+case "$*" in
+	*--interface*) exit 1 ;;
+	*) echo "203.0.113.77" ;;
+esac
+EOF
+chmod +x /usr/bin/curl' >/dev/null 2>&1
+check_goldens "$LAB_BYPASS" "$BASE/goldens/bypass-rule-off"
+
+# --- Phase I: a wildcard-only bypass profile ----------------------------------
+# The vendor client tunnels only the SUBDOMAINS of a *.domain rule (the
+# apex goes direct), so a wildcard rule has no canonical host to probe:
+# the check must report the remark, not probe the apex and describe the
+# wrong path. Pins the "the tunneled rules cannot be probed" warn branch
+# for wildcards.
+WILDCARD_RECORDS='main.enabled	1
+main.log_level	debug
+endpoint.hostname	vpn.example.com
+endpoint.username	alice
+endpoint.password	s3cret
+endpoint.protocol	http2
+endpoint.anti_dpi	1
+endpoint.post_quantum	0
+endpoint.skip_verification	1
+endpoint.has_ipv6	0
+endpoint.custom_sni	vpn.example.com
+endpoint.client_random	0a0b0c/0f0f0f
+endpoint.routing_profile	Default
+endpoint.address	1.2.3.4:443
+endpoint.address	[2001:db8::1]:443
+endpoint.dns_upstream	tls://1.1.1.1
+routing_profile.name	Default
+routing_profile.mode	bypass
+routing_profile.vpn_rules	*.telegram.org
+network.mtu	1400
+network.table	880
+network.fwmark	0x9527
+network.blackhole_on_down	1
+network.include_router_traffic	0
+network.lan_devices	br-lan
+domains.direct	legacy.example'
+
+docker run --rm -d --name "$LAB_WILDCARD" -v "$(pwd)":/ws tt-backend-rootfs sleep 300 >/dev/null || tt_skip "cannot start the wildcard lab container"
+printf '%s\n' "$WILDCARD_RECORDS" | docker exec -i "$LAB_WILDCARD" sh -c 'cat > /var/etc/trusttunnel/settings.tsv' >/dev/null 2>&1
+check_goldens "$LAB_WILDCARD" "$BASE/goldens/bypass-wildcard"
+
+# --- Phase J: a wildcard bypass rule in VPN mode ------------------------------
+# bypass_rules = ['*.ipify.org'] must make the echo selection skip
+# api.ipify.org (it is a subdomain of ipify.org, so the client sends it
+# out directly) and pick the next echo host. The curl stub answers only
+# for ifconfig.me — with a regression in the wildcard matching the check
+# would probe api.ipify.org, get the fallback on both legs, and the
+# golden would flip to the identical-addresses failure.
+VPN_WILDCARD_RECORDS='main.enabled	1
+main.log_level	debug
+endpoint.hostname	vpn.example.com
+endpoint.username	alice
+endpoint.password	s3cret
+endpoint.protocol	http2
+endpoint.anti_dpi	1
+endpoint.post_quantum	0
+endpoint.skip_verification	1
+endpoint.has_ipv6	0
+endpoint.custom_sni	vpn.example.com
+endpoint.client_random	0a0b0c/0f0f0f
+endpoint.routing_profile	Default
+endpoint.address	1.2.3.4:443
+endpoint.address	[2001:db8::1]:443
+endpoint.dns_upstream	tls://1.1.1.1
+routing_profile.name	Default
+routing_profile.mode	vpn
+routing_profile.vpn_rules	telegram.org
+routing_profile.bypass_rules	*.ipify.org
+network.mtu	1400
+network.table	880
+network.fwmark	0x9527
+network.blackhole_on_down	1
+network.include_router_traffic	0
+network.lan_devices	br-lan
+domains.direct	legacy.example'
+
+docker run --rm -d --name "$LAB_WILDCARD_ECHO" -v "$(pwd)":/ws tt-backend-rootfs sleep 300 >/dev/null || tt_skip "cannot start the wildcard-echo lab container"
+printf '%s\n' "$VPN_WILDCARD_RECORDS" | docker exec -i "$LAB_WILDCARD_ECHO" sh -c 'cat > /var/etc/trusttunnel/settings.tsv' >/dev/null 2>&1
+docker exec "$LAB_WILDCARD_ECHO" sh -c '
+cat > /usr/bin/curl <<"EOF"
+#!/bin/sh
+case "$*" in
+	*--interface*ifconfig.me*) echo "198.51.100.7" ;;
+	*ifconfig.me*) echo "203.0.113.77" ;;
+	*) echo "203.0.113.77" ;;
+esac
+EOF
+chmod +x /usr/bin/curl' >/dev/null 2>&1
+check_goldens "$LAB_WILDCARD_ECHO" "$BASE/goldens/vpn-wildcard-bypass"
 
 tt_test_summary

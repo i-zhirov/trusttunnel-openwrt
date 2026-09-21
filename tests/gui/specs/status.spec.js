@@ -1,22 +1,26 @@
 'use strict';
 
 // Status view (status.js): verdict banner for each status shape, facts
-// table, the Start/Stop/Restart actions, the rule preview modal for the
+// table, the Start/Stop actions, the rule preview modal for the
 // effective profile (and the legacy do-not-bypass list), and the 10 s
 // status poll. (The client log lives on its own view: log.spec.js.)
 
 const { test, expect } = require('@playwright/test');
 const {
-	openView, stubReset, stubSet, framesFor, waitForFrames, installClock, button
+	openView, stubReset, stubSet, framesFor, waitForFrames, installClock, clickButton
 } = require('../helpers');
 
-// The fields the view's verdict()/renderFacts() read.
+// The fields the view's verdict()/renderFacts() read. The counters are
+// null to mirror the baked golden (no tun0 in the lab netns): the
+// traffic row is hidden unless a test overrides them.
 const BASE = {
 	enabled: true, running: true, mode: 'tun', device_up: true, rule: true,
 	table: true, nft: true, client_installed: true,
+	server: 'Default',
 	endpoint_hostname: 'vpn.example.com', addresses: [ '1.2.3.4:443' ],
 	routing_profile: 'Default', routing_mode: 'vpn', vpn_mode: 'general',
-	proxy_address: null, listener_up: null
+	proxy_address: null, listener_up: null,
+	rx_bytes: null, tx_bytes: null
 };
 
 test.beforeEach(async ({ page }) => {
@@ -30,7 +34,8 @@ test('healthy status shows no banner, working state and facts', async ({ page })
 	await expect(page.locator('#view')).toContainText('working');
 	await expect(page.locator('#view')).toContainText(
 		'Profile Default — VPN, everything except the bypass rules is tunneled');
-	await expect(page.locator('#view code')).toContainText('vpn.example.com');
+	// The Server fact names the ACTIVE server with its TLS hostname.
+	await expect(page.locator('#view code')).toContainText('Default — vpn.example.com');
 });
 
 test('disabled service shows the info verdict', async ({ page }) => {
@@ -83,6 +88,37 @@ test('proxy mode without a live listener shows the warning verdict', async ({ pa
 		'Connecting to vpn.example.com');
 });
 
+test('tun mode with counters shows the traffic row with the totals', async ({ page }) => {
+	// The rates are the poll delta: on the first render no baseline
+	// exists, so the row shows the cumulative totals (deterministic) and
+	// placeholder rates.
+	await stubSet(page, { status: { ...BASE, rx_bytes: 1048576, tx_bytes: 524288 } });
+	await openView(page, 'status');
+
+	await expect(page.locator('#view')).toContainText('Traffic');
+	await expect(page.locator('#view')).toContainText(
+		'Total 1.0 MiB down, 512.0 KiB up');
+});
+
+test('proxy mode with meter counters shows the traffic row', async ({ page }) => {
+	await stubSet(page, {
+		status: { ...BASE, mode: 'proxy', device: null, device_up: false,
+		          listener_up: true, proxy_address: '0.0.0.0:1080',
+		          rx_bytes: 4096, tx_bytes: 2048 }
+	});
+	await openView(page, 'status');
+
+	await expect(page.locator('#view')).toContainText('Traffic');
+	await expect(page.locator('#view')).toContainText(
+		'Total 4.0 KiB down, 2.0 KiB up');
+});
+
+test('without counters the traffic row is hidden', async ({ page }) => {
+	await openView(page, 'status');
+
+	await expect(page.locator('#view')).not.toContainText('Traffic');
+});
+
 test('bypass profile shows the bypass success wording', async ({ page }) => {
 	await stubSet(page, { status: { ...BASE, routing_profile: 'Bypass', routing_mode: 'bypass', vpn_mode: 'selective' } });
 	await openView(page, 'status');
@@ -106,31 +142,30 @@ test('verdict and facts render immediately, without waiting for the poll', async
 		'Profile Default — VPN, everything except the bypass rules is tunneled');
 });
 
-test('Start/Stop/Restart call the service method with the right action', async ({ page }) => {
+test('Start/Stop call the service method with the right action', async ({ page }) => {
 	await openView(page, 'status');
 
-	await button(page, 'Enable').click();
+	// The restart verb is deliberately not offered: from the UI it is
+	// stop + start, so it would duplicate Start.
+	await expect(page.locator('#view button', { hasText: 'Restart service' })).toHaveCount(0);
+
+	await clickButton(page, 'Start');
 	await waitForFrames(page, 'luci.trusttunnel', 'service', 1);
 	let frames = await framesFor(page, 'luci.trusttunnel', 'service');
 	expect(frames[0].args.action).toBe('start');
 	await expect(page.locator('#maincontent .alert-message')).toContainText('Done');
 
-	await button(page, 'Disable').click();
+	await clickButton(page, 'Stop');
 	await waitForFrames(page, 'luci.trusttunnel', 'service', 2);
 	frames = await framesFor(page, 'luci.trusttunnel', 'service');
 	expect(frames[1].args.action).toBe('stop');
-
-	await button(page, 'Restart service').click();
-	await waitForFrames(page, 'luci.trusttunnel', 'service', 3);
-	frames = await framesFor(page, 'luci.trusttunnel', 'service');
-	expect(frames[2].args.action).toBe('restart');
 });
 
 test('service failure surfaces a warning notification', async ({ page }) => {
 	await stubSet(page, { service: { code: 0, output: 'boom', not_running: true } });
 	await openView(page, 'status');
 
-	await button(page, 'Enable').click();
+	await clickButton(page, 'Start');
 	await expect(page.locator('#maincontent .alert-message.warning')).toContainText(
 		'The service did not start. Open the Client log tab to see why.');
 });
@@ -141,7 +176,7 @@ test('Preview rules checks the assigned profile rule by rule', async ({ page }) 
 	// golden for bank.example verdicts 'direct'.
 	await openView(page, 'status');
 
-	await button(page, 'Preview rules').click();
+	await clickButton(page, 'Preview rules');
 	const modal = page.locator('#modal_overlay .modal');
 	await expect(modal).toContainText('Rule preview — Default');
 	await expect(modal).toContainText(
@@ -174,7 +209,7 @@ test('Preview rules without a profile shows the do-not-bypass list', async ({ pa
 	});
 	await openView(page, 'status');
 
-	await button(page, 'Preview rules').click();
+	await clickButton(page, 'Preview rules');
 	const modal = page.locator('#modal_overlay .modal');
 	await expect(modal).toContainText('Rule preview');
 	await expect(modal).toContainText('No routing profile is assigned');

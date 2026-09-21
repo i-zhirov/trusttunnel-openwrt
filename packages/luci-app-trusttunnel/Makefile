@@ -4,16 +4,14 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-trusttunnel
 
-# Version from the release tag at build time: a build on tag vX.Y.Z ships
-# X.Y.Z, which both package managers see as strictly higher than the
-# previous release (apk names read X.Y.Z-r1, the 22.03 luci.mk ignores
-# PKG_RELEASE for ipk versions). `git describe` reports the nearest
-# reachable tag, so a build on a tag carries exactly that version; the
-# fallback below applies only when no tag is reachable (local builds,
-# manual re-deploys, a feed without .git). Keep the fallback equal to
-# the last released version; release.yml fails a tag build whose artifact
-# does not carry the tag.
-PKG_VERSION:=$(strip $(shell v="$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')"; [ -n "$$v" ] && printf '%s' "$$v" || printf '%s' 1.0.26))
+# The version lives in this Makefile, not in a git tag: every release PR
+# bumps it, and both package managers see the new version as strictly
+# higher than the previous release (apk names read X.Y.Z-r1, the 22.03
+# luci.mk ignores PKG_RELEASE for ipk versions). release.yml fails a
+# build whose artifact does not carry PKG_VERSION and refuses a version
+# not strictly higher than the last released one — the Makefile is the
+# single source of truth for what a release carries.
+PKG_VERSION:=1.0.31
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=Ilia Zhirov <i.zhirov@adguard.com>

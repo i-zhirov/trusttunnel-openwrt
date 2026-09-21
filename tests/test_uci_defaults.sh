@@ -165,21 +165,26 @@ EOF
 }
 
 # The default trusttunnel fixture shape is the shipped-config shape: the
-# proxy section, a routing_profile section and the UI-only about section
-# already present, so the seed blocks are a no-op. The upgrade shape (no
-# profile, populated domains.direct, no proxy, no about section) is
-# written by the scenarios that need the seed blocks to fire.
+# proxy section, an endpoint with the Default name, main.endpoint already
+# selecting it, and a routing_profile section present, so every seed
+# block is a no-op. The upgrade shape (no name, no selector, no profile,
+# populated domains.direct, no proxy) is written by the scenarios that
+# need the seed blocks to fire.
 ucd_trusttunnel_default() {
     ucd_t_dir=$1
     cat > "$ucd_t_dir/trusttunnel" <<'EOF'
 config proxy 'proxy'
 	option address '127.0.0.1:1080'
 
+config endpoint 'endpoint'
+	option name 'Default'
+
+config main 'main'
+	option endpoint 'Default'
+
 config routing_profile
 	option name 'Default'
 	option mode 'vpn'
-
-config about 'about'
 EOF
 }
 
@@ -393,8 +398,12 @@ EOF
         "upgrade: every domains.direct value moved into bypass_rules"
     assert_contains "$ucd_tt1" "endpoint.routing_profile='Default'" \
         "upgrade: the endpoint references the seeded profile"
-    assert_contains "$ucd_tt1" "trusttunnel.about=about" \
-        "upgrade: the UI-only about section (Versions tab) is created"
+    assert_contains "$ucd_tt1" "endpoint.name='Default'" \
+        "upgrade: the migrated endpoint carries the Default name"
+    assert_contains "$ucd_tt1" "main.endpoint='Default'" \
+        "upgrade: the endpoint is selected as the active server"
+    assert_eq "1" "$(ucd_grep_count 'selected the Default endpoint as the active server' "$ucd_out")" \
+        "upgrade: the server-seed log line appears exactly once"
     assert_contains "$ucd_tt1" "trusttunnel.proxy=proxy" \
         "upgrade: the proxy section is seeded"
     assert_contains "$ucd_tt1" "proxy.address='127.0.0.1:1080'" \
@@ -411,8 +420,6 @@ EOF
         "upgrade: no new log lines on run 2"
     assert_eq "1" "$(ucd_grep_count 'created the default routing profile; the old direct list moved into its bypass rules' "$ucd_out")" \
         "upgrade: the seed log line appears exactly once"
-    assert_eq "1" "$(ucd_grep_count 'created the about section for the Versions tab' "$ucd_out")" \
-        "upgrade: the about-creation log line appears exactly once"
     assert_eq "1" "$(ucd_grep_count 'created the proxy section with the default listener address' "$ucd_out")" \
         "upgrade: the proxy seed log line appears exactly once"
     assert_eq "1" "$(ucd_grep_count '@routing_profile\[[0-9]*\]=routing_profile' "$ucd_tt2")" \
@@ -499,12 +506,54 @@ EOF
         "idempotent: the seeded profile is not duplicated"
     assert_eq "1" "$(ucd_grep_count 'created the default routing profile; the old direct list moved into its bypass rules' "$ucd_out")" \
         "idempotent: the seed log line appears exactly once"
-    assert_eq "1" "$(ucd_grep_count 'created the about section for the Versions tab' "$ucd_out")" \
-        "idempotent: the about-creation log line appears exactly once"
-    assert_eq "1" "$(ucd_grep_count 'trusttunnel.about=about' "$ucd_tt2")" \
-        "idempotent: the about section is not duplicated"
     assert_eq "1" "$(ucd_grep_count 'created the proxy section with the default listener address' "$ucd_out")" \
         "idempotent: the proxy seed log line appears exactly once"
+    assert_contains "$ucd_tt2" "endpoint.name='Default'" \
+        "idempotent: the endpoint keeps its seeded name after run 2"
+    assert_contains "$ucd_tt2" "main.endpoint='Default'" \
+        "idempotent: the active server stays selected after run 2"
+    assert_eq "1" "$(ucd_grep_count 'selected the Default endpoint as the active server' "$ucd_out")" \
+        "idempotent: the server-seed log line appears exactly once"
+}
+
+scenario_stale() {
+    ucd_s_dir=$UCD_FIXTURE_ROOT/stale
+    mkdir -p "$ucd_s_dir"
+    cat > "$ucd_s_dir/firewall" <<'EOF'
+config defaults
+	option input 'ACCEPT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+EOF
+    # A selector that names no section: a server renamed or deleted
+    # outside the UI (e.g. over ssh). The heal must re-point it at the
+    # first remaining server, and the second run must change nothing.
+    cat > "$ucd_s_dir/trusttunnel" <<'EOF'
+config endpoint 'endpoint'
+	option name 'Default'
+	option hostname 'vpn.example.com'
+
+config main 'main'
+	option endpoint 'Ghost'
+EOF
+    ucd_stubs "$ucd_s_dir"
+    ucd_run stale 1 ""
+
+    ucd_out=$(cat "$ucd_s_dir/out")
+    ucd_tt2=$(ucd_block TT2 "$ucd_out")
+
+    assert_contains "$ucd_out" "SCRIPT_EXIT=0" \
+        "stale: run 1 exits 0"
+    assert_contains "$ucd_out" "SCRIPT_EXIT2=0" \
+        "stale: run 2 exits 0"
+    assert_contains "$ucd_tt2" "main.endpoint='Default'" \
+        "stale: the dangling reference is re-pointed at the first server"
+    assert_contains "$ucd_out" "TT_IDENTICAL=yes" \
+        "stale: the healed state is not touched by run 2"
+    assert_contains "$ucd_out" "LOG_STABLE=yes" \
+        "stale: no new log lines on run 2"
+    assert_eq "1" "$(ucd_grep_count 'selected the Default endpoint as the active server' "$ucd_out")" \
+        "stale: the heal log line appears exactly once"
 }
 
 # --- runner -------------------------------------------------------------------
@@ -520,7 +569,7 @@ ucd_matches() {
     esac
 }
 
-for ucd_scenario in fresh duplicated legacy upgrade side-effects idempotent; do
+for ucd_scenario in fresh duplicated legacy upgrade side-effects idempotent stale; do
     if [ -z "$TT_UCD_FILTER" ] || ucd_matches "$ucd_scenario"; then
         echo "== scenario: $ucd_scenario"
         case $ucd_scenario in

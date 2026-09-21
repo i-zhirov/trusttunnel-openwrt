@@ -66,11 +66,23 @@ fi
 [ -f "$LUCI_HTDOCS/luci-static/resources/luci.js" ] ||
 	{ echo "FAIL: luci-base resources missing at $LUCI_HTDOCS; run once without --no-fetch, or populate tests/gui/.cache with the pinned tarball" >&2; exit 1; }
 
+# The bootstrap theme gives the pages the production styling (cascade.css +
+# mobile.css). An old cache without it still serves, just unstyled — say so.
+THEME_HTDOCS="$CACHE/themes/luci-theme-bootstrap/htdocs"
+THEME_CSS="$THEME_HTDOCS/luci-static/bootstrap/cascade.css"
+if [ -f "$THEME_CSS" ]; then
+	THEME_ARG="--theme $THEME_HTDOCS"
+else
+	THEME_ARG=""
+	echo "  note: bootstrap theme css missing at $THEME_CSS — pages render unstyled; remove tests/gui/.cache and re-run to fetch it" >&2
+fi
+
 node "$HERE/stub/server.js" \
 	--port "$PORT" \
 	--app "$ROOT/packages/luci-app-trusttunnel/htdocs" \
 	--luci "$LUCI_HTDOCS" \
-	--goldens "$ROOT/tests/backend/goldens" &
+	--goldens "$ROOT/tests/backend/goldens" \
+	$THEME_ARG &
 SRV=$!
 
 trap 'exit 0' INT TERM

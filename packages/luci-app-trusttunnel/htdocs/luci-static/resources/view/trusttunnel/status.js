@@ -28,6 +28,25 @@ var callCheckDomain = rpc.declare({
 	expect: {}
 });
 
+// The previous poll's counters, for the rate delta in the traffic row.
+// Module-level on purpose: the view instance lives as long as the view.
+var lastTraffic = null;
+
+// 1024-based byte formatting shared by the traffic totals and the
+// poll-delta rates ("1.2 MiB" and "340 KiB/s").
+function fmtBytes(n) {
+	var units = [ 'B', 'KiB', 'MiB', 'GiB', 'TiB' ];
+	var i = 0;
+
+	n = Number(n) || 0;
+	while (n >= 1024 && i < units.length - 1) {
+		n /= 1024;
+		i++;
+	}
+
+	return (i ? n.toFixed(1) : n.toFixed(0)) + ' ' + units[i];
+}
+
 // Header and rows for the rule preview table, mirroring the Check a
 // domain tool: the rule itself, a verdict badge and the backend's reason.
 function verdictHead() {
@@ -60,6 +79,12 @@ function verdictRow(rule, res) {
 }
 
 return view.extend({
+	// Nothing to save on this page: without the nulls LuCI renders the
+	// default Save & Apply bar, which would sit here dead.
+	handleSaveApply: null,
+	handleSave: null,
+	handleReset: null,
+
 	verdict: function(st) {
 		var host = st.endpoint_hostname || (st.addresses || [])[0] || '';
 
@@ -163,6 +188,43 @@ return view.extend({
 		]);
 	},
 
+	// The traffic cell for the facts table: cumulative bytes from the
+	// status plus the poll-delta rates. A counter reset (a reconnected
+	// tunnel starts from zero) rebaselines the snapshot, so that poll
+	// shows totals only. Null counters — proxy mode without the meter,
+	// tun mode without a device — hide the row entirely.
+	trafficCell: function(st) {
+		var rx = st.rx_bytes, tx = st.tx_bytes;
+
+		if (rx == null || tx == null) {
+			lastTraffic = null;
+			return null;
+		}
+
+		var now = Date.now();
+		var down = '—', up = '—';
+
+		if (lastTraffic && rx >= lastTraffic.rx && tx >= lastTraffic.tx) {
+			var dt = (now - lastTraffic.t) / 1000;
+
+			if (dt > 0.5) {
+				down = fmtBytes((rx - lastTraffic.rx) / dt) + '/s';
+				up = fmtBytes((tx - lastTraffic.tx) / dt) + '/s';
+			}
+		}
+
+		lastTraffic = { rx: rx, tx: tx, t: now };
+
+		return E('span', {}, [
+			E('strong', _('Down %s').format(down)),
+			' · ',
+			E('strong', _('Up %s').format(up)),
+			E('br'),
+			E('small', { 'class': 'text-muted' },
+				_('Total %s down, %s up').format(fmtBytes(rx), fmtBytes(tx)))
+		]);
+	},
+
 	renderFactRows: function(st) {
 		var rows = [];
 
@@ -181,11 +243,23 @@ return view.extend({
 			rows.push(this.row(_('Mode'), _('Everything through VPN')));
 		}
 
-		if (st.endpoint_hostname)
-			rows.push(this.row(_('Server'), E('code', st.endpoint_hostname)));
+		// The Server row names the ACTIVE server (the name the Settings
+		// page manages) with its TLS hostname; without a name — a legacy
+		// status or no server selected — the hostname stands alone.
+		if (st.server || st.endpoint_hostname) {
+			var serverText = st.server
+				? (st.endpoint_hostname ? st.server + ' — ' + st.endpoint_hostname : st.server)
+				: st.endpoint_hostname;
+
+			rows.push(this.row(_('Server'), E('code', serverText)));
+		}
 
 		if (st.mode === 'proxy' && st.proxy_address)
 			rows.push(this.row(_('Proxy'), E('code', st.proxy_address)));
+
+		var traffic = this.trafficCell(st);
+		if (traffic)
+			rows.push(this.row(_('Traffic'), traffic));
 
 		return E('table', { 'class': 'table' }, rows);
 	},
@@ -316,6 +390,10 @@ return view.extend({
 	},
 
 	load: function() {
+		// The traffic baseline must not survive a view re-entry: the
+		// rates are poll deltas, so a baseline from a previous visit
+		// would paint a rate averaged over the whole away interval.
+		lastTraffic = null;
 		return callStatus();
 	},
 
@@ -341,24 +419,24 @@ return view.extend({
 
 		poll.add(refreshStatus, 10);
 
-		// The three service actions are declared as data and turned into
-		// buttons here, so the row stays a single place to extend.
-		var controls = [
-			{ verb: 'start', tone: 'apply', word: _('Enable') },
-			{ verb: 'stop', tone: 'reset', word: _('Disable') },
-			{ verb: 'restart', tone: 'action', word: _('Restart service') }
-		];
+		// The service actions and the rule preview are one row of buttons.
+		// There is deliberately no restart button: from the UI it is stop
+		// + start (the routing-preserving restart is internal to the
+		// settings apply path), so it would only duplicate Start.
 		var controlRow = [];
-
-		controls.forEach(function(c, i) {
-			if (i)
+		var addControl = function(tone, word, handler) {
+			if (controlRow.length)
 				controlRow.push(' ');
 
 			controlRow.push(E('button', {
-				'class': 'cbi-button cbi-button-' + c.tone,
-				'click': function(ev) { me.runAction(c.verb, ev); }
-			}, c.word));
-		});
+				'class': 'cbi-button cbi-button-' + tone,
+				'click': handler
+			}, word));
+		};
+
+		addControl('apply', _('Start'), function(ev) { me.runAction('start', ev); });
+		addControl('reset', _('Stop'), function(ev) { me.runAction('stop', ev); });
+		addControl('action', _('Preview rules'), function(ev) { me.handlePreview(me._lastStatus); });
 
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', { 'class': 'cbi-map-title' }, _('TrustTunnel')),
@@ -368,13 +446,7 @@ return view.extend({
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', _('Current state')),
-				factRows,
-				E('div', { 'style': 'margin-top:0.75em' }, [
-					E('button', {
-						'class': 'cbi-button cbi-button-action',
-						'click': function(ev) { me.handlePreview(me._lastStatus); }
-					}, _('Preview rules'))
-				])
+				factRows
 			])
 		]);
 	}

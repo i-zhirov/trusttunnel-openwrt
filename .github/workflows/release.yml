@@ -1,7 +1,11 @@
 # Release pipeline: builds the TrustTunnel packages and publishes the
 # package repositories the installer configures on routers.
 #
-# A tag push (v*) or a manual workflow_dispatch run produces:
+# Releases are PR-based: the app version lives in the Makefile
+# (packages/luci-app-trusttunnel/Makefile, PKG_VERSION), and a release is
+# any PR that bumps it — the version gate refuses a version not strictly
+# higher than the last released one. Merging such a PR to main (or a
+# workflow_dispatch run) produces:
 #   - the noarch LuCI packages and the per-architecture client builds,
 #   - per-architecture signed repositories in the official OpenWrt layout
 #     (releases/<version>/packages/<arch>/trusttunnel/ on the site: the
@@ -11,21 +15,48 @@
 #   - an end-to-end integration verification of the release's own x86-64
 #     packages (the dockerized suite from tests/integration/) that the
 #     publish step waits for,
-#   - a GitHub release carrying the package files (tag pushes only), and
+#   - a GitHub release carrying the package files (created once for the
+#     merged version; a re-publish of an already released version skips
+#     it),
 #   - the GitHub Pages site that serves the repositories (the URL the
 #     installer writes into the router's package-manager configuration).
 #
 # The repositories are cumulative: the packages of every prior release
 # are merged into the fresh build's repositories, so every released
 # version stays installable — pinning and downgrading keep working.
+#
+# The pull_request trigger is the preview: it runs the version gate, the
+# SDK builds and the integration verification against the proposed
+# version but publishes nothing (no secrets are involved, so fork PRs
+# are covered too). Only main pushes and dispatch runs publish.
 
 name: release
 
 on:
+  # The preview: gates the proposed version and builds/verifies it. The
+  # path filter keeps the expensive SDK matrix off non-release PRs.
+  pull_request:
+    paths:
+      - "packages/**"
+  # The publish: merging a release PR (a packages/ change with a bumped
+  # version) ships the repositories, the GitHub release and the site.
+  # Anything else (repo-site templates, install.sh, docs) is not a
+  # release: it reaches the site with the next release run (or a manual
+  # dispatch), exactly as it did under tag pushes.
   push:
-    tags:
-      - "v*"
+    branches: [ main ]
+    paths:
+      - "packages/**"
   workflow_dispatch:
+
+# Main publishes serialize: a new push while a publish runs waits for it
+# instead of cancelling it — a cancelled publish would lose its release,
+# and the next version gate would then compare against a stale "last
+# release". PR previews queue too (preview and publish live in separate
+# groups, so a preview never blocks a publish).
+concurrency:
+  group: release-${{ github.event_name == 'pull_request' && 'preview' || 'publish' }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   # contents: create the GitHub release with the package files. pages and
@@ -53,6 +84,53 @@ jobs:
     steps:
       - name: Check out the feed
         uses: actions/checkout@v7
+
+      # The version lives in the app Makefile (a release PR bumps it):
+      # every step that needs it reads it from there, so the workflow
+      # never holds a second copy. The plain assignment is what makes the
+      # sed work — keep it a literal PKG_VERSION:=X.Y.Z.
+      - name: Read the package version
+        run: |
+          version="$(sed -n 's/^PKG_VERSION:=//p' packages/luci-app-trusttunnel/Makefile)"
+          if [ -z "$version" ]; then
+            echo "::error::cannot read PKG_VERSION from packages/luci-app-trusttunnel/Makefile"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_ENV"
+
+      # The monotonicity gate: a release must be a strictly higher
+      # version than the last released one (gh queries the API, so no
+      # local tag history is needed, and releases are created in version
+      # order, so the newest release IS the highest version). It runs on
+      # the PR preview — failing the PR that forgot to bump — and on the
+      # merge, where a merged non-bump would otherwise publish stale
+      # versions. Dispatch runs skip it: their role is re-publishing the
+      # site at an already released version.
+      - name: Check the version is higher than the last released one
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          last="$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true)"
+          if [ -z "$last" ]; then
+            echo "No previous release; skipping the check."
+            exit 0
+          fi
+          if awk -v a="$version" -v b="${last#v}" 'BEGIN {
+              na = split(a, A, "."); nb = split(b, B, ".");
+              n = (na > nb) ? na : nb;
+              for (i = 1; i <= n; i++) { A[i] = A[i] + 0; B[i] = B[i] + 0 }
+              for (i = 1; i <= n; i++) {
+                if (A[i] > B[i]) exit 0
+                if (A[i] < B[i]) exit 1
+              }
+              exit 1
+            }'; then
+            echo "PKG_VERSION $version is higher than the last release $last."
+          else
+            echo "::error::PKG_VERSION $version is not higher than the last release $last; bump it in packages/luci-app-trusttunnel/Makefile"
+            exit 1
+          fi
 
       # The SDK action mounts the whole repository (the feed) and the
       # artifacts directory into its container and chowns both paths
@@ -121,25 +199,23 @@ jobs:
             exit 1
           fi
 
-      # The Makefile derives the version from the git tag, so on a tag
-      # push the built file name must match the tag exactly — the tag is
-      # the single source of truth for what a release carries (a version
-      # whose packages did not match their tag shipped unusable releases
-      # in the past). Dispatch runs build whatever HEAD is checked out, so
-      # the assertion is skipped there.
-      - name: Assert the package file name matches the tag
-        if: startsWith(github.ref, 'refs/tags/')
+      # The Makefile declares the version, so the built file name must
+      # match PKG_VERSION exactly — the Makefile is the single source of
+      # truth for what a release carries (a version whose packages did
+      # not match it shipped unusable releases in the past, back when the
+      # tag was the version source). Unlike the old tag-based check this
+      # runs on every event, including the PR preview and dispatch.
+      - name: Assert the package file name matches the Makefile version
         env:
           EXT: ${{ matrix.ext }}
         run: |
-          tag="${GITHUB_REF_NAME#v}"
           if [ "$EXT" = apk ]; then
-            expected="dist/luci-app-trusttunnel-${tag}-r1.apk"
+            expected="dist/luci-app-trusttunnel-${version}-r1.apk"
           else
-            expected="dist/luci-app-trusttunnel_${tag}_all.ipk"
+            expected="dist/luci-app-trusttunnel_${version}_all.ipk"
           fi
           if [ ! -f "$expected" ]; then
-            echo "::error::the built package does not match the tag: expected $expected"
+            echo "::error::the built package does not match PKG_VERSION: expected $expected"
             exit 1
           fi
 
@@ -538,15 +614,29 @@ jobs:
   publish-repo:
     name: Assemble and publish the repositories
     needs: [build, build-client, verify-integration]
-    # Tag pushes publish a release; dispatch runs publish the repositories
-    # and the site. Plain branch CI runs never publish anything.
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    # Main pushes (a merged release PR) and dispatch runs publish. The
+    # pull_request trigger only previews: it never publishes, so a PR —
+    # including a fork PR — cannot touch the repositories or the site.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       # Provides the repo-site templates and the committed public halves
       # of the signing keys (key-build.pub, opkg-key.pub).
       - name: Check out the repository
         uses: actions/checkout@v7
+
+      # The version under release — the same PKG_VERSION the build jobs
+      # built — and its vX.Y.Z tag, which labels the GitHub release, the
+      # site README and the prior-release exclusion below.
+      - name: Read the release version
+        run: |
+          version="$(sed -n 's/^PKG_VERSION:=//p' packages/luci-app-trusttunnel/Makefile)"
+          if [ -z "$version" ]; then
+            echo "::error::cannot read PKG_VERSION from packages/luci-app-trusttunnel/Makefile"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_ENV"
+          echo "tag=v${version}" >> "$GITHUB_ENV"
 
       - name: Download the LuCI packages (apk)
         uses: actions/download-artifact@v7
@@ -576,9 +666,9 @@ jobs:
           merge-multiple: true
 
       # The GitHub release is a second copy of the repository contents
-      # (see the upload step below): every released tag carries exactly
-      # the packages that were published to the repositories that day.
-      # Pull them all so the repositories keep serving every prior
+      # (see the create step below): every released version carries
+      # exactly the packages that were published to the repositories that
+      # day. Pull them all so the repositories keep serving every prior
       # version, not just the newest. gh queries the API, so no local
       # tag history is needed (the checkout is shallow).
       - name: Download the prior release artifacts
@@ -587,10 +677,11 @@ jobs:
         run: |
           mkdir -p staging/prior-apk staging/prior-opkg
           # The release being built is excluded — its freshly built
-          # packages are staged by the build jobs. On a dispatch run
-          # the ref is a branch name, which matches no release, so
-          # every release is kept.
-          exclude="$GITHUB_REF_NAME"
+          # packages are staged by the build jobs. On a main push the
+          # tag does not exist yet (it is created below), so nothing is
+          # excluded; on a dispatch run at an already released version
+          # the tag matches that release and exactly it is kept out.
+          exclude="$tag"
           tags="$(gh release list --limit 100 --json tagName,isDraft --jq '.[] | select(.isDraft | not) | .tagName')"
           for tag in $tags; do
             [ "$tag" = "$exclude" ] && continue
@@ -905,17 +996,29 @@ jobs:
               sh /verify.sh
           done
 
-      # Uploading from this single job — never from the matrix jobs —
-      # makes the release a single writer, and the tag-only condition
-      # keeps dispatch runs away from the releases entirely.
-      - name: Upload the package files to the GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            staging/luci-apk/*.apk
-            staging/apk-pkgs/trusttunnel-client-*.apk
-            staging/luci-ipk/*.ipk
+      # Creating from this single job — never from the matrix jobs —
+      # makes the release a single writer, and the concurrency group
+      # serializes concurrent publishes. gh creates the vX.Y.Z tag at
+      # the merge commit, so no tag push is involved; the release is
+      # created only for the freshly merged version, and a re-publish of
+      # an already released version skips it. Dispatch runs stay away
+      # from the releases entirely, as before.
+      - name: Create the GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; not recreating it."
+            exit 0
+          fi
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --title "$tag" \
+            --notes "TrustTunnel OpenWrt packages $tag. The signed package feeds live on the repository site: https://i-zhirov.github.io/trusttunnel-openwrt/" \
+            staging/luci-apk/*.apk \
+            staging/apk-pkgs/trusttunnel-client-*.apk \
+            staging/luci-ipk/*.ipk \
             staging/opkg-pkgs/*.ipk
 
       # The site is the workflow's direct output: nothing is committed to
@@ -946,9 +1049,10 @@ jobs:
           cp -r repo-site/_layouts site/_layouts
 
           cp repo-site/README.md site/README.md
-          # The ref name lands in the tag slot as-is: on a tag push it is
-          # the tag, on a branch dispatch it is the branch name.
-          sed -i "s/__TAG__/$GITHUB_REF_NAME/g" site/README.md
+          # The tag of the version under release lands in the tag slot
+          # (a dispatch run at an already released version shows that
+          # version's tag; the homepage always names a real release).
+          sed -i "s/__TAG__/$tag/g" site/README.md
 
           # The releases index lists the assembled release trees —
           # generated from the directories themselves, so there is no
