@@ -146,7 +146,7 @@ if (mapBlock) {
 // calls in luci.trusttunnel). A value that matches none of these must be a
 // literal, hence a DIAG_TEXT key.
 const ALLOWLIST = [
-	/^\d+(?:\.\d+){2,}(?:[-+].*)?$/,                      // client version, e.g. 1.1.5
+	/^\d+(?:\.\d+){2,}(?:[-+].*)?$/,                      // client version, e.g. 1.1.7
 	/^(?:[0-9a-fA-F.]+|\[[0-9a-fA-F:]+\]):\d+(?:, (?:[0-9a-fA-F.]+|\[[0-9a-fA-F:]+\]):\d+)*$/, // address list
 	/^\d+(?:\.\d+)? ms average$/,                         // avg_text(): ping summary
 	/^.+ \(.+\)$/,                                        // pname + ' (' + pmode + ')'

@@ -384,7 +384,7 @@ file compiles under the pinned ucode.
 
 - Wraps the vendor's per-CPU-family tarballs
   (`trusttunnel_client-v$(PKG_VERSION)-linux-<family>.tar.gz`, currently
-  `PKG_VERSION:=1.1.5`). On a vendor release, bump `PKG_VERSION` and the
+  `PKG_VERSION:=1.1.7`). On a vendor release, bump `PKG_VERSION` and the
   per-family `PKG_HASH` values together (digests come from the vendor's
   release API).
 - `VENDOR_ARCH` maps `$(ARCH_PACKAGES)` (subtarget arch) → vendor family
