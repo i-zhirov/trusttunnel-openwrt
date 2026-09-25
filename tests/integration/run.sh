@@ -332,20 +332,20 @@ st_archparse() {
 	# file-name|expected-arch|expected-verrev, one case per line. The
 	# <ver>-<rel> must never carry an arch fragment either: the version
 	# filter would then skip same-version prior packages of other archs.
-	_cases="trusttunnel-client_1.1.5-1_x86_64.ipk|x86_64|1.1.5-1
-trusttunnel-client_1.1.5-1_aarch64_generic.ipk|aarch64_generic|1.1.5-1
-trusttunnel-client_1.1.5-1_aarch64_cortex-a53.ipk|aarch64_cortex-a53|1.1.5-1
-trusttunnel-client_1.1.5-1_aarch64_cortex-a72.ipk|aarch64_cortex-a72|1.1.5-1
-trusttunnel-client_1.1.5-1_arm_cortex-a5_vfpv4.ipk|arm_cortex-a5_vfpv4|1.1.5-1
-trusttunnel-client_1.1.5-1_arm_cortex-a7_neon-vfpv4.ipk|arm_cortex-a7_neon-vfpv4|1.1.5-1
-trusttunnel-client_1.1.5-1_arm_cortex-a9.ipk|arm_cortex-a9|1.1.5-1
-trusttunnel-client_1.1.5-1_arm_cortex-a15_neon-vfpv4.ipk|arm_cortex-a15_neon-vfpv4|1.1.5-1
-trusttunnel-client_1.1.5-1_mips_24kc.ipk|mips_24kc|1.1.5-1
-trusttunnel-client_1.1.5-1_mips_mips32.ipk|mips_mips32|1.1.5-1
-trusttunnel-client_1.1.5-1_mipsel_24kc.ipk|mipsel_24kc|1.1.5-1
-trusttunnel-client_1.1.5-1_mipsel_24kc_24kf.ipk|mipsel_24kc_24kf|1.1.5-1
-trusttunnel-client_1.1.5-1_mipsel_74kc.ipk|mipsel_74kc|1.1.5-1
-trusttunnel-client_1.1.5-1_mipsel_mips32.ipk|mipsel_mips32|1.1.5-1"
+	_cases="trusttunnel-client_1.1.7-1_x86_64.ipk|x86_64|1.1.7-1
+trusttunnel-client_1.1.7-1_aarch64_generic.ipk|aarch64_generic|1.1.7-1
+trusttunnel-client_1.1.7-1_aarch64_cortex-a53.ipk|aarch64_cortex-a53|1.1.7-1
+trusttunnel-client_1.1.7-1_aarch64_cortex-a72.ipk|aarch64_cortex-a72|1.1.7-1
+trusttunnel-client_1.1.7-1_arm_cortex-a5_vfpv4.ipk|arm_cortex-a5_vfpv4|1.1.7-1
+trusttunnel-client_1.1.7-1_arm_cortex-a7_neon-vfpv4.ipk|arm_cortex-a7_neon-vfpv4|1.1.7-1
+trusttunnel-client_1.1.7-1_arm_cortex-a9.ipk|arm_cortex-a9|1.1.7-1
+trusttunnel-client_1.1.7-1_arm_cortex-a15_neon-vfpv4.ipk|arm_cortex-a15_neon-vfpv4|1.1.7-1
+trusttunnel-client_1.1.7-1_mips_24kc.ipk|mips_24kc|1.1.7-1
+trusttunnel-client_1.1.7-1_mips_mips32.ipk|mips_mips32|1.1.7-1
+trusttunnel-client_1.1.7-1_mipsel_24kc.ipk|mipsel_24kc|1.1.7-1
+trusttunnel-client_1.1.7-1_mipsel_24kc_24kf.ipk|mipsel_24kc_24kf|1.1.7-1
+trusttunnel-client_1.1.7-1_mipsel_74kc.ipk|mipsel_74kc|1.1.7-1
+trusttunnel-client_1.1.7-1_mipsel_mips32.ipk|mipsel_mips32|1.1.7-1"
 	for _case in $_cases; do
 		_file="${_case%%|*}"
 		_rest="${_case#*|}"

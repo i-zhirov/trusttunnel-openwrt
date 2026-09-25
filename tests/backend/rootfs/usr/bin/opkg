@@ -2,7 +2,7 @@
 # Lab stub: opkg info <pkg>. The apk path answers luci-app-trusttunnel,
 # so only trusttunnel-client is read from opkg (the fallback path).
 if [ "$1" = "info" ]; then
-	[ "$2" = "trusttunnel-client" ] && echo "Version: 1.1.5-1"
+	[ "$2" = "trusttunnel-client" ] && echo "Version: 1.1.7-1"
 	exit 0
 fi
 exit 0
