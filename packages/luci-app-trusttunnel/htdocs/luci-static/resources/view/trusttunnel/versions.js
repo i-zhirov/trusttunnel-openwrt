@@ -37,13 +37,11 @@ return view.extend({
 		// The same shape as the status page's facts table: the generic
 		// table/tr/td classes are what the LuCI theme styles, and the
 		// label column stays left-aligned while the value cell carries
-		// the content. The array around the value keeps a DOM node out
-		// of E()'s second-argument position, which it would read as
-		// attributes.
+		// the content.
 		var row = function(label, value) {
 			return E('tr', { 'class': 'tr' }, [
 				E('td', { 'class': 'td left', 'style': 'width:30%' }, label),
-				E('td', { 'class': 'td' }, [value])
+				E('td', { 'class': 'td' }, value)
 			]);
 		};
 
