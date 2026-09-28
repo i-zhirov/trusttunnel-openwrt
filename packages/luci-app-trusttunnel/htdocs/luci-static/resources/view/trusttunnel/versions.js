@@ -34,10 +34,14 @@ return view.extend({
 	},
 
 	render: function(versions) {
+		// The same shape as the status page's facts table: the generic
+		// table/tr/td classes are what the LuCI theme styles, and the
+		// label column stays left-aligned while the value cell carries
+		// the content.
 		var row = function(label, value) {
-			return E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, label),
-				E('td', { 'class': 'cbi-section-table-cell' }, value)
+			return E('tr', { 'class': 'tr' }, [
+				E('td', { 'class': 'td left', 'style': 'width:30%' }, label),
+				E('td', { 'class': 'td' }, value)
 			]);
 		};
 
@@ -50,7 +54,7 @@ return view.extend({
 				E('div', { 'class': 'cbi-section-descr' },
 					_('The installed TrustTunnel packages and the client binary. Updates are delivered through the package manager, not this page: apk update && apk upgrade on OpenWrt 25.12, opkg update && opkg upgrade before it.')
 				),
-				E('table', { 'class': 'cbi-section-table' }, [
+				E('table', { 'class': 'table cbi-section-table' }, [
 					row(_('TrustTunnel package'), versionCell(versions ? versions.package : null)),
 					row(_('Client package'), versionCell(versions ? versions.client_package : null)),
 					row(_('Client binary'), versionCell(versions ? versions.client : null))

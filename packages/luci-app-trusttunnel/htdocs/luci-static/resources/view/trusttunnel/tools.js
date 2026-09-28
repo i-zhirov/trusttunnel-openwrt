@@ -27,78 +27,85 @@ var callCheckDomain = rpc.declare({
 	params: [ 'domain' ]
 });
 
+// Fill a result box, spacing it from the button row above. The boxes
+// start empty, so the gap appears together with the first content and
+// a button that has not been used yet leaves no phantom gap.
+var fillBox = function (box, content) {
+	dom.content(box, E('div', { 'style': 'margin-top:0.75em' }, content));
+};
+
 var handleCheckDomain = function (input, container) {
 	var d = input.value.trim();
 
 	if (!d)
 		return;
 
-	dom.content(container, E('p', { 'class': 'spinning' }, _('Checking…')));
+	fillBox(container, E('p', { 'class': 'spinning' }, _('Checking…')));
 
 	callCheckDomain(d).then(function (res) {
 		if (res.error) {
-			dom.content(container, E('p', res.error));
+			fillBox(container, E('p', res.error));
 			return;
 		}
 
 		var tunnel = res.verdict && res.verdict.indexOf('tunnel') === 0;
 
-		dom.content(container, E('table', { 'class': 'cbi-section-table' }, [
-			E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, _('Normalized')),
-				E('td', { 'class': 'cbi-section-table-cell' }, E('code', res.normalized))
+		fillBox(container, E('table', { 'class': 'table cbi-section-table' }, [
+			E('tr', { 'class': 'tr cbi-section-table-row' }, [
+				E('td', { 'class': 'td nowrap' }, _('Normalized')),
+				E('td', { 'class': 'td', 'style': 'width:100%' }, E('code', res.normalized))
 			]),
-			E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, _('Verdict')),
-				E('td', { 'class': 'cbi-section-table-cell' },
+			E('tr', { 'class': 'tr cbi-section-table-row' }, [
+				E('td', { 'class': 'td nowrap' }, _('Verdict')),
+				E('td', { 'class': 'td', 'style': 'width:100%' },
 					E('span', { 'style': 'font-weight:bold; color:' + (tunnel ? '#2e7d32' : '#c62828') + ';' },
 						tunnel ? _('through the tunnel') : _('direct')
 					)
 				)
 			]),
-			E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, _('Why')),
-				E('td', { 'class': 'cbi-section-table-cell' }, res.reason)
+			E('tr', { 'class': 'tr cbi-section-table-row' }, [
+				E('td', { 'class': 'td nowrap' }, _('Why')),
+				E('td', { 'class': 'td', 'style': 'width:100%' }, res.reason)
 			])
 		]));
 	}).catch(function (err) {
-		dom.content(container, E('p', err.message || String(err)));
+		fillBox(container, E('p', err.message || String(err)));
 	});
 };
 
 var handlePing = function (container) {
-	dom.content(container, E('p', { 'class': 'spinning' }, _('Pinging…')));
+	fillBox(container, E('p', { 'class': 'spinning' }, _('Pinging…')));
 
 	callPing('').then(function (res) {
 		if (res.error) {
-			dom.content(container, E('p', res.error));
+			fillBox(container, E('p', res.error));
 			return;
 		}
 
-		var rows = [ E('tr', { 'class': 'cbi-section-table-row' }, [
-			E('th', { 'class': 'cbi-section-table-cell' }, _('Host')),
-			E('th', { 'class': 'cbi-section-table-cell' }, _('Loss')),
-			E('th', { 'class': 'cbi-section-table-cell' }, _('min / avg / max'))
+		var rows = [ E('tr', { 'class': 'tr cbi-section-table-row' }, [
+			E('th', { 'class': 'th cbi-section-table-cell' }, _('Host')),
+			E('th', { 'class': 'th cbi-section-table-cell' }, _('Loss')),
+			E('th', { 'class': 'th cbi-section-table-cell', 'style': 'width:100%' }, _('min / avg / max'))
 		]) ];
 
 		(res.results || []).forEach(function (r) {
-			rows.push(E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, r.host),
-				E('td', { 'class': 'cbi-section-table-cell' }, r.loss + '%'),
-				E('td', { 'class': 'cbi-section-table-cell' },
+			rows.push(E('tr', { 'class': 'tr cbi-section-table-row' }, [
+				E('td', { 'class': 'td' }, r.host),
+				E('td', { 'class': 'td' }, r.loss + '%'),
+				E('td', { 'class': 'td', 'style': 'width:100%' },
 					r.avg === null ? '—' : r.min + ' / ' + r.avg + ' / ' + r.max + ' ms'
 				)
 			]));
 		});
 
-		dom.content(container, E('table', { 'class': 'cbi-section-table' }, rows));
+		fillBox(container, E('table', { 'class': 'table cbi-section-table' }, rows));
 	}).catch(function (err) {
-		dom.content(container, E('p', err.message || String(err)));
+		fillBox(container, E('p', err.message || String(err)));
 	});
 };
 
 var handleProbe = function (container) {
-	dom.content(container, E('p', { 'class': 'spinning' }, _('Checking…')));
+	fillBox(container, E('p', { 'class': 'spinning' }, _('Checking…')));
 
 	callProbe().then(function (res) {
 		var cell = function (entry) {
@@ -109,18 +116,18 @@ var handleProbe = function (container) {
 				(entry && entry.error) ? entry.error : '');
 		};
 
-		dom.content(container, E('table', { 'class': 'cbi-section-table' }, [
-			E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, _('Through the tunnel')),
-				E('td', { 'class': 'cbi-section-table-cell' }, cell(res.tunnel))
+		fillBox(container, E('table', { 'class': 'table cbi-section-table' }, [
+			E('tr', { 'class': 'tr cbi-section-table-row' }, [
+				E('td', { 'class': 'td nowrap' }, _('Through the tunnel')),
+				E('td', { 'class': 'td', 'style': 'width:100%' }, cell(res.tunnel))
 			]),
-			E('tr', { 'class': 'cbi-section-table-row' }, [
-				E('td', { 'class': 'cbi-section-table-cell' }, _('Directly')),
-				E('td', { 'class': 'cbi-section-table-cell' }, cell(res.direct))
+			E('tr', { 'class': 'tr cbi-section-table-row' }, [
+				E('td', { 'class': 'td nowrap' }, _('Directly')),
+				E('td', { 'class': 'td', 'style': 'width:100%' }, cell(res.direct))
 			])
 		]));
 	}).catch(function (err) {
-		dom.content(container, E('p', err.message || String(err)));
+		fillBox(container, E('p', err.message || String(err)));
 	});
 };
 
