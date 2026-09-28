@@ -313,8 +313,10 @@ return view.extend({
 		// 'not run yet' word comes from verdictWord(), the same phrasing
 		// the banner would use for a run that produced no verdict; the
 		// info banner keeps the empty state looking like the verdict
-		// banner instead of stray text.
-		dom.content(diagnoseBox, E('div', { 'class': 'alert-message info' }, verdictWord('')));
+		// banner instead of stray text. It goes through fillBox like the
+		// run results: the banner is content after the buttons, so it
+		// needs the same gap.
+		fillBox(diagnoseBox, E('div', { 'class': 'alert-message info' }, verdictWord('')));
 
 		// The report serializes the LAST run; with the chain running on
 		// demand there is nothing to copy until the first run finished,
