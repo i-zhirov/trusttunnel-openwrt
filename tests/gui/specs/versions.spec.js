@@ -24,4 +24,10 @@ test('reports the installed package versions', async ({ page }) => {
 	await expect(page.locator('#view .cbi-section-table')).toContainText('1.1.7-1');
 	await expect(page.locator('#view .cbi-section-table')).toContainText('Client binary');
 	await expect(page.locator('#view .cbi-section-table')).toContainText('1.1.7');
+
+	// The table carries the theme's generic classes like the status
+	// page's facts table: the bare cbi-section-table markup renders
+	// without padding or row separators.
+	await expect(page.locator('#view table.table.cbi-section-table tr.tr')).toHaveCount(3);
+	await expect(page.locator('#view table.table.cbi-section-table td.td.left')).toHaveCount(3);
 });
