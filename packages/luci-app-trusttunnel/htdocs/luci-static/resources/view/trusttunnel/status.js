@@ -49,11 +49,13 @@ function fmtBytes(n) {
 
 // Header and rows for the rule preview table, mirroring the Check a
 // domain tool: the rule itself, a verdict badge and the backend's reason.
+// The generic table/tr/td/th classes are what the LuCI theme styles:
+// without them the cells get no padding and no row separator.
 function verdictHead() {
-	return E('tr', { 'class': 'cbi-section-table-row' }, [
-		E('th', { 'class': 'cbi-section-table-cell' }, _('Rule')),
-		E('th', { 'class': 'cbi-section-table-cell' }, _('Verdict')),
-		E('th', { 'class': 'cbi-section-table-cell' }, _('Why'))
+	return E('tr', { 'class': 'tr cbi-section-table-row' }, [
+		E('th', { 'class': 'th cbi-section-table-cell' }, _('Rule')),
+		E('th', { 'class': 'th cbi-section-table-cell' }, _('Verdict')),
+		E('th', { 'class': 'th cbi-section-table-cell' }, _('Why'))
 	]);
 }
 
@@ -61,20 +63,20 @@ function verdictRow(rule, res) {
 	var cell;
 
 	if (res.error) {
-		cell = E('td', { 'class': 'cbi-section-table-cell' }, _('not checked'));
+		cell = E('td', { 'class': 'td' }, _('not checked'));
 	}
 	else {
 		var tunnel = res.verdict && res.verdict.indexOf('tunnel') === 0;
 
-		cell = E('td', { 'class': 'cbi-section-table-cell' },
+		cell = E('td', { 'class': 'td' },
 			E('span', { 'style': 'font-weight:bold; color:' + (tunnel ? '#2e7d32' : '#c62828') + ';' },
 				tunnel ? _('through the tunnel') : _('direct')));
 	}
 
-	return E('tr', { 'class': 'cbi-section-table-row' }, [
-		E('td', { 'class': 'cbi-section-table-cell' }, E('code', rule)),
+	return E('tr', { 'class': 'tr cbi-section-table-row' }, [
+		E('td', { 'class': 'td' }, E('code', rule)),
 		cell,
-		E('td', { 'class': 'cbi-section-table-cell' }, res.error || res.reason || '')
+		E('td', { 'class': 'td' }, res.error || res.reason || '')
 	]);
 }
 
@@ -189,9 +191,10 @@ return view.extend({
 		// E() (DOM.create) treats an element in the SECOND argument
 		// position as attributes, not data — a bare element value (the
 		// State span, the Server code) used to render an empty cell.
-		return E('tr', [
-			E('td', { 'class': 'left', 'style': 'width:30%' }, label),
-			E('td', [value])
+		// The generic tr/td classes are what the LuCI theme styles.
+		return E('tr', { 'class': 'tr' }, [
+			E('td', { 'class': 'td left', 'style': 'width:30%' }, label),
+			E('td', { 'class': 'td' }, [value])
 		]);
 	},
 
@@ -276,7 +279,7 @@ return view.extend({
 		if (traffic)
 			rows.push(this.row(_('Traffic'), traffic));
 
-		return E('table', { 'class': 'table' }, rows);
+		return E('table', { 'class': 'table cbi-section-table' }, rows);
 	},
 
 	runAction: function(action, ev) {
@@ -378,16 +381,16 @@ return view.extend({
 					nodes.push(E('h4', mode
 						? (mode === 'bypass' ? _('Tunneled by this profile') : _('Bypassed by this profile'))
 						: _('The "do not bypass" list')));
-					nodes.push(E('table', { 'class': 'cbi-section-table' }, [ verdictHead() ].concat(rows)));
+					nodes.push(E('table', { 'class': 'table cbi-section-table' }, [ verdictHead() ].concat(rows)));
 				}
 
 				if (inert.length) {
 					nodes.push(E('h4', _('No effect in %s').format(modeLabel)));
-					nodes.push(E('table', { 'class': 'cbi-section-table' }, [ verdictHead() ].concat(inert.map(function(rule) {
-						return E('tr', { 'class': 'cbi-section-table-row' }, [
-							E('td', { 'class': 'cbi-section-table-cell' }, E('code', rule)),
-							E('td', { 'class': 'cbi-section-table-cell' }, _('no effect')),
-							E('td', { 'class': 'cbi-section-table-cell' }, _('this list is ignored in %s').format(modeLabel))
+					nodes.push(E('table', { 'class': 'table cbi-section-table' }, [ verdictHead() ].concat(inert.map(function(rule) {
+						return E('tr', { 'class': 'tr cbi-section-table-row' }, [
+							E('td', { 'class': 'td' }, E('code', rule)),
+							E('td', { 'class': 'td' }, _('no effect')),
+							E('td', { 'class': 'td' }, _('this list is ignored in %s').format(modeLabel))
 						]);
 					}))));
 				}

@@ -130,11 +130,18 @@ var dtr = function (s) {
 	return DIAG_TEXT[s] || s;
 };
 
+// Fill a result box, spacing it from the button row above. The boxes
+// start empty, so the gap appears together with the first content and
+// a button that has not been used yet leaves no phantom gap.
+var fillBox = function (box, content) {
+	dom.content(box, E('div', { 'style': 'margin-top:0.75em' }, content));
+};
+
 var markCell = function (status) {
 	var m = checkMark[status] || { word: status, color: '#757575' };
 
 	return E('td', {
-		'class': 'cbi-section-table-cell',
+		'class': 'td cbi-section-table-cell',
 		'style': 'width:6.5em; font-weight:bold; color:' + m.color + ';'
 	}, m.word);
 };
@@ -154,15 +161,18 @@ var renderChecks = function (checks) {
 			present = true;
 			// Children as an ARRAY: current LuCI's E() (DOM.create) reads
 			// only arguments[2], so variadic children are silently dropped.
-			rows.push(E('tr', { 'class': 'cbi-section-table-row' }, [
+			// The generic table/tr/td classes are what the LuCI theme
+			// styles: without them the cells get no padding and no row
+			// separator and the report is unreadable.
+			rows.push(E('tr', { 'class': 'tr cbi-section-table-row' }, [
 				markCell(check.status),
-				E('td', { 'class': 'cbi-section-table-cell' }, dtr(check.label)),
-				E('td', { 'class': 'cbi-section-table-cell' }, dtr(check.detail))
+				E('td', { 'class': 'td', 'style': 'width:30%' }, dtr(check.label)),
+				E('td', { 'class': 'td' }, dtr(check.detail))
 			]));
 
 			if (check.hint)
-				rows.push(E('tr', { 'class': 'cbi-section-table-row' },
-					E('td', { 'class': 'cbi-section-table-cell', 'colspan': '3' },
+				rows.push(E('tr', { 'class': 'tr cbi-section-table-row' },
+					E('td', { 'class': 'td', 'colspan': '3' },
 						E('em', dtr(check.hint))
 					)
 				));
@@ -170,7 +180,7 @@ var renderChecks = function (checks) {
 
 		if (present) {
 			nodes.push(E('h4', groupTitle[group] || group));
-			nodes.push(E('table', { 'class': 'cbi-section-table' }, rows));
+			nodes.push(E('table', { 'class': 'table cbi-section-table' }, rows));
 		}
 	});
 
@@ -258,14 +268,14 @@ var renderDiagnose = function (res) {
 };
 
 var handleDiagnose = function (container) {
-	dom.content(container, E('p', { 'class': 'spinning' }, _('Running checks — this can take up to half a minute…')));
+	fillBox(container, E('p', { 'class': 'spinning' }, _('Running checks — this can take up to half a minute…')));
 
 	return callDiagnose().then(function (res) {
 		lastDiagnose = res;
-		dom.content(container, renderDiagnose(res));
+		fillBox(container, renderDiagnose(res));
 		return true;
 	}).catch(function (err) {
-		dom.content(container, E('div', { 'class': 'alert-message danger' }, err.message || String(err)));
+		fillBox(container, E('div', { 'class': 'alert-message danger' }, err.message || String(err)));
 		return false;
 	});
 };
@@ -303,8 +313,10 @@ return view.extend({
 		// 'not run yet' word comes from verdictWord(), the same phrasing
 		// the banner would use for a run that produced no verdict; the
 		// info banner keeps the empty state looking like the verdict
-		// banner instead of stray text.
-		dom.content(diagnoseBox, E('div', { 'class': 'alert-message info' }, verdictWord('')));
+		// banner instead of stray text. It goes through fillBox like the
+		// run results: the banner is content after the buttons, so it
+		// needs the same gap.
+		fillBox(diagnoseBox, E('div', { 'class': 'alert-message info' }, verdictWord('')));
 
 		// The report serializes the LAST run; with the chain running on
 		// demand there is nothing to copy until the first run finished,
