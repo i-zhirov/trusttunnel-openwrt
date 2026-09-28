@@ -540,10 +540,11 @@ absent, so the plain suite runs anywhere.
   control endpoint (e.g. `curl -X POST -d '{"set":{"status":{"running":false,"enabled":true}}}' http://127.0.0.1:8123/__stub`;
   `{"reset":true}` restores the goldens). The stub serves the views
   live from this tree — it keeps no copy — so the preview cannot
-  drift from the checked-out branch; a preview that differs from the
-  router means the branch is behind main. The luci-base pin and fetch
-  live in `tests/gui/lib-luci.sh`, shared with `run.sh` so the dev loop
-  and the test suite can never drift.
+  drift from the checked-out branch; the router runs the installed
+  release, so a difference just means the two are on different
+  revisions (unreleased view changes here, or a branch behind main).
+  The luci-base pin and fetch live in `tests/gui/lib-luci.sh`, shared
+  with `run.sh` so the dev loop and the test suite can never drift.
 - The luci-base pin matters: the loader, `dom.create()`'s argument
   handling (`E()` reads only `arguments[2]` — children must be arrays,
   and a DOM node as the second argument is treated as the attribute
