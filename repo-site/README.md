@@ -18,10 +18,13 @@ configures on the router:
   `https://i-zhirov.github.io/trusttunnel-openwrt/releases/22.03.7/packages/<arch>/trusttunnel`
 
 The repositories are cumulative: they serve every released version of
-the LuCI app — the `__TAG__` release on top of all earlier releases — so
-pinning or downgrading to an older version stays possible. The client is
-served at the version the current release pins (the package managers
-install the highest version, so older client builds are not offered).
+the LuCI app — with the latest release (`__TAG__`) on top of all earlier
+ones — so pinning or downgrading to an older version stays possible. The
+client is served at the version the latest release pins (the package
+managers install the highest version, so older client builds are not
+offered). A client update can arrive on its own, as a `client-v*`
+release: the repositories are re-published with the new client while the
+LuCI app stays at its current version.
 
 The GitHub
 [releases](https://github.com/i-zhirov/trusttunnel-openwrt/releases)
@@ -46,4 +49,5 @@ opkg update && opkg upgrade
 
 Re-running the installer refreshes the signing keys; the packages — the LuCI
 app and the client binary (the `trusttunnel-client` dependency) — are
-updated by the package-manager commands above.
+updated by the package-manager commands above. A client-only release
+updates the binary while the app stays at its installed version.

@@ -559,10 +559,11 @@ reproducible equivalents:
 
 - Executable bits of shipped scripts must be `100755` in the index.
 - Tag pushes must not regress the release: new tag's commit must be newer
-  than the previous tag's.
+  than the previous tag's (`v*` and `client-v*` tags alike).
 - Release runs are tag-gated: the release pipeline's `gate` job refuses
-  any run that is not a `v*` tag push; `workflow_dispatch` is the sole
-  exception (main only, repositories + site, never a release).
+  any run that is not a `v*` or `client-v*` tag push; `workflow_dispatch`
+  is the sole exception (main only, repositories + site, never a
+  release).
 - `sh tests/run.sh` (includes the node-gated views runtime test, which
   skips without node).
 - `docker build -q -t tt-ucode-gate -f tests/backend/Dockerfile
@@ -599,13 +600,14 @@ same harness against the release's own artifacts.
 
 ## Release pipeline (`.github/workflows/release.yml`)
 
-Triggered by `v*` tag pushes (also builds a GitHub release) and
-`workflow_dispatch` (repos + site only; plain branch CI never publishes).
+Triggered by `v*` and `client-v*` tag pushes (both build GitHub
+releases) and `workflow_dispatch` (repos + site only; plain branch CI
+never publishes).
 
-The `gate` job runs first and refuses any run that is not a `v*` tag
-push; `workflow_dispatch` is the sole exception — it must run on main
-and republishes the repositories and the site only, never a GitHub
-release. A mis-triggered run fails before any SDK work starts.
+The `gate` job runs first and refuses any run that is not a `v*` or
+`client-v*` tag push; `workflow_dispatch` is the sole exception — it must
+run on main and republishes the repositories and the site only, never a
+GitHub release. A mis-triggered run fails before any SDK work starts.
 
 - `build` — `luci-app-trusttunnel` via `openwrt/gh-action-sdk@v7` on
   25.12.5 (apk) and 22.03.7 (ipk). The SDK is pinned with `VERSION_PATH`
@@ -616,7 +618,8 @@ release. A mis-triggered run fails before any SDK work starts.
   `feeds.conf.default` (update them together with the SDK bump).
   `FEED_DIR` must be an absolute path and must contain `.git` (luci.mk
   findrev derives the version from it). `fail-fast: false`; artifact file
-  names must match the tag.
+  names must match the tag. Skipped on `client-v*` tags — a client-only
+  release does not touch the app.
 - `build-client` — the client package per subtarget arch (the full matrix
   is in the workflow; the ipk list is the apk list minus
   `aarch64_cortex-a76`). apk files get an `-<arch>` suffix and an
@@ -626,12 +629,19 @@ release. A mis-triggered run fails before any SDK work starts.
   Makefile travels at each release tree's root
   (`releases/<version>/trusttunnel-client.Makefile`, one per tree, never
   inside the feed directories) for exactly that diff, so a recipe change
-  without a version bump still forces a rebuild.
+  without a version bump still forces a rebuild. On a `client-v*` tag an
+  extra assertion checks the built package carries the tag's version
+  (the mirror of the app's tag-matching assertion, scoped to client tags
+  because the client version legitimately differs from the app version).
 - `verify-integration` — the same `tests/integration/run.sh` harness the
   PR workflow runs, executed against the packages THIS pipeline just
   built (no SDK rebuild; the release's own x86-64 artifacts are consumed
   directly). `publish-repo` waits for it, so only a behaviorally tested
-  release ships.
+  release ships. Skipped on `client-v*` tags: the app is unchanged (it
+  passed the suite at its own release, and the client-bump PR already ran
+  the suite against this exact tree via `integration.yml`), and the
+  publish-repo verification below installs the new client against the
+  repositories' current app.
 - `publish-repo` — downloads the artifacts plus every prior release's
   packages via `gh release download` (only the current package set is
   merged: the early `-lite` releases and the dropped i18n packages are
@@ -665,8 +675,13 @@ release. A mis-triggered run fails before any SDK work starts.
     a last-underscore split once clipped `mipsel_24kc` to `24kc`.
   - verification: installs the built repos into fresh rootfs containers
     exactly as `install.sh` sets them up (25.12.0 apk; 23.05.6 and 24.10.8
-    opkg) and runs the client `--version`.
-  - GitHub release upload (tag pushes only, single writer).
+    opkg) and asserts the installed client's `--version` matches the
+    version the build shipped — on a `client-v*` release this is what
+    proves the repositories now serve the new client (installed together
+    with the current app via the unversioned dependency).
+  - GitHub release upload (tag pushes only, single writer): a `v*` tag
+    carries the app + client files, a `client-v*` tag the client files
+    alone (the app is unchanged and already lives on its own release).
   - GitHub Pages site assembly: `repo-site/` templates + generated index
     pages — the releases index and the per-tree pages (each tree page
     lists its architectures, linking straight to the feed pages), the
@@ -677,6 +692,17 @@ release. A mis-triggered run fails before any SDK work starts.
     (`sed r` substitutions must keep file-read and delete on separate
     lines), rendered with Jekyll, deployed via Pages (`permissions:
     contents, pages, id-token`).
+
+On a `client-v*` tag the pipeline takes the client-only path: `build`
+and `verify-integration` are skipped, `build-client` runs (and its
+version assertion), and `publish-repo` assembles the SAME cumulative
+trees with the app packages merged in from the prior releases (there is
+no fresh app build to place), verifies the new client against the
+current app, uploads a `client-vX.Y.Z` release and redeploys the site.
+`publish-repo` gates on `!failure()` instead of the implicit
+`success()` so the skipped jobs do not block it, while any real failure
+still does. Routers pick the new client up on the next `apk upgrade` /
+`opkg upgrade` — the app depends on `+trusttunnel-client` unversioned.
 
 Repositories are served from the Pages site, not from release assets:
 release assets are per-tag snapshots, while the repositories accumulate
