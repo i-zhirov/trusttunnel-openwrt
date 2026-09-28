@@ -15,13 +15,25 @@
 #   - the GitHub Pages site that serves the repositories (the URL the
 #     installer writes into the router's package-manager configuration).
 #
+# A client-v* tag push produces a client-only release: the LuCI app is
+# unchanged, so the app build and the end-to-end integration run are
+# skipped, the client matrix is built (and its version asserted against
+# the tag), and the new client packages are assembled into the SAME
+# cumulative trees (prior app packages are merged in, so the repositories
+# keep serving the current app), verified against the repositories'
+# current app in fresh rootfs containers — the exact pairing routers will
+# upgrade to — and shipped under a client-vX.Y.Z GitHub release. Routers
+# pick the new client up on the next `apk upgrade` / `opkg upgrade`: the
+# app depends on +trusttunnel-client unversioned.
+#
 # The repositories are cumulative: the packages of every prior release
 # are merged into the fresh build's repositories, so every released
 # version stays installable — pinning and downgrading keep working.
 #
-# The `gate` job refuses every run that is not a v* tag push; dispatch
-# runs are the sole exception (main only, repositories + site, never a
-# release), so a mis-triggered run fails before any SDK work starts.
+# The `gate` job refuses every run that is not a v* or client-v* tag
+# push; dispatch runs are the sole exception (main only, repositories +
+# site, never a release), so a mis-triggered run fails before any SDK
+# work starts.
 
 name: release
 
@@ -29,6 +41,7 @@ on:
   push:
     tags:
       - "v*"
+      - "client-v*"
   workflow_dispatch:
 
 permissions:
@@ -41,16 +54,17 @@ permissions:
   id-token: write
 
 jobs:
-  # The release pipeline runs only on v* tag pushes: dispatch runs are
-  # the sole exception — they republish the repositories and the site,
-  # never a GitHub release — and are restricted to main. The gate blocks
-  # any other trigger before an SDK build starts, so a mis-triggered run
-  # fails fast instead of burning the build matrix.
+  # The release pipeline runs only on v* and client-v* tag pushes:
+  # dispatch runs are the sole exception — they republish the
+  # repositories and the site, never a GitHub release — and are
+  # restricted to main. The gate blocks any other trigger before an SDK
+  # build starts, so a mis-triggered run fails fast instead of burning
+  # the build matrix.
   gate:
     name: Refuse non-tag release runs
     runs-on: ubuntu-latest
     steps:
-      - name: Check the run is a v* tag push (or a main dispatch)
+      - name: Check the run is a v* or client-v* tag push (or a main dispatch)
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             if [ "$GITHUB_REF" != "refs/heads/main" ]; then
@@ -61,17 +75,22 @@ jobs:
             exit 0
           fi
           case "$GITHUB_REF" in
-            refs/tags/v*)
+            refs/tags/v*|refs/tags/client-v*)
               echo "Tag push $GITHUB_REF_NAME: releasing."
               ;;
             *)
-              echo "::error::release runs must be v* tag pushes (got ref $GITHUB_REF); refusing the run"
+              echo "::error::release runs must be v* or client-v* tag pushes (got ref $GITHUB_REF); refusing the run"
               exit 1
               ;;
           esac
 
   build:
     name: Build luci-app-trusttunnel (${{ matrix.version }})
+    # Client-only releases do not touch the app: the build is skipped,
+    # together with its artifact-name match against the v* tag (a
+    # client-v* tag would make that assertion expect a client version in
+    # the app's file name and fail).
+    if: ${{ !startsWith(github.ref, 'refs/tags/client-v') }}
     runs-on: ubuntu-latest
     needs: [gate]
     strategy:
@@ -476,6 +495,32 @@ jobs:
             exit 1
           fi
 
+      # On a client-v* tag the tag IS the client version: the built
+      # package must carry it exactly (the mirror of the app build's
+      # tag-matching assertion, scoped to client tags because the client
+      # version legitimately differs from the app version on v* tags —
+      # an app-only release ships an unchanged client). A mismatch means
+      # the tag was pushed without the corresponding Makefile bump.
+      - name: Assert the client version matches the tag
+        if: startsWith(github.ref, 'refs/tags/client-v')
+        run: |
+          expected="${GITHUB_REF_NAME#client-v}"
+          if [ -z "$expected" ]; then
+            echo "::error::cannot derive the client version from tag $GITHUB_REF_NAME"
+            exit 1
+          fi
+          if [ "${{ matrix.ext }}" = apk ]; then
+            found="$(find dist -maxdepth 1 -name "trusttunnel-client-${expected}-r*" -print -quit)"
+            pattern="trusttunnel-client-${expected}-r*.apk"
+          else
+            found="$(find dist -maxdepth 1 -name "trusttunnel-client_${expected}-*_*.ipk" -print -quit)"
+            pattern="trusttunnel-client_${expected}-*_*.ipk"
+          fi
+          if [ -z "$found" ]; then
+            echo "::error::the built client package does not match the tag: expected $pattern"
+            exit 1
+          fi
+
       - name: Upload the client package
         uses: actions/upload-artifact@v7
         with:
@@ -500,6 +545,16 @@ jobs:
   verify-integration:
     name: Verify the release with the integration tests (${{ matrix.pm }})
     needs: [build, build-client]
+    # Client-only releases skip the full end-to-end suite on purpose: the
+    # app is unchanged (it passed the suite at its own release), the PR
+    # that bumped the client already ran the suite against this exact
+    # tree (integration.yml gates every packages/ PR), and the
+    # publish-repo verification below installs the new client together
+    # with the repositories' current app — the exact pairing routers will
+    # upgrade to. The app build is skipped on client-v* tags too, which
+    # would skip this job anyway; the explicit condition keeps the
+    # intent visible and is robust against that skip being dropped.
+    if: ${{ !startsWith(github.ref, 'refs/tags/client-v') }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
@@ -577,7 +632,14 @@ jobs:
     # and the site. Plain branch CI runs never publish anything. The gate
     # job already refuses non-main dispatch runs; the condition is
     # repeated here so publish-repo stays self-guarding.
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    #
+    # !failure() (instead of the implicit success()) is what lets a
+    # client-v* run through: its build and verify-integration jobs are
+    # SKIPPED, and a job whose needs include a skipped job does not run
+    # under the default success() rule — but a skipped dependency must
+    # not block the publish, while a FAILED build-client (or anything
+    # else) still must.
+    if: ${{ !failure() && !cancelled() && (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     steps:
       # Provides the repo-site templates and the committed public halves
@@ -585,13 +647,19 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7
 
+      # On a client-v* release the app build did not run, so the app
+      # artifacts do not exist here — the prior-release merge below still
+      # carries the current app into the trees, which is exactly what the
+      # repositories must keep serving.
       - name: Download the LuCI packages (apk)
+        if: ${{ !startsWith(github.ref, 'refs/tags/client-v') }}
         uses: actions/download-artifact@v7
         with:
           name: package-25.12.5
           path: staging/luci-apk
 
       - name: Download the LuCI packages (ipk)
+        if: ${{ !startsWith(github.ref, 'refs/tags/client-v') }}
         uses: actions/download-artifact@v7
         with:
           name: package-22.03.7
@@ -628,6 +696,14 @@ jobs:
           # the ref is a branch name, which matches no release, so
           # every release is kept.
           exclude="$GITHUB_REF_NAME"
+          # Every tag is iterated — v* (app+client) and client-v*
+          # (client only) alike: the client version filter below drops
+          # the prior clients either way, and the app packages from the
+          # v* releases keep the whole version history installable. A
+          # client-v* release therefore requires an existing v* release:
+          # without one there is no app to merge, and the repository
+          # verification below would fail loudly rather than publish a
+          # repo without the app.
           tags="$(gh release list --limit 100 --json tagName,isDraft --jq '.[] | select(.isDraft | not) | .tagName')"
           for tag in $tags; do
             [ "$tag" = "$exclude" ] && continue
@@ -753,12 +829,16 @@ jobs:
           # The noarch LuCI app lands in every architecture directory —
           # current and prior versions alike, so the whole version
           # history is installable everywhere. Prior first: the fresh
-          # build wins on a same-version collision.
+          # build wins on a same-version collision. On a client-v*
+          # release there is no fresh build (staging/luci-apk is empty),
+          # and the prior merge above is the only source of the app.
           for d in staging/releases/25.12.5/packages/*/trusttunnel/; do
             for f in staging/prior-apk/luci-app-trusttunnel-[0-9]*.apk; do
               [ -e "$f" ] && cp "$f" "$d/"
             done
-            cp staging/luci-apk/*.apk "$d/"
+            for f in staging/luci-apk/*.apk; do
+              [ -e "$f" ] && cp "$f" "$d/"
+            done
           done
 
           # The packages are built unsigned; only the index is signed, so
@@ -833,12 +913,16 @@ jobs:
           # The noarch LuCI app lands in every feed directory — current
           # and prior versions alike, so the whole version history is
           # installable everywhere. The feed key travels with every feed:
-          # install.sh fetches it from the feed directory.
+          # install.sh fetches it from the feed directory. On a client-v*
+          # release there is no fresh build (staging/luci-ipk is empty),
+          # and the prior merge above is the only source of the app.
           for d in staging/releases/22.03.7/packages/*/trusttunnel/; do
             for f in staging/prior-opkg/luci-app-trusttunnel_[0-9]*.ipk; do
               [ -e "$f" ] && cp "$f" "$d/"
             done
-            cp staging/luci-ipk/*.ipk "$d/"
+            for f in staging/luci-ipk/*.ipk; do
+              [ -e "$f" ] && cp "$f" "$d/"
+            done
             cp opkg-key.pub "$d/"
           done
           # The package recipe travels with the release tree — one copy
@@ -889,7 +973,22 @@ jobs:
       # The verification installs mirror install.sh's repository setup
       # exactly (key placement, repository entry, feed line), so a green
       # run proves the published repositories install with the installer's
-      # own arrangement.
+      # own arrangement. The client version is passed in so the binary's
+      # --version output is asserted against the version the build
+      # actually shipped: on a client-v* release this is what proves the
+      # repositories now serve the NEW client (the app install above pulls
+      # it in via the unversioned dependency) and that the exact pairing
+      # routers will upgrade to — current app + new client — installs.
+      - name: Read the client version
+        id: clientver
+        run: |
+          client_version="$(sed -n 's/^PKG_VERSION:=//p' packages/trusttunnel-client/Makefile)"
+          if [ -z "$client_version" ]; then
+            echo "::error::cannot read PKG_VERSION from packages/trusttunnel-client/Makefile"
+            exit 1
+          fi
+          echo "client_version=$client_version" >> "$GITHUB_OUTPUT"
+
       - name: Verify the apk installs on 25.12
         run: |
           cat > verify-apk.sh <<'EOF'
@@ -905,10 +1004,15 @@ jobs:
           # Full path: the client is not on PATH. The version output
           # proves the right statically-linked binary landed.
           /opt/trusttunnel_client/trusttunnel_client --version
+          /opt/trusttunnel_client/trusttunnel_client --version | grep -q "$CLIENT_VERSION" || {
+            echo "the installed client is not $CLIENT_VERSION"
+            exit 1
+          }
           EOF
           docker run --rm \
             -v "$PWD/staging/releases/25.12.5/packages:/repo:ro" \
             -v "$PWD/verify-apk.sh:/verify.sh:ro" \
+            -e CLIENT_VERSION=${{ steps.clientver.outputs.client_version }} \
             openwrt/rootfs:x86-64-25.12.0 \
             sh /verify.sh
 
@@ -933,26 +1037,42 @@ jobs:
           opkg update
           opkg install luci-app-trusttunnel
           /opt/trusttunnel_client/trusttunnel_client --version
+          /opt/trusttunnel_client/trusttunnel_client --version | grep -q "$CLIENT_VERSION" || {
+            echo "the installed client is not $CLIENT_VERSION"
+            exit 1
+          }
           EOF
           for img in x86-64-23.05.6 x86-64-24.10.8; do
             docker run --rm \
               -v "$PWD/staging/releases/22.03.7/packages:/repo:ro" \
               -v "$PWD/verify-opkg.sh:/verify.sh:ro" \
+              -e CLIENT_VERSION=${{ steps.clientver.outputs.client_version }} \
               "openwrt/rootfs:$img" \
               sh /verify.sh
           done
 
       # Uploading from this single job — never from the matrix jobs —
       # makes the release a single writer, and the tag-only condition
-      # keeps dispatch runs away from the releases entirely.
+      # keeps dispatch runs away from the releases entirely. A v* tag
+      # carries both package sets; a client-v* tag carries the client
+      # packages only — the app is unchanged and already lives on its own
+      # v* release.
       - name: Upload the package files to the GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
           files: |
             staging/luci-apk/*.apk
             staging/apk-pkgs/trusttunnel-client-*.apk
             staging/luci-ipk/*.ipk
+            staging/opkg-pkgs/*.ipk
+
+      - name: Upload the client files to the client GitHub release
+        if: startsWith(github.ref, 'refs/tags/client-v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            staging/apk-pkgs/trusttunnel-client-*.apk
             staging/opkg-pkgs/*.ipk
 
       # The site is the workflow's direct output: nothing is committed to

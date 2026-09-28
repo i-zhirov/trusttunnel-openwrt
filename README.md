@@ -345,8 +345,9 @@ opkg update && opkg upgrade # OpenWrt 22.03–24.10
 ```
 
 `trusttunnel-client` is a hard dependency of the LuCI app, so the binary
-updates together with the package, and `/etc/config/trusttunnel` survives
-untouched.
+updates together with the package — and can also arrive on its own, via
+a client-only release of the repositories — while `/etc/config/trusttunnel`
+survives untouched.
 
 ## Troubleshooting
 
