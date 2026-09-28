@@ -534,11 +534,14 @@ absent, so the plain suite runs anywhere.
   specs inside the image. Both cache dirs are gitignored.
 - `tests/gui/dev.sh` — the manual development loop: starts the same stub
   on the host (no docker, no build, no release) against the same pinned
-  luci-base cache, prints the three view URLs and the `/__stub` cheat
+  luci-base cache, prints every view URL and the `/__stub` cheat
   sheet, and serves the resources with no-cache headers so an edit +
   plain reload is the whole cycle. Router state is faked live through the
   control endpoint (e.g. `curl -X POST -d '{"set":{"status":{"running":false,"enabled":true}}}' http://127.0.0.1:8123/__stub`;
-  `{"reset":true}` restores the goldens). The luci-base pin and fetch
+  `{"reset":true}` restores the goldens). The stub serves the views
+  live from this tree — it keeps no copy — so the preview cannot
+  drift from the checked-out branch; a preview that differs from the
+  router means the branch is behind main. The luci-base pin and fetch
   live in `tests/gui/lib-luci.sh`, shared with `run.sh` so the dev loop
   and the test suite can never drift.
 - The luci-base pin matters: the loader, `dom.create()`'s argument
