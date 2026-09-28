@@ -555,9 +555,12 @@ an IP address, an `IP:port` pair, or a CIDR range.
   (`https://i-zhirov.github.io/trusttunnel-openwrt`), in the official
   OpenWrt layout `releases/<version>/packages/<arch>/trusttunnel/`: the
   `25.12.5` tree holds the apk feeds, the `22.03.7` tree the opkg feeds —
-  one signed feed directory per device architecture. The release workflow
-  publishes the site straight from CI, and no branch ever holds the
-  packages.
+  one signed feed directory per device architecture. A release is a
+  `vX.Y.Z` tag push on main: the release workflow builds the packages,
+  verifies them end to end, and publishes the repositories, the site and
+  a GitHub release from the tag (the pipeline refuses runs that are not
+  tag pushes). The site is served straight from CI, and no branch ever
+  holds the packages.
 - **Manual downloads.** A `.apk` or `.ipk` fetched from the release assets
   must be checked against the SHA-256 sums in the release notes.
 - **Key rotation.** The signing keys rotate; run the installer once more

@@ -560,6 +560,9 @@ reproducible equivalents:
 - Executable bits of shipped scripts must be `100755` in the index.
 - Tag pushes must not regress the release: new tag's commit must be newer
   than the previous tag's.
+- Release runs are tag-gated: the release pipeline's `gate` job refuses
+  any run that is not a `v*` tag push; `workflow_dispatch` is the sole
+  exception (main only, repositories + site, never a release).
 - `sh tests/run.sh` (includes the node-gated views runtime test, which
   skips without node).
 - `docker build -q -t tt-ucode-gate -f tests/backend/Dockerfile
@@ -598,6 +601,11 @@ same harness against the release's own artifacts.
 
 Triggered by `v*` tag pushes (also builds a GitHub release) and
 `workflow_dispatch` (repos + site only; plain branch CI never publishes).
+
+The `gate` job runs first and refuses any run that is not a `v*` tag
+push; `workflow_dispatch` is the sole exception — it must run on main
+and republishes the repositories and the site only, never a GitHub
+release. A mis-triggered run fails before any SDK work starts.
 
 - `build` — `luci-app-trusttunnel` via `openwrt/gh-action-sdk@v7` on
   25.12.5 (apk) and 22.03.7 (ipk). The SDK is pinned with `VERSION_PATH`

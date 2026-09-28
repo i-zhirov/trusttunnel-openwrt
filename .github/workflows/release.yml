@@ -18,6 +18,10 @@
 # The repositories are cumulative: the packages of every prior release
 # are merged into the fresh build's repositories, so every released
 # version stays installable — pinning and downgrading keep working.
+#
+# The `gate` job refuses every run that is not a v* tag push; dispatch
+# runs are the sole exception (main only, repositories + site, never a
+# release), so a mis-triggered run fails before any SDK work starts.
 
 name: release
 
@@ -37,9 +41,39 @@ permissions:
   id-token: write
 
 jobs:
+  # The release pipeline runs only on v* tag pushes: dispatch runs are
+  # the sole exception — they republish the repositories and the site,
+  # never a GitHub release — and are restricted to main. The gate blocks
+  # any other trigger before an SDK build starts, so a mis-triggered run
+  # fails fast instead of burning the build matrix.
+  gate:
+    name: Refuse non-tag release runs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the run is a v* tag push (or a main dispatch)
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "::error::workflow_dispatch republishes from main only (got ref $GITHUB_REF); refusing the run"
+              exit 1
+            fi
+            echo "Dispatch on main: republishing the repositories and the site (no release)."
+            exit 0
+          fi
+          case "$GITHUB_REF" in
+            refs/tags/v*)
+              echo "Tag push $GITHUB_REF_NAME: releasing."
+              ;;
+            *)
+              echo "::error::release runs must be v* tag pushes (got ref $GITHUB_REF); refusing the run"
+              exit 1
+              ;;
+          esac
+
   build:
     name: Build luci-app-trusttunnel (${{ matrix.version }})
     runs-on: ubuntu-latest
+    needs: [gate]
     strategy:
       # One failed build must not cancel the other: every artifact is
       # needed for the repositories.
@@ -175,6 +209,7 @@ jobs:
   build-client:
     name: Build trusttunnel-client (${{ matrix.arch }})
     runs-on: ubuntu-latest
+    needs: [gate]
     strategy:
       # One failed arch must not cancel the rest: every build is needed
       # for its repository directory.
@@ -539,8 +574,10 @@ jobs:
     name: Assemble and publish the repositories
     needs: [build, build-client, verify-integration]
     # Tag pushes publish a release; dispatch runs publish the repositories
-    # and the site. Plain branch CI runs never publish anything.
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    # and the site. Plain branch CI runs never publish anything. The gate
+    # job already refuses non-main dispatch runs; the condition is
+    # repeated here so publish-repo stays self-guarding.
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       # Provides the repo-site templates and the committed public halves
