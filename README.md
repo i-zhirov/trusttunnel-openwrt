@@ -100,6 +100,12 @@ The script then:
 Run the installer again to pull a newer package and client binary and to
 refresh the signing keys; `/etc/config/trusttunnel` is left alone.
 
+The Diagnose and Tools pages are an optional add-on; install the
+`luci-app-trusttunnel-diagnostics` package separately from the same
+repository (`apk add luci-app-trusttunnel-diagnostics` on OpenWrt 25.12+,
+`opkg install luci-app-trusttunnel-diagnostics` on 22.03–24.10). The core
+app works without it.
+
 ## Configuration
 
 Open **Services → TrustTunnel → Settings** in LuCI. The page has six
@@ -219,8 +225,9 @@ address as seen from the LAN) with the credentials above.
 
 ## LuCI pages
 
-The Status, Client log and Diagnostics pages live under **Services →
-TrustTunnel** (Settings is covered under Configuration).
+The Status, Settings, Client log and Versions pages live under **Services
+→ TrustTunnel**; the Diagnose and Tools pages come from the optional
+`luci-app-trusttunnel-diagnostics` package (see Installation).
 
 ### Status page
 

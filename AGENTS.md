@@ -33,8 +33,7 @@ packages/
   luci-app-trusttunnel/       The LuCI app package (feed-style root/ tree)
     Makefile                  OpenWrt package metadata
     htdocs/luci-static/resources/view/trusttunnel/
-      settings.js status.js log.js diagnostics.js tools.js versions.js
-                                                                        LuCI client-side views
+      settings.js status.js log.js versions.js  LuCI client-side views
     root/etc/config/trusttunnel              Default UCI config
     root/etc/init.d/trusttunnel              procd service script
     root/etc/uci-defaults/40-luci-trusttunnel  First-boot setup
@@ -45,6 +44,11 @@ packages/
     root/usr/share/rpcd/ucode/luci.trusttunnel  rpcd backend
     root/usr/share/ucode/trusttunnel.uc      Shared ucode records module
                                               (constants + records parser)
+  luci-app-trusttunnel-diagnostics/  The optional diagnostics add-on
+    Makefile                  OpenWrt package metadata (depends on the core)
+    htdocs/luci-static/resources/view/trusttunnel/
+      diagnostics.js tools.js                LuCI client-side views
+    root/usr/share/luci/menu.d/…json         Menu entries (Diagnostics, Tools)
   trusttunnel-client/         Per-arch packaging of vendor binaries
 repo-site/                    Jekyll templates for the GitHub Pages package
                               repository site (index pages, layout)
@@ -320,6 +324,15 @@ of `/usr/share/ucode` so the named import resolves.
 
 ### LuCI views
 
+The views are split across two packages: the core
+(`luci-app-trusttunnel`) ships `status.js`, `settings.js`, `log.js` and
+`versions.js`; the optional `luci-app-trusttunnel-diagnostics` ships
+`diagnostics.js` and `tools.js` with their menu entries. Everything they
+call (the single `luci.trusttunnel` backend object, the ACL, the menu
+parent) lives in the core, so the optional package is a pure add-on —
+installing the core alone shows the four operational pages, installing
+the add-on adds the two check pages.
+
 - `status.js` — verdict banner, facts (state/mode/server/proxy address,
   traffic), Start/Stop buttons and a rules preview for the assigned
   profile (in proxy mode without one the legacy `domains.direct` list is
@@ -391,6 +404,20 @@ of `/usr/share/ucode` so the named import resolves.
   NOT a reliable carrier of exec bits (zip downloads, Windows). `ci.yml`
   separately verifies index modes are `100755`.
 
+### `luci-app-trusttunnel-diagnostics/Makefile`
+
+- The optional add-on: ships the Diagnostics and Tools views plus their
+  menu entries; everything else (the backend, the ACL, the runtime, the
+  other views) stays in the core package. It is NOT a dependency of the
+  core — the core must never `+luci-app-trusttunnel-diagnostics` — and
+  it hard-depends on `+luci-app-trusttunnel` (the menu parent and the
+  ACL live there).
+- The version comes from the same tag-derived mechanism as the app
+  (same fallback, must track the last released version): the package is
+  released together with the app and can never be ahead of or behind it.
+- No conffiles, no `Build/Compile` (no scripts to chmod); luci.mk copies
+  `htdocs/` and `root/` as for the app.
+
 ### `trusttunnel-client/Makefile`
 
 - Wraps the vendor's per-CPU-family tarballs
@@ -440,8 +467,9 @@ absent, so the plain suite runs anywhere.
   sed-rewrites the script's hardcoded paths into a scratch tree, stubs
   init/routing/logger, and covers filters | guards | attach | invariants.
 - `tests/test_views_runtime.sh` + `tests/views_runtime.js` — executes the
-  four views against mocks that replicate the CURRENT LuCI runtime
-  contracts (`uci.load()` resolving with the package-name list, no plain
+  views (searched across the core and the diagnostics package trees)
+  against mocks that replicate the CURRENT LuCI runtime contracts
+  (`uci.load()` resolving with the package-name list, no plain
   `form.Section`, `E()` reading only `arguments[2]`) and asserts the
   rendered output. Needs node (skips, exit 77, without it). This is the
   gate the syntax-only view checks cannot provide: the v1.0.16-1.0.20
@@ -622,17 +650,19 @@ The `gate` job runs first and refuses any run that is not a `v*` or
 run on main and republishes the repositories and the site only, never a
 GitHub release. A mis-triggered run fails before any SDK work starts.
 
-- `build` — `luci-app-trusttunnel` via `openwrt/gh-action-sdk@v7` on
-  25.12.5 (apk) and 22.03.7 (ipk). The SDK is pinned with `VERSION_PATH`
-  to the release tarballs — **never the snapshot SDK** (snapshot feeds hit
-  a curl Kconfig recursive dependency) — and the SDK feeds are restricted
-  to the needed set via `tests/integration/restricted-feeds.sh`, whose
-  `--verify` gate checks the hardcoded pins against the SDK image's
-  `feeds.conf.default` (update them together with the SDK bump).
-  `FEED_DIR` must be an absolute path and must contain `.git` (luci.mk
-  findrev derives the version from it). `fail-fast: false`; artifact file
-  names must match the tag. Skipped on `client-v*` tags — a client-only
-  release does not touch the app.
+- `build` — the LuCI app packages (`luci-app-trusttunnel` and the
+  optional `luci-app-trusttunnel-diagnostics`) via
+  `openwrt/gh-action-sdk@v7` on 25.12.5 (apk) and 22.03.7 (ipk). The SDK
+  is pinned with `VERSION_PATH` to the release tarballs — **never the
+  snapshot SDK** (snapshot feeds hit a curl Kconfig recursive dependency)
+  — and the SDK feeds are restricted to the needed set via
+  `tests/integration/restricted-feeds.sh`, whose `--verify` gate checks
+  the hardcoded pins against the SDK image's `feeds.conf.default`
+  (update them together with the SDK bump). `FEED_DIR` must be an
+  absolute path and must contain `.git` (luci.mk findrev derives the
+  version from it). `fail-fast: false`; artifact file names must match
+  the tag. Skipped on `client-v*` tags — a client-only release does not
+  touch the app.
 - `build-client` — the client package per subtarget arch (the full matrix
   is in the workflow; the ipk list is the apk list minus
   `aarch64_cortex-a76`). apk files get an `-<arch>` suffix and an
