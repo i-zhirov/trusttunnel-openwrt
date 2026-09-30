@@ -24,6 +24,9 @@ mkdir -p "$sandbox"
 
 # At the top level the init script only assigns variables and defines
 # functions, so it can be sourced without /etc/rc.common, procd and UCI.
+# The shared records/UCI libraries load from LIBDIR (defaulted from
+# TT_LIBDIR), so point that at the tree.
+export TT_LIBDIR="packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel"
 # shellcheck disable=SC1090
 . "$INIT"
 

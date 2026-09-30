@@ -45,6 +45,11 @@ EOF
 PATH="$bin:$PATH"
 export PATH
 
+# The init script sources the shared records/UCI libraries from LIBDIR
+# (defaulted from TT_LIBDIR) at source time; point it at the tree so the
+# real libraries load. LIBDIR is overridden to the stub dir afterwards.
+export TT_LIBDIR="packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel"
+
 # shellcheck disable=SC1090
 . "$INIT"
 
