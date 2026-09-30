@@ -465,7 +465,7 @@ sc_apk_install_happy() {
 as_apk_install_happy() {
     assert_log_order "apk update" "apk add kmod-tun ip-full nftables curl ca-bundle" "update precedes the dependency install"
     assert_log_order "apk add kmod-tun ip-full nftables curl ca-bundle" "apk add luci-app-trusttunnel" "dependencies precede the main package"
-    assert_log_order "apk add luci-app-trusttunnel" "apk info -e trusttunnel-client" "the tripwire runs after the installs"
+    assert_log_order "apk add luci-app-trusttunnel" "apk info -e trusttunnel" "the tripwire runs after the installs (the runtime and the client are checked in one call)"
 }
 
 sc_opkg_install_happy() {
