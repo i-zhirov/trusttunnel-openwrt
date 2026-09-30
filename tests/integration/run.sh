@@ -111,8 +111,12 @@ case "$TT_PM" in
 		IMG_ROUTER=$IMG_ROUTER_APK
 		# The local (SDK-built) client apk carries no -x86_64 suffix — the
 		# release pipeline adds it only to keep the per-arch uploads apart.
-		PM_GLOBS="luci-app-trusttunnel-*.apk trusttunnel-*.apk trusttunnel-client-*.apk"
-		PM_RELEASE_GLOBS="luci-app-trusttunnel-*.apk trusttunnel-*.apk trusttunnel-client-*-x86_64.apk"
+		# The [0-9] anchors keep each glob on its own package: a bare
+		# trusttunnel-* would also match trusttunnel-client-*, and
+		# luci-app-trusttunnel-* the diagnostics package, so a missing
+		# package could pass the presence check on its neighbor.
+		PM_GLOBS="luci-app-trusttunnel-[0-9]*.apk trusttunnel-[0-9]*.apk trusttunnel-client-*.apk"
+		PM_RELEASE_GLOBS="luci-app-trusttunnel-[0-9]*.apk trusttunnel-[0-9]*.apk trusttunnel-client-*-x86_64.apk"
 		;;
 	opkg)
 		IMG_ROUTER=$IMG_ROUTER_OPKG

@@ -196,13 +196,17 @@ jobs:
           EXT: ${{ matrix.ext }}
         run: |
           tag="${GITHUB_REF_NAME#v}"
+          # The ipk names are globbed on purpose: the luci.mk apps ship
+          # <name>_<tag>_all.ipk (luci.mk ignores PKG_RELEASE), while the
+          # plain trusttunnel package ships <name>_<tag>-<release>_all.ipk
+          # — a glob cannot drift from the OpenWrt naming formula again.
           if [ "$EXT" = apk ]; then
             expected="dist/luci-app-trusttunnel-${tag}-r1.apk dist/luci-app-trusttunnel-diagnostics-${tag}-r1.apk dist/trusttunnel-${tag}-r1.apk"
           else
-            expected="dist/luci-app-trusttunnel_${tag}_all.ipk dist/luci-app-trusttunnel-diagnostics_${tag}_all.ipk dist/trusttunnel_${tag}_all.ipk"
+            expected="dist/luci-app-trusttunnel_${tag}*_all.ipk dist/luci-app-trusttunnel-diagnostics_${tag}*_all.ipk dist/trusttunnel_${tag}*_all.ipk"
           fi
           for f in $expected; do
-            if [ ! -f "$f" ]; then
+            if ! ls $f >/dev/null 2>&1; then
               echo "::error::the built package does not match the tag: expected $f"
               exit 1
             fi
