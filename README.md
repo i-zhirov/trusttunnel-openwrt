@@ -86,8 +86,9 @@ The script then:
    architecture, in the official OpenWrt layout — and installs the signing
    key.
 3. Installs the required packages `kmod-tun ip-full nftables curl
-   ca-bundle`, then `luci-app-trusttunnel` with `trusttunnel-client` as
-   its dependency (binaries in `/opt/trusttunnel_client`).
+   ca-bundle`, then `luci-app-trusttunnel` with the `trusttunnel`
+   runtime (the service and the routing) and `trusttunnel-client` as
+   its dependencies (binaries in `/opt/trusttunnel_client`).
 4. Restarts `rpcd` so the new backend code is loaded, and runs
    `/etc/uci-defaults/40-luci-trusttunnel` immediately: it creates the
    firewall zone, the `lan → trusttunnel` forwarding and the Default
@@ -432,10 +433,10 @@ Run the uninstaller:
 sh -c "$(wget -O - https://raw.githubusercontent.com/i-zhirov/trusttunnel-openwrt/main/uninstall.sh)"
 ```
 
-It halts and disables the service, removes the packages (the app and the
-client, plus the optional diagnostics package when it is installed),
-tears down the repository configuration and the signing keys the
-installer put in place, deletes the client binaries and caches (plus the
+It halts and disables the service, removes the packages (the app, the
+runtime and the client, plus the optional diagnostics package when it is
+installed), tears down the repository configuration and the signing keys
+the installer put in place, deletes the client binaries and caches (plus the
 leftovers of earlier package versions), restarts `rpcd` and checks the
 kernel for leftover routing state. It asks whether to remove the firewall
 zone (default: yes) and the settings file (default: no — a reinstall
