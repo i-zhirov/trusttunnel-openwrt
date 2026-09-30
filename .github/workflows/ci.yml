@@ -141,6 +141,7 @@ jobs:
             tests/test_deps.sh \
             tests/test_hotplug.sh \
             tests/test_release_workflow.sh \
+            tests/test_tt_uci.sh \
             tests/test_uci_defaults.sh \
             tests/test_init_regenerate.sh \
             tests/integration/run.sh \
