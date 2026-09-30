@@ -17,6 +17,9 @@ PKG_VERSION:=$(strip $(shell v="$$(git describe --tags --abbrev=0 2>/dev/null | 
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=Ilia Zhirov <i.zhirov@adguard.com>
+# The runtime is pure shell and config: one noarch package serves every
+# device architecture (the ipk name carries _all, like the LuCI apps).
+PKG_ARCH:=all
 
 # No source to build: the package ships the root/ tree as-is. The build
 # directory is the staging area for the tree (mirroring luci.mk's

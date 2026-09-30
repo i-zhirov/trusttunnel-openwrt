@@ -95,7 +95,7 @@ jobs:
       # loudly instead of surfacing as a confusing harness failure.
       - name: Assert the built packages
         run: |
-          for p in luci-app-trusttunnel trusttunnel-client; do
+          for p in luci-app-trusttunnel luci-app-trusttunnel-diagnostics trusttunnel trusttunnel-client; do
             if [ -z "$(find dist -name "$p*.${{ matrix.ext }}" -print -quit)" ]; then
               echo "::error::no $p package was built"
               exit 1
