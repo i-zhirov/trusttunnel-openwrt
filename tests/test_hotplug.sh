@@ -40,6 +40,12 @@ exit "$(cat "$SCRATCH/routing_rc" 2>/dev/null || printf 0)"
 STUB
 chmod +x "$scratch/usr/libexec/trusttunnel/routing"
 
+# The real records library: the hook sources it for the mode check (the
+# test copy redirects the path into the scratch tree, so the shipped file
+# must live next to the routing stub).
+cp packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/records.sh \
+   "$scratch/usr/libexec/trusttunnel/records.sh"
+
 # logger stub: records the tag + message.
 cat > "$scratch/bin/logger" <<'STUB'
 #!/bin/sh
@@ -47,11 +53,12 @@ printf '%s\n' "$*" >> "$SCRATCH/log_lines"
 STUB
 chmod +x "$scratch/bin/logger"
 
-# Test copy: substitute the four fixed absolute prefixes with scratch paths.
+# Test copy: substitute the fixed absolute prefixes with scratch paths.
 # '|' as the sed delimiter avoids escaping the path slashes.
 sed -e "s|/var/etc/trusttunnel|$scratch/var/etc/trusttunnel|g" \
     -e "s|/etc/init.d/trusttunnel|$scratch/etc/init.d/trusttunnel|g" \
     -e "s|/usr/libexec/trusttunnel/routing|$scratch/usr/libexec/trusttunnel/routing|g" \
+    -e "s|/usr/libexec/trusttunnel/records.sh|$scratch/usr/libexec/trusttunnel/records.sh|g" \
     -e "s|/sys/class/net|$scratch/sys/class/net|g" \
     "$HOTPLUG" > "$scratch/40-trusttunnel.test"
 chmod +x "$scratch/40-trusttunnel.test"
