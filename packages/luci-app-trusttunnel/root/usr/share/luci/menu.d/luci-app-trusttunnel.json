@@ -9,16 +9,6 @@
 		"title": "Settings",
 		"order": 20
 	},
-	"admin/services/trusttunnel/diagnostics": {
-		"action": { "path": "trusttunnel/diagnostics", "type": "view" },
-		"title": "Diagnostics",
-		"order": 30
-	},
-	"admin/services/trusttunnel/tools": {
-		"action": { "path": "trusttunnel/tools", "type": "view" },
-		"title": "Tools",
-		"order": 35
-	},
 	"admin/services/trusttunnel/log": {
 		"action": { "path": "trusttunnel/log", "type": "view" },
 		"title": "Client log",
