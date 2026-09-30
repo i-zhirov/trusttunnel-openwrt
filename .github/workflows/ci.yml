@@ -243,17 +243,22 @@ jobs:
       # appears in the file.
       - name: Check that every LuCI module used by the views is required
         run: |
-          views=packages/luci-app-trusttunnel/htdocs/luci-static/resources/view/trusttunnel
+          # The views are split across the core package and the optional
+          # diagnostics package; both trees are checked.
           fail=0
-          for f in "$views"/*.js; do
-            [ -f "$f" ] || continue
-            for mod in ui dom rpc uci form view poll fs network validation; do
-              if grep -Eq "[[:<:]]${mod}\.[A-Za-z_][A-Za-z0-9_]*\(" "$f"; then
-                if ! grep -Eq "^'require ${mod}'" "$f"; then
-                  echo "::error::$(basename "$f") uses $mod.*() but does not declare 'require $mod'"
-                  fail=1
+          for views in \
+            packages/luci-app-trusttunnel/htdocs/luci-static/resources/view/trusttunnel \
+            packages/luci-app-trusttunnel-diagnostics/htdocs/luci-static/resources/view/trusttunnel; do
+            for f in "$views"/*.js; do
+              [ -f "$f" ] || continue
+              for mod in ui dom rpc uci form view poll fs network validation; do
+                if grep -Eq "[[:<:]]${mod}\.[A-Za-z_][A-Za-z0-9_]*\(" "$f"; then
+                  if ! grep -Eq "^'require ${mod}'" "$f"; then
+                    echo "::error::$(basename "$f") uses $mod.*() but does not declare 'require $mod'"
+                    fail=1
+                  fi
                 fi
-              fi
+              done
             done
           done
           exit "$fail"
@@ -265,11 +270,15 @@ jobs:
       - name: Check the JavaScript syntax of the views
         run: |
           fail=0
-          for f in packages/luci-app-trusttunnel/htdocs/luci-static/resources/view/trusttunnel/*.js; do
-            if ! node -e 'const vm = require("vm"); const fs = require("fs"); const src = fs.readFileSync(process.argv[1], "utf8"); new vm.Script("(function(){\n" + src + "\n})"); console.log("ok: " + process.argv[1]);' "$f"; then
-              echo "::error::$f failed to parse as JavaScript"
-              fail=1
-            fi
+          for views in \
+            packages/luci-app-trusttunnel/htdocs/luci-static/resources/view/trusttunnel \
+            packages/luci-app-trusttunnel-diagnostics/htdocs/luci-static/resources/view/trusttunnel; do
+            for f in "$views"/*.js; do
+              if ! node -e 'const vm = require("vm"); const fs = require("fs"); const src = fs.readFileSync(process.argv[1], "utf8"); new vm.Script("(function(){\n" + src + "\n})"); console.log("ok: " + process.argv[1]);' "$f"; then
+                echo "::error::$f failed to parse as JavaScript"
+                fail=1
+              fi
+            done
           done
           exit "$fail"
 
