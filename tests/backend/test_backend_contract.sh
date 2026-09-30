@@ -51,7 +51,9 @@ docker info >/dev/null 2>&1 || tt_skip "docker daemon not running"
 BASE="$(dirname "$0")"
 MOD="$BASE/mod/luci/trusttunnel.uc"
 BACKEND=packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel
-BACKEND_LIB=packages/luci-app-trusttunnel/root/usr/share/ucode/trusttunnel.uc
+# The shared records module lives in the runtime package (the UI's
+# backend imports it by name through the module search path).
+BACKEND_LIB=packages/trusttunnel/root/usr/share/ucode/trusttunnel.uc
 
 # retry <tries> <sleep> <cmd...> — run the command up to <tries> times,
 # sleeping <sleep> seconds between attempts; succeed on the first exit 0.

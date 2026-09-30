@@ -15,7 +15,7 @@
 # hanging, pointing at something that no longer exists.
 . "$(dirname "$0")/lib.sh"
 
-INIT="packages/luci-app-trusttunnel/root/etc/init.d/trusttunnel"
+INIT="packages/trusttunnel/root/etc/init.d/trusttunnel"
 
 lab="$TT_TEST_TMP/lab"
 bin="$lab/bin"
@@ -53,7 +53,7 @@ export PATH
 # The init script sources the shared records/UCI libraries from LIBDIR
 # (defaulted from TT_LIBDIR) at source time; point it at the tree so the
 # real libraries load. LIBDIR is overridden to the stub dir afterwards.
-export TT_LIBDIR="packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel"
+export TT_LIBDIR="packages/trusttunnel/root/usr/libexec/trusttunnel"
 
 # shellcheck disable=SC1090
 . "$INIT"

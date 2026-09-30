@@ -15,8 +15,8 @@
 # shellcheck source=/dev/null
 . "$(dirname "$0")/lib.sh"
 
-R=packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/routing
-export TT_LIBDIR="${TT_LIBDIR:-packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel}"
+R=packages/trusttunnel/root/usr/libexec/trusttunnel/routing
+export TT_LIBDIR="${TT_LIBDIR:-packages/trusttunnel/root/usr/libexec/trusttunnel}"
 
 stub_dir=$TT_TEST_TMP/bin
 mkdir -p "$stub_dir"

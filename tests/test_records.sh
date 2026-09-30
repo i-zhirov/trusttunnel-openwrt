@@ -9,7 +9,7 @@
 # path, so sourcing must succeed without the variable.
 . "$(dirname "$0")/lib.sh"
 
-. packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/records.sh
+. packages/trusttunnel/root/usr/libexec/trusttunnel/records.sh
 
 # --- scalar fixture -------------------------------------------------------------
 
@@ -92,7 +92,7 @@ assert_eq "true" "$(tt_mode_is_proxy && echo true || echo false)" "main.mode=pro
 
 # --- the TT_RECORDS guard ---------------------------------------------------------
 
-assert_exit 0 "sourcing the library needs no TT_RECORDS" sh -c '. packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/records.sh'
+assert_exit 0 "sourcing the library needs no TT_RECORDS" sh -c '. packages/trusttunnel/root/usr/libexec/trusttunnel/records.sh'
 
 _guard_err=$(unset TT_RECORDS; tt_get main.enabled 2>&1)
 assert_contains "$_guard_err" "TT_RECORDS is not set" "an accessor without TT_RECORDS names the variable"

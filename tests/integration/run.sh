@@ -111,13 +111,13 @@ case "$TT_PM" in
 		IMG_ROUTER=$IMG_ROUTER_APK
 		# The local (SDK-built) client apk carries no -x86_64 suffix — the
 		# release pipeline adds it only to keep the per-arch uploads apart.
-		PM_GLOBS="luci-app-trusttunnel-*.apk trusttunnel-client-*.apk"
-		PM_RELEASE_GLOBS="luci-app-trusttunnel-*.apk trusttunnel-client-*-x86_64.apk"
+		PM_GLOBS="luci-app-trusttunnel-*.apk trusttunnel-*.apk trusttunnel-client-*.apk"
+		PM_RELEASE_GLOBS="luci-app-trusttunnel-*.apk trusttunnel-*.apk trusttunnel-client-*-x86_64.apk"
 		;;
 	opkg)
 		IMG_ROUTER=$IMG_ROUTER_OPKG
 		# ipk file names always carry the architecture.
-		PM_GLOBS="luci-app-trusttunnel_*_all.ipk trusttunnel-client_*_x86_64.ipk"
+		PM_GLOBS="luci-app-trusttunnel_*_all.ipk trusttunnel_*_all.ipk trusttunnel-client_*_x86_64.ipk"
 		PM_RELEASE_GLOBS="$PM_GLOBS"
 		;;
 	*)
@@ -976,19 +976,19 @@ st_install() {
 assert_packages_installed() {
 	if [ "$TT_PM" = "apk" ]; then
 		if docker exec "$ROUTER_CID" \
-				apk info -e luci-app-trusttunnel trusttunnel-client \
+				apk info -e luci-app-trusttunnel trusttunnel trusttunnel-client \
 				>/dev/null 2>&1; then
-			_tt_pass "apk reports luci-app and client installed"
+			_tt_pass "apk reports luci-app, runtime and client installed"
 		else
-			_tt_fail "apk does not report both packages installed"
-			# The failure diagnosis: which of the two is missing.
+			_tt_fail "apk does not report all three packages installed"
+			# The failure diagnosis: which of them is missing.
 			docker exec "$ROUTER_CID" \
-				sh -c 'for p in luci-app-trusttunnel trusttunnel-client; do apk info -e "$p" >/dev/null 2>&1 && echo "$p: installed" || echo "$p: MISSING"; done' 2>/dev/null
+				sh -c 'for p in luci-app-trusttunnel trusttunnel trusttunnel-client; do apk info -e "$p" >/dev/null 2>&1 && echo "$p: installed" || echo "$p: MISSING"; done' 2>/dev/null
 		fi
 	else
 		_got=$(docker exec "$ROUTER_CID" sh -c \
-			'opkg list-installed 2>/dev/null | grep -cE "^(luci-app-trusttunnel|trusttunnel-client) "')
-		assert_eq "2" "$_got" "opkg reports luci-app and client installed"
+			'opkg list-installed 2>/dev/null | grep -cE "^(luci-app-trusttunnel|trusttunnel|trusttunnel-client) "')
+		assert_eq "3" "$_got" "opkg reports luci-app, runtime and client installed"
 	fi
 }
 
@@ -1710,7 +1710,7 @@ uci commit trusttunnel" >/dev/null 2>&1; then
 	# and install.sh run; the package manager consumes the router's copy
 	# on the apk path, so the tree's own file is executed.
 	if docker exec "$ROUTER_CID" \
-			sh /src/packages/luci-app-trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel \
+			sh /src/packages/trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel \
 			>/dev/null 2>&1; then
 		_tt_pass "the boot migration runs on the live config"
 	else

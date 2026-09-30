@@ -16,7 +16,7 @@
 # not the cheapest, and there is a dedicated check for that here.
 . "$(dirname "$0")/lib.sh"
 
-INIT="packages/luci-app-trusttunnel/root/etc/init.d/trusttunnel"
+INIT="packages/trusttunnel/root/etc/init.d/trusttunnel"
 SCHEMA_KEYS="tests/fixtures/schema-keys.txt"
 
 sandbox="$TT_TEST_TMP/sandbox"
@@ -26,7 +26,7 @@ mkdir -p "$sandbox"
 # functions, so it can be sourced without /etc/rc.common, procd and UCI.
 # The shared records/UCI libraries load from LIBDIR (defaulted from
 # TT_LIBDIR), so point that at the tree.
-export TT_LIBDIR="packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel"
+export TT_LIBDIR="packages/trusttunnel/root/usr/libexec/trusttunnel"
 # shellcheck disable=SC1090
 . "$INIT"
 

@@ -17,7 +17,7 @@
 # section's own `name` option comes from the case below.
 . "$(dirname "$0")/lib.sh"
 
-. packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/tt-uci.sh
+. packages/trusttunnel/root/usr/libexec/trusttunnel/tt-uci.sh
 
 config_load() { :; }
 

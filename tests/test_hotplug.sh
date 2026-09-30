@@ -9,7 +9,7 @@
 # shellcheck source=/dev/null
 . "$(dirname "$0")/lib.sh"
 
-HOTPLUG="packages/luci-app-trusttunnel/root/etc/hotplug.d/net/40-trusttunnel"
+HOTPLUG="packages/trusttunnel/root/etc/hotplug.d/net/40-trusttunnel"
 
 scratch="$TT_TEST_TMP/root"
 export SCRATCH="$scratch"
@@ -43,7 +43,7 @@ chmod +x "$scratch/usr/libexec/trusttunnel/routing"
 # The real records library: the hook sources it for the mode check (the
 # test copy redirects the path into the scratch tree, so the shipped file
 # must live next to the routing stub).
-cp packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/records.sh \
+cp packages/trusttunnel/root/usr/libexec/trusttunnel/records.sh \
    "$scratch/usr/libexec/trusttunnel/records.sh"
 
 # logger stub: records the tag + message.

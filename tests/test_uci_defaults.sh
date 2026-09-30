@@ -19,7 +19,7 @@
 # shellcheck source=/dev/null
 . "$(dirname "$0")/lib.sh"
 
-TT_UCD_SCRIPT=${TT_UCD_SCRIPT:-packages/luci-app-trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel}
+TT_UCD_SCRIPT=${TT_UCD_SCRIPT:-packages/trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel}
 TT_UCD_FILTER=${TT_UCD_FILTER:-}
 
 # Local machines without docker keep the suite runnable: report a visible
@@ -29,7 +29,7 @@ if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
 fi
 
 UCD_IMAGE=openwrt/rootfs:x86-64-25.12.0
-UCD_SCRIPT_DIR=packages/luci-app-trusttunnel/root/etc/uci-defaults
+UCD_SCRIPT_DIR=packages/trusttunnel/root/etc/uci-defaults
 
 # The fixture area must be visible inside the container. On the Linux CI
 # runners TT_TEST_TMP (/tmp) binds in cleanly; the colima VM on macOS does

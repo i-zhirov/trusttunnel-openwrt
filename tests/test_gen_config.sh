@@ -12,7 +12,7 @@
 # in proxy mode (the SOCKS listener is the explicit routing there).
 . "$(dirname "$0")/lib.sh"
 
-GEN=packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/gen-config
+GEN=packages/trusttunnel/root/usr/libexec/trusttunnel/gen-config
 
 # count_occ <needle> <text> — prints how many times the needle appears.
 count_occ() {
