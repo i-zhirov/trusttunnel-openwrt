@@ -69,13 +69,10 @@ if [ "$(tt_count endpoint.address)" -lt 1 ]; then
 fi
 
 # Resolve the routing profile for vpn_mode and the exclusion list. The
-# mode is consulted only when a profile is assigned by name; any other
-# situation takes the fallback branch.
-tt_profile=$(tt_get endpoint.routing_profile)
-tt_mode=
-if [ -n "$tt_profile" ] && [ "$tt_profile" = "$(tt_get routing_profile.name)" ]; then
-    tt_mode=$(tt_get routing_profile.mode)
-fi
+# mode is consulted only when a profile is assigned by name (the shared
+# tt_assigned_profile_mode carries that check); any other situation takes
+# the fallback branch.
+tt_mode=$(tt_assigned_profile_mode)
 case $tt_mode in
     bypass)
         tt_vpn_mode=selective
@@ -92,7 +89,7 @@ case $tt_mode in
         # absent vpn_rules key yields the empty exclusions list. In proxy
         # mode the app itself is the explicit routing, so the legacy
         # full-tunnel semantics (everything except domains.direct) stay.
-        if [ "$(tt_get main.mode)" = "proxy" ]; then
+        if tt_mode_is_proxy; then
             tt_vpn_mode=general
             tt_exclusions_key=domains.direct
         else
@@ -141,7 +138,7 @@ printf 'dns_upstreams = %s\n' "$(tt_array endpoint.dns_upstream)"
 # that declares both or neither. Tun mode (the default) keeps the kernel
 # routing owned by the package; proxy mode binds a SOCKS5 listener whose
 # address and optional auth come from the proxy records.
-if [ "$(tt_get main.mode)" = "proxy" ]; then
+if tt_mode_is_proxy; then
 	printf '\n[listener.socks]\n'
 	printf 'address = "%s"\n' "$(tt_esc "$(tt_get proxy.address 127.0.0.1:1080)")"
 	# Auth is an on/off pair: a username without a password (or vice

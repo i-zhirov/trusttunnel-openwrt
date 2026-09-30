@@ -59,15 +59,19 @@ if [ -z "$TT_RECORDS" ]; then
     echo "routing: missing records file" >&2
     exit 1
 fi
-OUT_DIR=${3:-/var/etc/trusttunnel}
+OUT_DIR=${3:-$TT_OUT_DIR_DEFAULT}
 
-RULE_PRIORITY=30820
+# The kernel constants are the shared defaults from records.sh (the same
+# values the config file seeds and the backend diagnostics mirror); the
+# records can override the table and the fwmark, and then everything
+# below follows those two.
+RULE_PRIORITY=$TT_RULE_PRIORITY
 PRIVATE_V4='10.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4'
 PRIVATE_V6='::1/128, fc00::/7, fe80::/10, ff00::/8'
 DEVICE_FILE="$OUT_DIR/device"
 
-TT_TABLE=$(tt_get network.table 880)
-TT_FWMARK=$(tt_get network.fwmark 0x9527)
+TT_TABLE=$(tt_get network.table $TT_TABLE_DEFAULT)
+TT_FWMARK=$(tt_get network.fwmark $TT_FWMARK_DEFAULT)
 TT_ROUTER=$(tt_bool network.include_router_traffic 0)
 TT_BLACKHOLE=$(tt_bool network.blackhole_on_down 0)
 
@@ -323,12 +327,14 @@ resolve_host() {
 # creates and migrates it); these helpers only repoint its device binding
 # and reload the firewall when the binding changed.
 
-# zone_sec — the section reference of the first zone named trusttunnel.
+# zone_sec — the section reference of the first zone named trusttunnel
+# (the shared TT_ZONE_NAME from records.sh; the same name uci-defaults
+# seeds and the backend's forward check greps).
 zone_sec() {
     _zs_i=0
     while :; do
         _zs_name=$("$TT_UCI" -q get "firewall.@zone[$_zs_i].name" 2>/dev/null) || return 1
-        [ "$_zs_name" = "trusttunnel" ] && { printf 'firewall.@zone[%s]\n' "$_zs_i"; return 0; }
+        [ "$_zs_name" = "$TT_ZONE_NAME" ] && { printf 'firewall.@zone[%s]\n' "$_zs_i"; return 0; }
         _zs_i=$((_zs_i + 1))
     done
 }
@@ -338,7 +344,7 @@ zone_sec() {
 # forwarding, exactly like uci-defaults does.
 create_zone() {
     _cz_zone=$("$TT_UCI" add firewall zone) || return 1
-    "$TT_UCI" set "firewall.$_cz_zone.name"='trusttunnel'
+    "$TT_UCI" set "firewall.$_cz_zone.name"="$TT_ZONE_NAME"
     "$TT_UCI" set "firewall.$_cz_zone.input"='REJECT'
     "$TT_UCI" set "firewall.$_cz_zone.output"='ACCEPT'
     "$TT_UCI" set "firewall.$_cz_zone.forward"='REJECT'
@@ -346,7 +352,7 @@ create_zone() {
     "$TT_UCI" set "firewall.$_cz_zone.mtu_fix"='1'
     _cz_fwd=$("$TT_UCI" add firewall forwarding) || return 1
     "$TT_UCI" set "firewall.$_cz_fwd.src"='lan'
-    "$TT_UCI" set "firewall.$_cz_fwd.dest"='trusttunnel'
+    "$TT_UCI" set "firewall.$_cz_fwd.dest"="$TT_ZONE_NAME"
     "$TT_UCI" commit firewall
     printf '%s\n' "$_cz_zone"
 }
@@ -391,16 +397,16 @@ up() {
     # Proxy mode owns no kernel routing: refuse rather than install a
     # pipeline whose marked traffic would blackhole with no tun device
     # to point the table at.
-    if [ "$(tt_get main.mode)" = "proxy" ]; then
+    if tt_mode_is_proxy; then
         logger -t trusttunnel "routing: not applicable in proxy mode"
         return 1
     fi
     if [ "$TT_BLACKHOLE" = true ]; then
-        "$TT_IP" route replace blackhole default table "$TT_TABLE" metric 1000
-        "$TT_IP" -6 route replace blackhole default table "$TT_TABLE" metric 1000
+        "$TT_IP" route replace blackhole default table "$TT_TABLE" metric $TT_BLACKHOLE_METRIC
+        "$TT_IP" -6 route replace blackhole default table "$TT_TABLE" metric $TT_BLACKHOLE_METRIC
     else
-        "$TT_IP" route del blackhole default table "$TT_TABLE" metric 1000 2>/dev/null || true
-        "$TT_IP" -6 route del blackhole default table "$TT_TABLE" metric 1000 2>/dev/null || true
+        "$TT_IP" route del blackhole default table "$TT_TABLE" metric $TT_BLACKHOLE_METRIC 2>/dev/null || true
+        "$TT_IP" -6 route del blackhole default table "$TT_TABLE" metric $TT_BLACKHOLE_METRIC 2>/dev/null || true
     fi
 
     # The anchor is this package's own rule: a foreign rule that happens
@@ -466,8 +472,8 @@ attach() {
     # attached (a dead or still-connecting client falls through to the
     # direct route), while in strict mode up() already armed it and the
     # replace below is the idempotent no-op.
-    "$TT_IP" route replace blackhole default table "$TT_TABLE" metric 1000
-    "$TT_IP" -6 route replace blackhole default table "$TT_TABLE" metric 1000
+    "$TT_IP" route replace blackhole default table "$TT_TABLE" metric $TT_BLACKHOLE_METRIC
+    "$TT_IP" -6 route replace blackhole default table "$TT_TABLE" metric $TT_BLACKHOLE_METRIC
 
     if ! "$TT_IP" route replace default dev "$device" table "$TT_TABLE" metric 1; then
         logger -t trusttunnel "routing: failed to attach $device"
@@ -510,8 +516,8 @@ detach() {
     "$TT_IP" route del default table "$TT_TABLE" metric 1 2>/dev/null || true
     "$TT_IP" -6 route del default table "$TT_TABLE" metric 1 2>/dev/null || true
     if [ "$TT_BLACKHOLE" != true ]; then
-        "$TT_IP" route del blackhole default table "$TT_TABLE" metric 1000 2>/dev/null || true
-        "$TT_IP" -6 route del blackhole default table "$TT_TABLE" metric 1000 2>/dev/null || true
+        "$TT_IP" route del blackhole default table "$TT_TABLE" metric $TT_BLACKHOLE_METRIC 2>/dev/null || true
+        "$TT_IP" -6 route del blackhole default table "$TT_TABLE" metric $TT_BLACKHOLE_METRIC 2>/dev/null || true
     fi
     clear_zone
     rm -f "$DEVICE_FILE"
@@ -549,7 +555,7 @@ emit_meter_ruleset() {
 # like up does, so a persistently failing install is diagnosable from
 # the log rather than hidden behind the non-fatal warning.
 meter() {
-    if [ "$(tt_get main.mode)" != "proxy" ]; then
+    if ! tt_mode_is_proxy; then
         logger -t trusttunnel "routing: the meter applies only in proxy mode"
         return 1
     fi
@@ -580,8 +586,8 @@ down() {
     "$TT_IP" -6 rule del fwmark "$TT_FWMARK" table "$TT_TABLE" priority "$RULE_PRIORITY" 2>/dev/null || true
     "$TT_IP" route del default table "$TT_TABLE" metric 1 2>/dev/null || true
     "$TT_IP" -6 route del default table "$TT_TABLE" metric 1 2>/dev/null || true
-    "$TT_IP" route del blackhole default table "$TT_TABLE" metric 1000 2>/dev/null || true
-    "$TT_IP" -6 route del blackhole default table "$TT_TABLE" metric 1000 2>/dev/null || true
+    "$TT_IP" route del blackhole default table "$TT_TABLE" metric $TT_BLACKHOLE_METRIC 2>/dev/null || true
+    "$TT_IP" -6 route del blackhole default table "$TT_TABLE" metric $TT_BLACKHOLE_METRIC 2>/dev/null || true
     clear_zone
     rm -f "$DEVICE_FILE"
 }
