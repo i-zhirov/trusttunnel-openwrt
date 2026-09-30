@@ -132,6 +132,7 @@ jobs:
             uninstall.sh \
             tests/run.sh \
             packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/records.sh \
+            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/tt-uci.sh \
             packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/gen-config \
             packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/routing \
             packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/uci-export \
@@ -158,30 +159,33 @@ jobs:
       - name: Check the init script syntax
         run: sh -n packages/luci-app-trusttunnel/root/etc/init.d/trusttunnel
 
-      # The backend calls module functions (math/fs/ubus/uci) that live
-      # outside the ucode core; a used function without a matching import
-      # parses fine but throws at runtime (the tmp_path() rand() case),
-      # so every used module function must appear in the module's import
-      # line. A function counts as used when it is followed by "(" as a
-      # whole word, and as imported when its module import line contains
-      # it as a whole word.
+      # The backend and its shared module call functions (math/fs/ubus/
+      # uci) that live outside the ucode core; a used function without a
+      # matching import parses fine but throws at runtime (the tmp_path()
+      # rand() case), so every used module function must appear in the
+      # module's import line. A function counts as used when it is
+      # followed by "(" as a whole word, and as imported when its module
+      # import line contains it as a whole word.
       - name: Check that every used ucode module function is imported
         run: |
-          backend=packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel
           fail=0
-          for pair in \
-            math:rand math:srand math:sqrt math:pow math:abs \
-            fs:readfile fs:writefile fs:popen fs:access fs:unlink \
-            fs:stat fs:mkdir fs:chmod fs:mkstemp fs:opendir \
-            ubus:connect uci:cursor; do
-            mod=${pair%%:*}
-            fn=${pair#*:}
-            if grep -Eq "[[:<:]]${fn}\(" "$backend"; then
-              if ! grep -Eq "^[[:space:]]*import \{[^}]*[[:<:]]${fn}[[:>:]][^}]*\} from '${mod}'" "$backend"; then
-                echo "::error::$mod.$fn() is used in $backend but not imported from '$mod'"
-                fail=1
+          for backend in \
+            packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel \
+            packages/luci-app-trusttunnel/root/usr/share/ucode/trusttunnel.uc; do
+            for pair in \
+              math:rand math:srand math:sqrt math:pow math:abs \
+              fs:readfile fs:writefile fs:popen fs:access fs:unlink \
+              fs:stat fs:mkdir fs:chmod fs:mkstemp fs:opendir \
+              ubus:connect uci:cursor; do
+              mod=${pair%%:*}
+              fn=${pair#*:}
+              if grep -Eq "[[:<:]]${fn}\(" "$backend"; then
+                if ! grep -Eq "^[[:space:]]*import \{[^}]*[[:<:]]${fn}[[:>:]][^}]*\} from '${mod}'" "$backend"; then
+                  echo "::error::$mod.$fn() is used in $backend but not imported from '$mod'"
+                  fail=1
+                fi
               fi
-            fi
+            done
           done
           exit "$fail"
 
@@ -195,8 +199,12 @@ jobs:
       # fails if the compiler accepts it.
       - name: Check the backend syntax with the pinned ucode
         run: |
+          # The backend imports the shared 'trusttunnel' module by name;
+          # the extra -L resolves it to the tree's copy of
+          # /usr/share/ucode/trusttunnel.uc.
           if ! docker run --rm -v "$PWD:/ws" -w /ws tt-ucode-gate \
               /opt/ucode/build/ucode -L "/opt/ucode/build/*.so" \
+              -L "/ws/packages/luci-app-trusttunnel/root/usr/share/ucode/*.uc" \
               -c packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel; then
             echo "::error::the backend does not compile under the pinned ucode"
             exit 1
