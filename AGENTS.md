@@ -43,6 +43,8 @@ packages/
     root/usr/share/luci/menu.d/…json         Menu entry
     root/usr/share/rpcd/acl.d/…json          RPC/UCI ACL
     root/usr/share/rpcd/ucode/luci.trusttunnel  rpcd backend
+    root/usr/share/ucode/trusttunnel.uc      Shared ucode records module
+                                              (constants + records parser)
   trusttunnel-client/         Per-arch packaging of vendor binaries
 repo-site/                    Jekyll templates for the GitHub Pages package
                               repository site (index pages, layout)
@@ -102,11 +104,19 @@ one generated client config, and one routing helper. The chain is:
 ```
 /etc/config/trusttunnel            (UCI: main, endpoint, network,
         |                               routing_profile*, domains)
-        | uci-export                (dumps 30 fixed keys to TSV)
+        | uci-export                (dumps 31 fixed keys to TSV)
         v
 /var/etc/trusttunnel/settings.tsv  (the "records"; consumed everywhere)
         | records.sh                (sourced accessor library: tt_get,
-        |                               tt_list, tt_bool, tt_count)
+        |                               tt_list, tt_bool, tt_count,
+        |                               tt_mode_is_proxy,
+        |                               tt_assigned_profile_mode + the
+        |                               shared tt_*_DEFAULT constants)
+        | tt-uci.sh                 (sourced: tt_resolve_active_server,
+        |                               the active-server resolution shared
+        |                               by uci-export and the init script)
+        | /usr/share/ucode/trusttunnel.uc (the ucode side of the same
+        |                               constants + records parser)
         v
 /var/etc/trusttunnel/client.toml    (gen-config; the client binary's config)
 /var/etc/trusttunnel/endpoint.pem   (pinned cert, written by init script)
@@ -118,7 +128,7 @@ one generated client config, and one routing helper. The chain is:
 
 `uci-export` is the canonical emitter of the records TSV
 (`section.option<TAB>value`, list options repeat their key). The emitted
-key set — **30 keys, fixed order** — is a hard contract shared by
+key set — **31 keys, fixed order** — is a hard contract shared by
 `records.sh`, `gen-config`, the `routing` helper, the init script's change
 classifier and the ucode backend's `records()` parser. Nothing outside the
 schema ever appears in the file (foreign UCI sections must not leak), and
@@ -301,9 +311,12 @@ Exposes `luci.trusttunnel` RPC methods (the ACL grants read on
   vendor's `setup_wizard`, parses the produced settings and returns the
   endpoint fields; secrets go through `write_secret_tmp` (mode 0600).
 
-Imports note: the backend imports `fs` and `math` module functions only.
-`ci.yml` gates that every used module function is imported and that the
-file compiles under the pinned ucode.
+Imports note: the backend imports `fs` and `math` module functions
+plus the shared `trusttunnel` module (constants + records parser, at
+`/usr/share/ucode/trusttunnel.uc`). `ci.yml` gates that every used
+module function is imported (both files) and that the backend compiles
+under the pinned ucode, with an extra `-L` pointing at the tree's copy
+of `/usr/share/ucode` so the named import resolves.
 
 ### LuCI views
 
