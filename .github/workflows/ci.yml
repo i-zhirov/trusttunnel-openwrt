@@ -42,12 +42,12 @@ jobs:
           for path in \
             install.sh \
             uninstall.sh \
-            packages/luci-app-trusttunnel/root/etc/init.d/trusttunnel \
-            packages/luci-app-trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel \
-            packages/luci-app-trusttunnel/root/etc/hotplug.d/net/40-trusttunnel \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/gen-config \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/routing \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/uci-export; do
+            packages/trusttunnel/root/etc/init.d/trusttunnel \
+            packages/trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel \
+            packages/trusttunnel/root/etc/hotplug.d/net/40-trusttunnel \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/gen-config \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/routing \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/uci-export; do
             mode=$(git ls-files -s -- "$path" | awk '{print $1}')
             if [ "$mode" != "100755" ]; then
               echo "::error::$path has index mode $mode, expected 100755"
@@ -131,13 +131,13 @@ jobs:
             install.sh \
             uninstall.sh \
             tests/run.sh \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/records.sh \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/tt-uci.sh \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/gen-config \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/routing \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/uci-export \
-            packages/luci-app-trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel \
-            packages/luci-app-trusttunnel/root/etc/hotplug.d/net/40-trusttunnel \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/records.sh \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/tt-uci.sh \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/gen-config \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/routing \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/uci-export \
+            packages/trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel \
+            packages/trusttunnel/root/etc/hotplug.d/net/40-trusttunnel \
             tests/test_deps.sh \
             tests/test_hotplug.sh \
             tests/test_release_workflow.sh \
@@ -158,7 +158,7 @@ jobs:
       # A syntax error in the init script would take the service down at
       # boot, so it is parsed standalone in addition to the lint above.
       - name: Check the init script syntax
-        run: sh -n packages/luci-app-trusttunnel/root/etc/init.d/trusttunnel
+        run: sh -n packages/trusttunnel/root/etc/init.d/trusttunnel
 
       # The backend and its shared module call functions (math/fs/ubus/
       # uci) that live outside the ucode core; a used function without a
@@ -172,7 +172,7 @@ jobs:
           fail=0
           for backend in \
             packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel \
-            packages/luci-app-trusttunnel/root/usr/share/ucode/trusttunnel.uc; do
+            packages/trusttunnel/root/usr/share/ucode/trusttunnel.uc; do
             for pair in \
               math:rand math:srand math:sqrt math:pow math:abs \
               fs:readfile fs:writefile fs:popen fs:access fs:unlink \
@@ -205,7 +205,7 @@ jobs:
           # /usr/share/ucode/trusttunnel.uc.
           if ! docker run --rm -v "$PWD:/ws" -w /ws tt-ucode-gate \
               /opt/ucode/build/ucode -L "/opt/ucode/build/*.so" \
-              -L "/ws/packages/luci-app-trusttunnel/root/usr/share/ucode/*.uc" \
+              -L "/ws/packages/trusttunnel/root/usr/share/ucode/*.uc" \
               -c packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel; then
             echo "::error::the backend does not compile under the pinned ucode"
             exit 1
