@@ -92,7 +92,7 @@ for _ver in $TT_SDK_VERSION; do
 		-v "$TT_SDK_CACHE/$_ver/feeds:/builder/feeds" \
 		-v "$TT_SDK_CACHE/$_ver/dl:/builder/dl" \
 		-e FEEDNAME=ttowrt \
-		-e PACKAGES="luci-app-trusttunnel luci-app-trusttunnel-diagnostics trusttunnel-client" \
+		-e PACKAGES="luci-app-trusttunnel luci-app-trusttunnel-diagnostics trusttunnel trusttunnel-client" \
 		-e TT_SDK_NJOBS="$TT_SDK_NJOBS" \
 		"$_img" sh -c '
 			set -e
@@ -148,7 +148,7 @@ for _ver in $TT_SDK_VERSION; do
 			retry 3 5 ./scripts/feeds update -a
 			echo "== defconfig"
 			make defconfig >/dev/null 2>&1
-			for PKG in luci-app-trusttunnel luci-app-trusttunnel-diagnostics trusttunnel-client; do
+			for PKG in luci-app-trusttunnel luci-app-trusttunnel-diagnostics trusttunnel trusttunnel-client; do
 				echo "== install $PKG"
 				./scripts/feeds install -p ttowrt -f "$PKG"
 				echo "== download $PKG"
