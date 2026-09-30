@@ -17,12 +17,6 @@ PKG_VERSION:=$(strip $(shell v="$$(git describe --tags --abbrev=0 2>/dev/null | 
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=Ilia Zhirov <i.zhirov@adguard.com>
-# The runtime is pure shell and config: one noarch package serves every
-# device architecture (the ipk name carries _all, like the LuCI apps).
-# PKGARCH is the variable the ipk/apk name and the Architecture field
-# derive from (luci.mk sets it from LUCI_PKGARCH; a plain package sets
-# it directly).
-PKGARCH:=all
 
 # No source to build: the package ships the root/ tree as-is. The build
 # directory is the staging area for the tree (mirroring luci.mk's
@@ -36,6 +30,12 @@ define Package/trusttunnel
   CATEGORY:=Network
   TITLE:=TrustTunnel full-tunnel runtime
   URL:=https://github.com/i-zhirov/trusttunnel-openwrt
+  # The runtime is pure shell and config: one noarch package serves
+  # every device architecture (the ipk name carries _all, like the LuCI
+  # apps). PKGARCH is set INSIDE the package define — Package/Default
+  # assigns it from ARCH_PACKAGES, and this block expands after it
+  # (the same mechanism luci.mk uses for LUCI_PKGARCH).
+  PKGARCH:=all
   # Every dependency below is used by THIS package's own files. The
   # client binaries (the tun device, the CA bundle) arrive transitively
   # via +trusttunnel-client — the runtime must NOT repeat kmod-tun or
