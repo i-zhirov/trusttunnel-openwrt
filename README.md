@@ -432,12 +432,14 @@ Run the uninstaller:
 sh -c "$(wget -O - https://raw.githubusercontent.com/i-zhirov/trusttunnel-openwrt/main/uninstall.sh)"
 ```
 
-It halts and disables the service, removes both packages, tears down the
-repository configuration and the signing keys the installer put in place,
-deletes the client binaries and caches (plus the leftovers of earlier
-package versions), restarts `rpcd` and checks the kernel for leftover
-routing state. It asks whether to remove the firewall zone (default: yes)
-and the settings file (default: no — a reinstall keeps it).
+It halts and disables the service, removes the packages (the app and the
+client, plus the optional diagnostics package when it is installed),
+tears down the repository configuration and the signing keys the
+installer put in place, deletes the client binaries and caches (plus the
+leftovers of earlier package versions), restarts `rpcd` and checks the
+kernel for leftover routing state. It asks whether to remove the firewall
+zone (default: yes) and the settings file (default: no — a reinstall
+keeps it).
 
 Flags: `-y` answers every question with yes; `-c` keeps
 `/etc/config/trusttunnel` without asking. Shared dependencies (`kmod-tun`,

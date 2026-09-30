@@ -85,8 +85,10 @@ restores the previous service state — a first install leaves the service
 disabled. Re-running it updates the packages, the client binary and the
 signing keys; `/etc/config/trusttunnel` is left alone (conffile).
 
-The uninstaller: halts and disables the service; removes both packages in
-one call (for opkg the dependents must come first in the list); tears down
+The uninstaller: halts and disables the service; removes the packages in
+one call (the app and the client, plus the optional diagnostics package
+when installed; for opkg the dependents must come first in the list);
+tears down
 the repository configuration and the signing keys; deletes
 `/opt/trusttunnel_client`, `/usr/share/trusttunnel`,
 `/var/cache/trusttunnel` and `/var/etc/trusttunnel`; cleans the leftovers
