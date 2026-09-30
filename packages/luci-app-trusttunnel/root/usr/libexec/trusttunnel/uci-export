@@ -25,6 +25,13 @@
 # shellcheck disable=SC1091
 . /lib/functions.sh
 
+# The active-server resolution is shared with the init script (see
+# tt-uci.sh); the profile resolution below is uci-export's own — the
+# init script never needs the assigned profile.
+TT_LIBDIR=${TT_LIBDIR:-$(dirname "$0")}
+# shellcheck disable=SC1091
+. "$TT_LIBDIR/tt-uci.sh"
+
 config_load trusttunnel
 
 # One line per configured scalar; empty and absent options are skipped
@@ -51,29 +58,15 @@ _emit_one() {
 	printf '%s\t%s\n' "$_KEY" "$1"
 }
 
-# config_foreach callback: record the endpoint section whose name matches
-# the active server reference (main.endpoint); other sections are skipped.
-# shellcheck disable=SC2317,SC2154
-find_server() {
-	_sec=$1
-	_name=""
-	config_get _name "$_sec" name
-	[ "$_name" = "$server_want" ] || return 0
-	server_sec="$_sec"
-}
-
 # The active server is resolved by NAME through main.endpoint, the same
-# mechanism the assigned routing profile uses below. An empty or stale
-# reference exports no endpoint records at all — the service then refuses
-# to start (gen-config requires the endpoint fields), which is the honest
-# state for a config that names no server. The guard is load-bearing:
-# without it an unnamed endpoint section (empty `name` option) would match
-# the empty reference and leak its fields into the records.
-server_want=$(uci -q get trusttunnel.main.endpoint 2>/dev/null) || server_want=""
-server_sec=""
-if [ -n "$server_want" ]; then
-	config_foreach find_server endpoint
-fi
+# mechanism the assigned routing profile uses below (the shared
+# tt_resolve_active_server in tt-uci.sh). An empty or stale reference
+# exports no endpoint records at all — the service then refuses to start
+# (gen-config requires the endpoint fields), which is the honest state
+# for a config that names no server. The guard is load-bearing: without
+# it an unnamed endpoint section (empty `name` option) would match the
+# empty reference and leak its fields into the records.
+tt_resolve_active_server
 
 # config_foreach callback: record the routing_profile section whose name
 # matches the ACTIVE server's assigned profile; other sections are
