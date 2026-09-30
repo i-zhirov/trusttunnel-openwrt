@@ -57,6 +57,7 @@ return view.extend({
 				E('table', { 'class': 'table cbi-section-table' }, [
 					row(_('TrustTunnel package'), versionCell(versions ? versions.package : null)),
 					row(_('Runtime package'), versionCell(versions ? versions.runtime_package : null)),
+					row(_('Diagnostics package'), versionCell(versions ? versions.diagnostics_package : null)),
 					row(_('Client package'), versionCell(versions ? versions.client_package : null)),
 					row(_('Client binary'), versionCell(versions ? versions.client : null))
 				])

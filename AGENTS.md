@@ -304,8 +304,9 @@ Exposes `luci.trusttunnel` RPC methods (the ACL grants read on
   device's `/proc/net/dev` in tun mode, the meter rules in proxy mode;
   the view diffs consecutive polls for rates).
 - `versions` — what is installed, read-only: the luci app, the trusttunnel
-  runtime and the client package versions as apk/opkg report them (apk on
-  25.12+, opkg fallback for 22.03–24.10), plus the client binary's own
+  runtime, the optional diagnostics package (null when not installed) and
+  the client package versions as apk/opkg report them (apk on 25.12+,
+  opkg fallback for 22.03–24.10), plus the client binary's own
   `--version`; no network access.
 - `service` — start/stop/restart/reload with a post-start liveness probe.
 - `ping` — ping each configured endpoint host (or a given target).

@@ -255,6 +255,7 @@ const canned = {
     log: function () { return { lines: logLines.slice() }; },
     versions: function () {
         return { package: '1.0.20-r1', runtime_package: '1.0.20-r1',
+                 diagnostics_package: '1.0.20-r1',
                  client_package: '1.1.7-r1', client: '1.1.7' };
     },
     diagnose: function () {
@@ -774,8 +775,9 @@ async function main() {
     eq(versionsTree.tag, 'div', 'versions: root is a div');
     eq(versionsTree.children.length, 2, 'versions: root has h2 + 1 section');
     ok(hasText(versionsTree, 'TrustTunnel package') && hasText(versionsTree, 'Runtime package') &&
-        hasText(versionsTree, 'Client package') && hasText(versionsTree, 'Client binary'),
-        'versions: the four version rows render');
+        hasText(versionsTree, 'Diagnostics package') && hasText(versionsTree, 'Client package') &&
+        hasText(versionsTree, 'Client binary'),
+        'versions: the five version rows render');
     ok(hasText(versionsTree, '1.0.20-r1') && hasText(versionsTree, '1.1.7-r1') &&
         hasText(versionsTree, '1.1.7'),
         'versions: the backend values render');
