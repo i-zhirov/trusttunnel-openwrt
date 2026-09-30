@@ -18,7 +18,6 @@ export const RECORDS = OUTDIR + '/settings.tsv';
 export const CLIENT = '/opt/trusttunnel_client/trusttunnel_client';
 export const DEV_STATS = '/proc/net/dev';
 export const TABLE_DEFAULT = '880';
-export const FWMARK_DEFAULT = '0x9527';
 
 // Parse the records TSV (section.option<TAB>value, one line per list
 // value) into a key -> array map. Lines without a tab separator are
