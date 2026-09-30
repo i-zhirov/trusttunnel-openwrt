@@ -10,14 +10,17 @@
 
 APP=packages/luci-app-trusttunnel/Makefile
 CLIENT=packages/trusttunnel-client/Makefile
+DIAG=packages/luci-app-trusttunnel-diagnostics/Makefile
 
 # The dependency declarations, extracted without the Makefile's comment
 # noise. LUCI_DEPENDS is a single line; the client's DEPENDS line is
 # indented with a tab.
 app_deps="$(sed -n 's/^LUCI_DEPENDS:=//p' "$APP")"
 client_deps="$(sed -n 's/^[[:space:]]*DEPENDS:=//p' "$CLIENT")"
+diag_deps="$(sed -n 's/^LUCI_DEPENDS:=//p' "$DIAG")"
 [ -n "$app_deps" ] || { echo "  FAIL: cannot extract LUCI_DEPENDS from $APP"; exit 1; }
 [ -n "$client_deps" ] || { echo "  FAIL: cannot extract DEPENDS from $CLIENT"; exit 1; }
+[ -n "$diag_deps" ] || { echo "  FAIL: cannot extract LUCI_DEPENDS from $DIAG"; exit 1; }
 
 # Everything luci-app-trusttunnel's own files invoke or configure.
 for dep in trusttunnel-client luci-base ip-full nftables curl \
@@ -52,6 +55,25 @@ assert_contains "$(cat "$U")" 'curl -fsS' "the ucode backend invokes curl"
 assert_contains "$(cat "$U")" 'nft list ruleset' "the ucode backend invokes nft"
 assert_contains "$(cat "$U")" 'ip route show table' "the ucode backend invokes ip"
 assert_contains "$(cat "$U")" "from 'math'" "the ucode backend uses the math module"
+
+# The diagnostics package is an optional add-on: it depends on the core
+# (its views and menu entries need the app's parent menu and ACL), while
+# the core must NOT depend back on it — a user who installs only the app
+# gets exactly the core pages. Its own dependencies are luci-base only;
+# the system packages (ip-full, nftables, curl) are the core's files'
+# requirements and must not be repeated here.
+assert_contains "$diag_deps" "+luci-app-trusttunnel" "luci-app-trusttunnel-diagnostics depends on the core package"
+assert_contains "$diag_deps" "+luci-base" "luci-app-trusttunnel-diagnostics declares luci-base"
+case "$app_deps" in
+	*"+luci-app-trusttunnel-diagnostics"*) _tt_fail "luci-app-trusttunnel does not depend on the optional diagnostics package" ;;
+	*) _tt_pass "luci-app-trusttunnel does not depend on the optional diagnostics package" ;;
+esac
+for dep in ip-full nftables curl; do
+	case "$diag_deps" in
+		*"+$dep"*) _tt_fail "luci-app-trusttunnel-diagnostics does not repeat $dep (it is the core's, not the views')" ;;
+		*) _tt_pass "luci-app-trusttunnel-diagnostics does not repeat $dep" ;;
+	esac
+done
 
 # install.sh pre-installs the same system packages before the LuCI app: the
 # list there must not drift from the declared dependencies either.

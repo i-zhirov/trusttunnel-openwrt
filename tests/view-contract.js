@@ -31,7 +31,12 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 
-const VIEW_DIR = 'packages/luci-app-trusttunnel/htdocs/luci-static/resources/view/trusttunnel';
+// The views are split across the core package and the optional
+// diagnostics package; the contract applies to every one of them.
+const VIEW_DIRS = [
+	'packages/luci-app-trusttunnel/htdocs/luci-static/resources/view/trusttunnel',
+	'packages/luci-app-trusttunnel-diagnostics/htdocs/luci-static/resources/view/trusttunnel'
+];
 const BACKEND = 'packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel';
 const ACL = 'packages/luci-app-trusttunnel/root/usr/share/rpcd/acl.d/luci-app-trusttunnel.json';
 const GOLDENS = ['tests/backend/goldens/diagnose.json', 'tests/backend/goldens/healthy/diagnose.json',
@@ -54,7 +59,8 @@ function read(p) {
 
 // --- 1. RPC surface ---------------------------------------------------------
 
-const views = fs.readdirSync(path.join(root, VIEW_DIR)).filter(f => f.endsWith('.js'));
+const views = VIEW_DIRS.flatMap(dir =>
+	fs.readdirSync(path.join(root, dir)).filter(f => f.endsWith('.js')).map(f => dir + '/' + f));
 
 // rpc.declare blocks look like:
 //   rpc.declare({
@@ -65,7 +71,7 @@ const views = fs.readdirSync(path.join(root, VIEW_DIR)).filter(f => f.endsWith('
 //   });
 const declares = [];
 for (const view of views) {
-	const src = read(path.join(VIEW_DIR, view));
+	const src = read(view);
 	const re = /rpc\.declare\(\{([\s\S]*?)\}\)/g;
 	let m;
 	while ((m = re.exec(src)) !== null) {
@@ -129,7 +135,7 @@ for (const d of declares) {
 
 // --- 2. Diagnostics strings vs DIAG_TEXT ------------------------------------
 
-const diagSrc = read(path.join(VIEW_DIR, 'diagnostics.js'));
+const diagSrc = read(path.join(VIEW_DIRS[1], 'diagnostics.js'));
 const mapBlock = /var DIAG_TEXT = \{\n([\s\S]*?)\n\};/.exec(diagSrc);
 if (!mapBlock)
 	fail('diagnostics.js: cannot find the DIAG_TEXT map');

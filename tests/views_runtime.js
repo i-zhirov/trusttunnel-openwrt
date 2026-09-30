@@ -24,8 +24,16 @@
 const fs = require('fs');
 const path = require('path');
 
-const VIEW_DIR = process.env.OLD_VIEWS || path.join(__dirname, '..', 'packages',
-    'luci-app-trusttunnel', 'htdocs', 'luci-static', 'resources', 'view', 'trusttunnel');
+// The views are split across the core package and the optional
+// diagnostics package; each view is resolved from whichever tree holds
+// it. OLD_VIEWS overrides the search with a single directory (the
+// pre-split layout).
+const VIEW_DIRS = process.env.OLD_VIEWS
+    ? [process.env.OLD_VIEWS]
+    : [path.join(__dirname, '..', 'packages', 'luci-app-trusttunnel', 'htdocs',
+            'luci-static', 'resources', 'view', 'trusttunnel'),
+       path.join(__dirname, '..', 'packages', 'luci-app-trusttunnel-diagnostics', 'htdocs',
+            'luci-static', 'resources', 'view', 'trusttunnel')];
 
 // ---------------------------------------------------------------------------
 // minimal assertion helpers
@@ -331,8 +339,17 @@ const _ = function (s) { return s; };
 
 // --- compiling a view the way the LuCI loader does -----------------------------
 function loadView(name) {
-    const src = fs.readFileSync(path.join(VIEW_DIR, name), 'utf8')
-        .replace(/^'use strict';?\s*/m, '')
+    let src = null;
+    for (const dir of VIEW_DIRS) {
+        const p = path.join(dir, name);
+        if (fs.existsSync(p)) {
+            src = fs.readFileSync(p, 'utf8');
+            break;
+        }
+    }
+    if (src == null)
+        throw new Error('view not found in any package: ' + name);
+    src = src.replace(/^'use strict';?\s*/m, '')
         .replace(/^'require\s+[a-z]+';?\s*/gm, '');
     const factory = new Function('view', 'form', 'uci', 'rpc', 'ui', 'poll', 'dom', 'E', '_', src);
     return factory(view, form, uci, rpc, ui, poll, dom, E, _);
