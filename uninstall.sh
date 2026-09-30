@@ -89,20 +89,22 @@ if [ "$PM" = "apk" ]; then
 	# apk-tools v2 and v3.
 	apk info -e luci-app-trusttunnel-diagnostics >/dev/null 2>&1 && _pkgs="$_pkgs luci-app-trusttunnel-diagnostics"
 	apk info -e luci-app-trusttunnel >/dev/null 2>&1 && _pkgs="$_pkgs luci-app-trusttunnel"
+	apk info -e trusttunnel >/dev/null 2>&1 && _pkgs="$_pkgs trusttunnel"
 	apk info -e trusttunnel-client >/dev/null 2>&1 && _pkgs="$_pkgs trusttunnel-client"
 else
 	# opkg processes the remove arguments IN ORDER and refuses to remove a
 	# package that still has installed dependents ("is depended upon by").
-	# The optional diagnostics package depends on the app, which depends
-	# on the client, so the order is: diagnostics, app, client — each is
-	# gone before the one depending on it is removed. All in one call, as
-	# in the apk branch.
+	# The optional diagnostics package depends on the app, the app depends
+	# on the runtime, the runtime depends on the client, so the order is:
+	# diagnostics, app, runtime, client — each is gone before the one
+	# depending on it is removed. All in one call, as in the apk branch.
 	#
 	# `opkg list-installed` prints "name - version - description", so the
 	# pattern is a line start with the name and a space, not an exact match
 	# of the whole line.
 	opkg list-installed 2>/dev/null | grep -q '^luci-app-trusttunnel-diagnostics ' && _pkgs="luci-app-trusttunnel-diagnostics"
 	opkg list-installed 2>/dev/null | grep -q '^luci-app-trusttunnel ' && _pkgs="$_pkgs luci-app-trusttunnel"
+	opkg list-installed 2>/dev/null | grep -q '^trusttunnel ' && _pkgs="$_pkgs trusttunnel"
 	opkg list-installed 2>/dev/null | grep -q '^trusttunnel-client ' && _pkgs="$_pkgs trusttunnel-client"
 fi
 if [ -n "$_pkgs" ]; then
