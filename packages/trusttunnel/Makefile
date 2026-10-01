@@ -13,7 +13,7 @@ PKG_NAME:=trusttunnel
 # Version from the release tag at build time, exactly like the LuCI app:
 # a build on tag vX.Y.Z ships X.Y.Z. The fallback below applies only when
 # no tag is reachable; keep it equal to the last released version.
-PKG_VERSION:=$(strip $(shell v="$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')"; [ -n "$$v" ] && printf '%s' "$$v" || printf '%s' 1.0.33))
+PKG_VERSION:=$(strip $(shell v="$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')"; [ -n "$$v" ] && printf '%s' "$$v" || printf '%s' 1.0.35))
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=Ilia Zhirov <i.zhirov@adguard.com>
