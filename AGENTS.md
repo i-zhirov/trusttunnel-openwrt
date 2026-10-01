@@ -728,18 +728,20 @@ GitHub release. A mis-triggered run fails before any SDK work starts.
     index (`apk mkndx --allow-untrusted` + `apk adbsign` with
     `secrets.TT_APK_SIGN_KEY`) or the opkg index, the public keys and
     every released version of the packages. Cumulative: prior client
-    packages are placed by their `-<arch>` asset suffix (apk) or their
-    `_<arch>` name segment (ipk), and prior noarch LuCI packages land in
-    every feed dir, so every released version stays installable — but a
-    prior client is merged only when its version equals the current
-    build's (the package managers install the highest version, and an
-    old client must not shadow the pinned one),
+    packages of every version are placed by their `-<arch>` asset suffix
+    (apk) or their `_<arch>` name segment (ipk), and prior noarch LuCI
+    packages land in every feed dir, so every released version stays
+    installable — pinning or downgrading an older client stays possible.
+    The package managers install the highest version unless a router
+    pins one (apk: `apk add trusttunnel-client=<ver>-r<rel>`; opkg has
+    no `pkg=version` CLI syntax, so pinning means installing the
+    versioned ipk from the feed),
   - per-arch opkg feeds (`ipkg-make-index.sh` fetched from openwrt-22.03,
     run once per feed directory, manifest fields stripped, gzip,
     `usign -S` with `secrets.TT_OPKG_SIGN_KEY`; the signature covers the
     UNCOMPRESSED `Packages`). The two-empty-line padding works around
     usign's SHA-512 size bug — keep it. The feeds index the prior ipks
-    too (same client version filter). The arch/version derivation from
+    too (every version kept). The arch/version derivation from
     the ipk file names is shared with the integration harness
     (`tests/integration/ipk-arch.sh`, sourced by both) and pinned by the
     harness's `archparse` stage — the arch names contain underscores, and
@@ -749,7 +751,12 @@ GitHub release. A mis-triggered run fails before any SDK work starts.
     opkg) and asserts the installed client's `--version` matches the
     version the build shipped — on a `client-v*` release this is what
     proves the repositories now serve the new client (installed together
-    with the current app via the unversioned dependency).
+    with the current app via the unversioned dependency). When the feed
+    carries more than one client version, the newest older one is
+    installed alone in a fresh container — apk by `pkg=<version>` from
+    the signed index, opkg from its exact ipk in the feed (asserted to
+    be listed in the index first) — and its `--version` asserted, so
+    the pinning contract is exercised end to end.
   - GitHub release upload (tag pushes only, single writer): a `v*` tag
     carries the app + client files, a `client-v*` tag the client files
     alone (the app is unchanged and already lives on its own release).

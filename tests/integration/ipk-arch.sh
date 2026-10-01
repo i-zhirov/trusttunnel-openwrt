@@ -17,7 +17,9 @@
 # the LAST underscore (the classic bug) clips arch names: mipsel_24kc
 # became "24kc" and x86_64 became "64", producing feed directories no
 # device would ever fetch. The arch names must never be clipped, and
-# the version filter must never see an arch fragment.
+# the version derivation must never see an arch fragment: the pin
+# verification names the exact ipk a router would install, and a
+# clipped version would name a file no feed holds.
 #
 # Usage:
 #   TT_IPK_ARCH_SOURCED=1; . ipk-arch.sh   (source; defines tt_ipk_arch
@@ -43,7 +45,8 @@ tt_ipk_arch() {
 }
 
 # tt_ipk_verrev <ipk-file> — prints the <ver>-<rel> head of the file
-# name (the version filter key of the repository assembly).
+# name (the version key of the repository assembly's pin verification
+# and of the harness's regression stage).
 tt_ipk_verrev() {
 	_rest="${1:-}"
 	_rest="${_rest##*/}"
