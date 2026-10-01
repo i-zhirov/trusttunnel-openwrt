@@ -137,16 +137,17 @@ artifacts are consumed directly.
   the tunnel needs up to a minute to establish — the harness polls for
   all three instead of sleeping.
 - **The arch derivation is pinned against the pipeline.** release.yml
-  derives the per-arch opkg feed directories from the client ipk file
-  names (`trusttunnel-client_<ver>-<rel>_<arch>.ipk`), and the
-  derivation lives in `ipk-arch.sh` — sourced by both the workflow and
-  the harness, so the `archparse` regression stage tests the exact code
-  the pipeline runs. A first implementation split at the last
-  underscore and clipped arch names containing underscores (`mipsel_24kc`
-  → `24kc`, `x86_64` → `64`), silently producing feed directories no
-  device would fetch; the release-time verification caught it. The
-  harness's own opkg assembly also derives the feed directory from the
-  run's real artifact, so a regression fails the install assertions too.
+  derives the per-arch opkg feed directories (and the version key its
+  pin verification installs) from the client ipk file names
+  (`trusttunnel-client_<ver>-<rel>_<arch>.ipk`), and the derivation
+  lives in `ipk-arch.sh` — sourced by both the workflow and the
+  harness, so the `archparse` regression stage tests the exact code the
+  pipeline runs. A first implementation split at the last underscore
+  and clipped arch names containing underscores (`mipsel_24kc` → `24kc`,
+  `x86_64` → `64`), silently producing feed directories no device would
+  fetch; the release-time verification caught it. The harness's own
+  opkg assembly also derives the feed directory from the run's real
+  artifact, so a regression fails the install assertions too.
 - **The hermetic repository mirrors the official layout.** The release
   pipeline serves the repositories as
   `releases/<version>/packages/<arch>/trusttunnel/` (the official

@@ -319,8 +319,9 @@ st_preflight() {
 # --- stage: archparse -------------------------------------------------------------
 
 # Regression test for the release pipeline's per-arch opkg repository
-# assembly: the arch (and the <ver>-<rel> filter key) are derived from
-# the trusttunnel-client ipk file names
+# assembly: the arch and the <ver>-<rel> version key (the pin
+# verification's ipk selector) are derived from the
+# trusttunnel-client ipk file names
 # (trusttunnel-client_<ver>-<rel>_<arch>.ipk) by the shared
 # ipk-arch.sh. A first implementation split at the LAST underscore,
 # clipping arch names that contain underscores themselves — mipsel_24kc
@@ -334,8 +335,8 @@ st_archparse() {
 	stage archparse || return
 	echo "== ipk arch derivation regression"
 	# file-name|expected-arch|expected-verrev, one case per line. The
-	# <ver>-<rel> must never carry an arch fragment either: the version
-	# filter would then skip same-version prior packages of other archs.
+	# <ver>-<rel> must never carry an arch fragment either: the pin
+	# verification would then name an ipk no feed holds.
 	_cases="trusttunnel-client_1.1.7-1_x86_64.ipk|x86_64|1.1.7-1
 trusttunnel-client_1.1.7-1_aarch64_generic.ipk|aarch64_generic|1.1.7-1
 trusttunnel-client_1.1.7-1_aarch64_cortex-a53.ipk|aarch64_cortex-a53|1.1.7-1

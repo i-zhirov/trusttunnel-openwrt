@@ -28,7 +28,11 @@
 #
 # The repositories are cumulative: the packages of every prior release
 # are merged into the fresh build's repositories, so every released
-# version stays installable — pinning and downgrading keep working.
+# version stays installable — pinning and downgrading keep working. That
+# includes every released trusttunnel-client version, so a router can pin
+# an older client build; the app's dependency on it is unversioned, and
+# the package managers keep installing the highest version unless one is
+# pinned explicitly.
 #
 # The `gate` job refuses every run that is not a v* or client-v* tag
 # push; dispatch runs are the sole exception (main only, repositories +
@@ -713,9 +717,9 @@ jobs:
           # every release is kept.
           exclude="$GITHUB_REF_NAME"
           # Every tag is iterated — v* (app+client) and client-v*
-          # (client only) alike: the client version filter below drops
-          # the prior clients either way, and the app packages from the
-          # v* releases keep the whole version history installable. A
+          # (client only) alike: the prior clients merge like every
+          # other package, and the app packages from the v* releases
+          # keep the whole version history installable. A
           # client-v* release therefore requires an existing v* release:
           # without one there is no app to merge, and the repository
           # verification below would fail loudly rather than publish a
@@ -778,34 +782,17 @@ jobs:
           # dirs that the current matrix no longer builds are created,
           # so a dropped architecture keeps its prior packages.
           #
-          # Only the client version the current build ships may come
-          # from prior releases: the package managers install the
-          # highest version, so an old client must never shadow the
-          # fresh build. Prior files of the same version are duplicates
-          # the current placement overwrites anyway — they matter only
-          # for dropped arches.
-          # The version-revision tail is the first two dash-segments
-          # (<ver> is dotted digits, <rev> is r<digits>); the final
-          # dash segment is NOT enough, the arch may contain dashes.
-          cur_client="$(find staging/apk-pkgs -maxdepth 1 -name "trusttunnel-client-*.apk" -print -quit)"
-          cur_client="${cur_client##*/}"
-          cur_client="${cur_client#trusttunnel-client-}"
-          cur_ver="${cur_client%%-*}"
-          cur_rev="${cur_client#*-}"
-          cur_rev="${cur_rev%%-*}"
-          cur_client="${cur_ver}-${cur_rev}"
+          # Every prior client version is kept, not only the current
+          # one: the package managers install the highest version, so
+          # the fresh build wins by default, while a router can still
+          # pin an older one (apk add trusttunnel-client=<ver>-r<rel>).
+          # Prior files of the same version are duplicates the current
+          # placement overwrites anyway — they matter only for dropped
+          # arches.
           for f in staging/prior-apk/trusttunnel-client-[0-9]*.apk; do
             [ -e "$f" ] || continue
             rest="${f##*/}"
             rest="${rest#trusttunnel-client-}"
-            ver="${rest%%-*}"
-            rev="${rest#*-}"
-            rev="${rev%%-*}"
-            verrev="${ver}-${rev}"
-            if [ "$verrev" != "$cur_client" ]; then
-              echo "skipping prior client $verrev (the current build ships $cur_client)"
-              continue
-            fi
             rest="${rest#*-}"   # drop <ver>
             arch="${rest#*-}"   # drop -r<rev>
             arch="${arch%.apk}"
@@ -891,9 +878,11 @@ jobs:
       # the feed URL from DISTRIB_ARCH). Prior releases first, so the
       # freshly built packages win on a same-name collision (a dispatch
       # run at the latest tag). The [0-9] anchor keeps the old -lite
-      # packages and the dropped i18n packages out of the feed, and the
-      # same version filter as the apk step keeps an old client from
-      # shadowing the fresh build — opkg installs the highest version.
+      # packages and the dropped i18n packages out of the feed. Every
+      # prior client version is kept, not only the current one: opkg
+      # installs the highest version, so the fresh build wins by default,
+      # while a router can still pin an older one by installing its
+      # exact ipk from the feed (opkg has no pkg=version CLI syntax).
       - name: Assemble and sign the opkg repositories
         env:
           SIGN_KEY: ${{ secrets.TT_OPKG_SIGN_KEY }}
@@ -911,17 +900,11 @@ jobs:
           # shellcheck disable=SC1091
           . tests/integration/ipk-arch.sh
           mkdir -p staging/releases/22.03.7/packages
-          cur_client="$(tt_ipk_verrev "$(find staging/opkg-pkgs -maxdepth 1 -name "trusttunnel-client_*.ipk" -print -quit)")"
 
           # A dir the current matrix no longer builds is created, so a
           # dropped architecture keeps its prior packages.
           for f in staging/prior-opkg/trusttunnel-client_[0-9]*.ipk; do
             [ -e "$f" ] || continue
-            verrev="$(tt_ipk_verrev "$f")"
-            if [ "$verrev" != "$cur_client" ]; then
-              echo "skipping prior client $verrev (the current build ships $cur_client)"
-              continue
-            fi
             arch="$(tt_ipk_arch "$f")"
             mkdir -p "staging/releases/22.03.7/packages/$arch/trusttunnel"
             cp "$f" "staging/releases/22.03.7/packages/$arch/trusttunnel/"
@@ -1008,11 +991,68 @@ jobs:
         id: clientver
         run: |
           client_version="$(sed -n 's/^PKG_VERSION:=//p' packages/trusttunnel-client/Makefile)"
-          if [ -z "$client_version" ]; then
-            echo "::error::cannot read PKG_VERSION from packages/trusttunnel-client/Makefile"
+          client_release="$(sed -n 's/^PKG_RELEASE:=//p' packages/trusttunnel-client/Makefile)"
+          if [ -z "$client_version" ] || [ -z "$client_release" ]; then
+            echo "::error::cannot read PKG_VERSION/PKG_RELEASE from packages/trusttunnel-client/Makefile"
             exit 1
           fi
           echo "client_version=$client_version" >> "$GITHUB_OUTPUT"
+          echo "client_release=$client_release" >> "$GITHUB_OUTPUT"
+
+      # The pinning contract: the repositories keep every released client
+      # version, so a router can pin an older one. Find the newest
+      # version in the x86_64 feeds that is not the one this build ships;
+      # the verification steps below install exactly that version when it
+      # exists. The first release ever has no older version, and the
+      # checks report a skip.
+      - name: Find an older client version to pin
+        id: clientpin
+        env:
+          CLIENT_VERSION: ${{ steps.clientver.outputs.client_version }}
+          CLIENT_RELEASE: ${{ steps.clientver.outputs.client_release }}
+        run: |
+          # apk and opkg join the version and the release differently
+          # (apk: -r<release>, opkg: -<release>).
+          cur_apk="${CLIENT_VERSION}-r${CLIENT_RELEASE}"
+          cur_opkg="${CLIENT_VERSION}-${CLIENT_RELEASE}"
+          # The ipk file-name derivation is shared with the opkg assembly
+          # above (and with the integration harness) — the pin must name
+          # the exact file the feed holds.
+          TT_IPK_ARCH_SOURCED=1
+          # shellcheck disable=SC1091
+          . tests/integration/ipk-arch.sh
+
+          # sort -V orders the versions as the package managers do, so
+          # the last entry is the newest one below the current build.
+          apk_pin="$(for f in staging/releases/25.12.5/packages/x86_64/trusttunnel/trusttunnel-client-*.apk; do
+            [ -e "$f" ] || continue
+            v="${f##*/}"
+            v="${v#trusttunnel-client-}"
+            v="${v%.apk}"
+            if [ "$v" = "$cur_apk" ]; then continue; fi
+            printf '%s\n' "$v"
+          done | sort -V | tail -n 1)"
+          opkg_pin="$(for f in staging/releases/22.03.7/packages/x86_64/trusttunnel/trusttunnel-client_*.ipk; do
+            [ -e "$f" ] || continue
+            v="$(tt_ipk_verrev "$f")"
+            if [ "$v" = "$cur_opkg" ]; then continue; fi
+            printf '%s\n' "$v"
+          done | sort -V | tail -n 1)"
+          if [ -n "$apk_pin" ]; then
+            # The vendor version is the head of <ver>-r<rel>.
+            echo "apk_pin=$apk_pin" >> "$GITHUB_OUTPUT"
+            echo "apk_client=${apk_pin%-*}" >> "$GITHUB_OUTPUT"
+            echo "the verification will pin the apk client $apk_pin"
+          else
+            echo "no older apk client in the feed; the pin verification will be skipped"
+          fi
+          if [ -n "$opkg_pin" ]; then
+            echo "opkg_pin=$opkg_pin" >> "$GITHUB_OUTPUT"
+            echo "opkg_client=${opkg_pin%-*}" >> "$GITHUB_OUTPUT"
+            echo "the verification will pin the ipk client $opkg_pin"
+          else
+            echo "no older ipk client in the feed; the pin verification will be skipped"
+          fi
 
       - name: Verify the apk installs on 25.12
         run: |
@@ -1054,6 +1094,35 @@ jobs:
             -v "$PWD/staging/releases/25.12.5/packages:/repo:ro" \
             -v "$PWD/verify-apk.sh:/verify.sh:ro" \
             -e CLIENT_VERSION=${{ steps.clientver.outputs.client_version }} \
+            openwrt/rootfs:x86-64-25.12.0 \
+            sh /verify.sh
+
+      # The pinning contract, exercised for real: a fresh container
+      # installs ONLY the older client, exactly as pinned, from the
+      # signed index. apk resolves pkg=<version> from the index, so this
+      # proves the old version is indexed and installable while the
+      # default (highest) resolution above stays untouched.
+      - name: Verify an older apk client can be pinned
+        if: steps.clientpin.outputs.apk_pin != ''
+        run: |
+          cat > verify-pin-apk.sh <<'EOF'
+          #!/bin/sh
+          set -e
+          mkdir -p /var/lock /etc/apk/keys /etc/apk/repositories.d
+          cp /repo/x86_64/trusttunnel/key-build.pub /etc/apk/keys/trusttunnel.pub
+          printf '%s\n' 'file:///repo/x86_64/trusttunnel/packages.adb' > /etc/apk/repositories.d/trusttunnel.list
+          apk update
+          apk add "trusttunnel-client=$PIN_VERSION"
+          /opt/trusttunnel_client/trusttunnel_client --version | grep -q "$PIN_CLIENT" || {
+            echo "the pinned client is not $PIN_CLIENT"
+            exit 1
+          }
+          EOF
+          docker run --rm \
+            -v "$PWD/staging/releases/25.12.5/packages:/repo:ro" \
+            -v "$PWD/verify-pin-apk.sh:/verify.sh:ro" \
+            -e PIN_VERSION="${{ steps.clientpin.outputs.apk_pin }}" \
+            -e PIN_CLIENT="${{ steps.clientpin.outputs.apk_client }}" \
             openwrt/rootfs:x86-64-25.12.0 \
             sh /verify.sh
 
@@ -1100,6 +1169,45 @@ jobs:
               -v "$PWD/staging/releases/22.03.7/packages:/repo:ro" \
               -v "$PWD/verify-opkg.sh:/verify.sh:ro" \
               -e CLIENT_VERSION=${{ steps.clientver.outputs.client_version }} \
+              "openwrt/rootfs:$img" \
+              sh /verify.sh
+          done
+
+      # The opkg half of the pinning contract: opkg has no pkg=version
+      # CLI syntax, so pinning an older client means installing its exact
+      # ipk from the feed. The file must be listed in the feed index and
+      # install from the feed path a router would fetch; the app's
+      # unversioned dependency keeps resolving to the highest version
+      # (the install verification above pins that).
+      - name: Verify an older ipk client can be pinned
+        if: steps.clientpin.outputs.opkg_pin != ''
+        run: |
+          cat > verify-pin-opkg.sh <<'EOF'
+          #!/bin/sh
+          set -e
+          mkdir -p /var/lock /etc/opkg/keys
+          cp /repo/x86_64/trusttunnel/opkg-key.pub /etc/opkg/keys/trusttunnel.pub
+          fp="$(usign -F -p /etc/opkg/keys/trusttunnel.pub)"
+          cp /etc/opkg/keys/trusttunnel.pub "/etc/opkg/keys/$fp"
+          printf '%s\n' 'src/gz trusttunnel file:///repo/x86_64/trusttunnel' > /etc/opkg/customfeeds.conf
+          opkg update
+          # The index must carry the older version next to the newest one.
+          opkg list trusttunnel-client | grep -q "^trusttunnel-client - $PIN_VERSION " || {
+            echo "the pinned client $PIN_VERSION is not in the feed index"
+            exit 1
+          }
+          opkg install "/repo/x86_64/trusttunnel/trusttunnel-client_${PIN_VERSION}_x86_64.ipk"
+          /opt/trusttunnel_client/trusttunnel_client --version | grep -q "$PIN_CLIENT" || {
+            echo "the pinned client is not $PIN_CLIENT"
+            exit 1
+          }
+          EOF
+          for img in x86-64-23.05.6 x86-64-24.10.8; do
+            docker run --rm \
+              -v "$PWD/staging/releases/22.03.7/packages:/repo:ro" \
+              -v "$PWD/verify-pin-opkg.sh:/verify.sh:ro" \
+              -e PIN_VERSION="${{ steps.clientpin.outputs.opkg_pin }}" \
+              -e PIN_CLIENT="${{ steps.clientpin.outputs.opkg_client }}" \
               "openwrt/rootfs:$img" \
               sh /verify.sh
           done

@@ -6,6 +6,12 @@
 # expensive (a broken gate fails late in a 37-arch matrix, or publishes a
 # release whose packages do not match its tag), so the workflow structure
 # is a contract, like the dependency declarations in test_deps.sh.
+#
+# It also pins the client-version history contract: the repository
+# assembly must keep EVERY prior client version (a router can pin an
+# older client only if the feed still serves it), and the publish step
+# must verify an older version installs — a version filter would silently
+# drop the history without failing any other check.
 . "$(dirname "$0")/lib.sh"
 
 WF=.github/workflows/release.yml
@@ -64,5 +70,25 @@ assert_contains "$(job_body publish-repo)" 'grep -q "$CLIENT_VERSION"' "the root
 # release).
 assert_contains "$(job_body publish-repo)" "Upload the client files to the client GitHub release" "publish-repo uploads a client-only release"
 assert_contains "$(job_body publish-repo)" "startsWith(github.ref, 'refs/tags/v')" "the app+client upload step is scoped to v* tags"
+
+# The client history is cumulative: every prior client version is merged
+# into the repositories, not only the version the current build ships.
+# The dropped filter printed "skipping prior client <ver>"; its return
+# would silently drop the history (no other check fails), so pinning an
+# older client would 404 from the feed.
+assert_exit 1 "the prior client merge is not version-filtered" grep -q "skipping prior client" "$WF"
+
+# The publish step must exercise the pinning contract: discover the
+# newest older client version in the assembled x86_64 feeds, then install
+# it in a fresh container — apk by pkg=version from the signed index,
+# opkg from its exact ipk (opkg has no pkg=version CLI syntax).
+assert_contains "$(job_body publish-repo)" "Find an older client version to pin" "publish-repo discovers an older client version to pin"
+assert_contains "$(job_body publish-repo)" "Verify an older apk client can be pinned" "publish-repo verifies the apk pin install"
+assert_contains "$(job_body publish-repo)" "Verify an older ipk client can be pinned" "publish-repo verifies the ipk pin install"
+assert_contains "$(job_body publish-repo)" "steps.clientpin.outputs.apk_pin != ''" "the apk pin check is skipped when the feed has no older version"
+assert_contains "$(job_body publish-repo)" "steps.clientpin.outputs.opkg_pin != ''" "the ipk pin check is skipped when the feed has no older version"
+assert_contains "$(job_body publish-repo)" 'apk add "trusttunnel-client=$PIN_VERSION"' "the apk pin check installs the exact pinned version"
+assert_contains "$(job_body publish-repo)" 'trusttunnel-client_${PIN_VERSION}_x86_64.ipk' "the ipk pin check installs the exact feed file"
+assert_contains "$(job_body publish-repo)" 'opkg list trusttunnel-client | grep -q' "the ipk pin check asserts the old version is indexed"
 
 tt_test_summary
