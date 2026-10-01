@@ -153,10 +153,12 @@ fi
 say "== Installing the TrustTunnel packages"
 if [ "$PM" = "apk" ]; then
 	apk add luci-app-trusttunnel
-	apk info -e trusttunnel-client >/dev/null 2>&1 || die "trusttunnel-client is not installed; the installation failed"
+	# The app depends on the runtime, which depends on the client; both
+	# must have landed, otherwise the tunnel cannot run.
+	apk info -e trusttunnel trusttunnel-client >/dev/null 2>&1 || die "trusttunnel (runtime) or trusttunnel-client is not installed; the installation failed"
 else
 	opkg install luci-app-trusttunnel
-	opkg list-installed 2>/dev/null | grep -q '^trusttunnel-client ' || die "trusttunnel-client is not installed; the installation failed"
+	opkg list-installed 2>/dev/null | grep -qE '^(trusttunnel|trusttunnel-client) ' || die "trusttunnel (runtime) or trusttunnel-client is not installed; the installation failed"
 fi
 
 # --- Service refresh ----------------------------------------------------------

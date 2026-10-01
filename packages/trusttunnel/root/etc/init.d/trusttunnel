@@ -5,43 +5,30 @@ USE_PROCD=1
 START=95
 STOP=10
 
-LIBDIR=/usr/libexec/trusttunnel
-OUTDIR=/var/etc/trusttunnel
+# The library directory defaults to the shipped location; callers may
+# override it via TT_LIBDIR (the test harnesses point it at a stub tree).
+# The records accessors and the shared constants come from records.sh,
+# the active-server resolution from tt-uci.sh — the same libraries
+# uci-export, gen-config and the routing helper use, so the schema and
+# the defaults cannot drift between them.
+LIBDIR=${TT_LIBDIR:-/usr/libexec/trusttunnel}
+# shellcheck disable=SC1091
+. "$LIBDIR/records.sh"
+. "$LIBDIR/tt-uci.sh"
+
+OUTDIR=$TT_OUT_DIR_DEFAULT
 RECORDS=$OUTDIR/settings.tsv
-CLIENT=/opt/trusttunnel_client/trusttunnel_client
+CLIENT=$TT_CLIENT_DEFAULT
 
 # The operation mode of the APPLIED config: proxy (SOCKS5 listener) or
 # tun. The records carry the UCI value; absent means tun — the default
-# and the only mode of earlier versions.
+# and the only mode of earlier versions. The shared records accessor
+# reads the path through TT_RECORDS, which tracks RECORDS (the tests
+# override RECORDS after sourcing, so the sync happens per call, not at
+# source time).
 mode_is_proxy() {
-	[ "$(awk -F '\t' '$1 == "main.mode" { print $2; exit }' "$RECORDS" 2>/dev/null)" = "proxy" ]
-}
-
-# config_foreach callback: record the endpoint section whose name matches
-# the active server reference (main.endpoint); other sections are skipped.
-# shellcheck disable=SC2317,SC2154
-_find_server() {
-	_sec=$1
-	_name=""
-	config_get _name "$_sec" name
-	[ "$_name" = "$server_want" ] || return 0
-	server_sec="$_sec"
-}
-
-# resolve_active_server — populate server_sec with the section id of the
-# ACTIVE server, or empty when main.endpoint is absent or stale. Requires
-# a prior config_load trusttunnel; mirrors uci-export's resolution.
-#
-# The certificate and the verification override belong to the ACTIVE
-# server only, and with repeatable endpoint sections the literal
-# "endpoint" section name would read whichever section carries it, not
-# the selected one — so every direct endpoint read goes through here.
-resolve_active_server() {
-	server_sec=""
-	server_want=""
-	config_get server_want main endpoint
-	[ -n "$server_want" ] || return 0
-	config_foreach _find_server endpoint
+	TT_RECORDS=$RECORDS
+	tt_mode_is_proxy
 }
 
 # Undo the keep-routing handshake of an interrupted restart: a start that
@@ -71,7 +58,7 @@ regen_config() {
 	# The pinned certificate belongs to the ACTIVE server; the read goes
 	# through the same main.endpoint resolution as uci-export.
 	config_load trusttunnel
-	resolve_active_server
+	tt_resolve_active_server
 	_cert=""
 	if [ -n "$server_sec" ]; then
 		config_get _cert "$server_sec" certificate
@@ -105,7 +92,7 @@ regen_config() {
 # the variable is left unset when nothing was found.
 provision_ca_store() {
 	config_load trusttunnel
-	resolve_active_server
+	tt_resolve_active_server
 	_skipver=0
 	_pinned=""
 	if [ -n "$server_sec" ]; then
@@ -418,7 +405,7 @@ apply_config() {
 
 	_class=$(class_of_diff "$RECORDS" "$RECORDS.next")
 	config_load trusttunnel
-	resolve_active_server
+	tt_resolve_active_server
 	_cert_uci=""
 	if [ -n "$server_sec" ]; then
 		config_get _cert_uci "$server_sec" certificate

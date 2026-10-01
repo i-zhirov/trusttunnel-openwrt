@@ -9,7 +9,7 @@
 # path, so sourcing must succeed without the variable.
 . "$(dirname "$0")/lib.sh"
 
-. packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/records.sh
+. packages/trusttunnel/root/usr/libexec/trusttunnel/records.sh
 
 # --- scalar fixture -------------------------------------------------------------
 
@@ -63,9 +63,36 @@ assert_eq "1" "$(tt_get edge.x)" "tt_get matches the whole key, not a prefix"
 assert_eq "1" "$(tt_list edge.x)" "tt_list emits only the exact key's values"
 assert_eq "1" "$(tt_count edge.x)" "tt_count counts only the exact key"
 
+# --- mode helpers -----------------------------------------------------------------
+# tt_mode_is_proxy and tt_assigned_profile_mode are the shared semantics
+# of the tun/proxy switch and the profile resolution: they must agree
+# with gen-config's matrix and uci-export's name check, and they only
+# read the records (never the UCI config).
+
+assert_eq "false" "$(tt_mode_is_proxy && echo true || echo false)" "absent main.mode means tun, not proxy"
+
+TT_RECORDS=tests/fixtures/records/full.tsv
+assert_eq "false" "$(tt_mode_is_proxy && echo true || echo false)" "the full fixture is tun mode"
+assert_eq "vpn" "$(tt_assigned_profile_mode)" "the assigned profile's mode is resolved by name"
+
+TT_RECORDS=tests/fixtures/records/minimal.tsv
+assert_eq "" "$(tt_assigned_profile_mode || true)" "no routing_profile records mean no mode"
+
+# A stale reference: the profile records exist, but the ACTIVE server
+# names a different (or no) profile, so nothing is assigned.
+stale="$TT_TEST_TMP/stale.tsv"
+printf 'endpoint.routing_profile\tOther\nrouting_profile.name\tDefault\nrouting_profile.mode\tvpn\n' > "$stale"
+TT_RECORDS="$stale"
+assert_eq "" "$(tt_assigned_profile_mode || true)" "a stale profile reference yields no mode"
+
+proxy="$TT_TEST_TMP/proxy.tsv"
+printf 'main.mode\tproxy\n' > "$proxy"
+TT_RECORDS="$proxy"
+assert_eq "true" "$(tt_mode_is_proxy && echo true || echo false)" "main.mode=proxy is proxy mode"
+
 # --- the TT_RECORDS guard ---------------------------------------------------------
 
-assert_exit 0 "sourcing the library needs no TT_RECORDS" sh -c '. packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/records.sh'
+assert_exit 0 "sourcing the library needs no TT_RECORDS" sh -c '. packages/trusttunnel/root/usr/libexec/trusttunnel/records.sh'
 
 _guard_err=$(unset TT_RECORDS; tt_get main.enabled 2>&1)
 assert_contains "$_guard_err" "TT_RECORDS is not set" "an accessor without TT_RECORDS names the variable"

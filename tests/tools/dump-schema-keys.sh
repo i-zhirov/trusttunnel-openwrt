@@ -10,7 +10,7 @@
 # whenever uci-export gains or loses an option, and commit both together.
 set -e
 
-UCI_EXPORT="packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/uci-export"
+UCI_EXPORT="packages/trusttunnel/root/usr/libexec/trusttunnel/uci-export"
 
 # uci-export declares its schema in three shapes:
 #   # schema-keys: <key>...                         — the profile options

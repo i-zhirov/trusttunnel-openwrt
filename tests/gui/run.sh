@@ -99,6 +99,7 @@ docker run --rm \
 		node tests/gui/stub/server.js \
 			--port '$PORT' \
 			--app /src/packages/luci-app-trusttunnel/htdocs \
+			--app /src/packages/luci-app-trusttunnel-diagnostics/htdocs \
 			--luci '$LUCI_HTDOCS_IN' \
 			--theme '$THEME_HTDOCS_IN' \
 			--goldens /src/tests/backend/goldens &

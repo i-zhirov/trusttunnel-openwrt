@@ -1,0 +1,12 @@
+{
+	"admin/services/trusttunnel/diagnostics": {
+		"action": { "path": "trusttunnel/diagnostics", "type": "view" },
+		"title": "Diagnostics",
+		"order": 30
+	},
+	"admin/services/trusttunnel/tools": {
+		"action": { "path": "trusttunnel/tools", "type": "view" },
+		"title": "Tools",
+		"order": 35
+	}
+}

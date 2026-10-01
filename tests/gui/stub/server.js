@@ -27,6 +27,7 @@
 //
 // Usage: node tests/gui/stub/server.js --port 8123
 //        --app <repo>/packages/luci-app-trusttunnel/htdocs
+//        --app <repo>/packages/luci-app-trusttunnel-diagnostics/htdocs
 //        --luci <luci-base>/htdocs
 //        --theme <luci-theme-bootstrap>/htdocs   (optional: production styling)
 //        --goldens <repo>/tests/backend/goldens
@@ -44,8 +45,18 @@ function arg(name, def) {
 	return i >= 0 ? process.argv[i + 1] : def;
 }
 
+// The app htdocs come from every package that ships views (the core and
+// the optional diagnostics package); each --app value is one root.
+function args(name) {
+	const out = [];
+	for (let i = 0; i < process.argv.length - 1; i++)
+		if (process.argv[i] === name)
+			out.push(process.argv[i + 1]);
+	return out;
+}
+
 const PORT = +arg('--port', process.env.STUB_PORT || 8123);
-const APP_HTDOCS = arg('--app');
+const APP_HTDOCS = args('--app');
 const LUCI_HTDOCS = arg('--luci');
 const THEME_HTDOCS = arg('--theme');
 const GOLDENS = arg('--goldens');
@@ -414,7 +425,10 @@ L = new LuCI({
 // ---------------------------------------------------------------------------
 
 function serveStatic(res, rel) {
-	const roots = [ path.join(APP_HTDOCS, 'luci-static'), path.join(LUCI_HTDOCS, 'luci-static') ];
+	// The app packages overlay the pinned luci-base tree; every package's
+	// htdocs is a root (the core first, the diagnostics package second).
+	const roots = APP_HTDOCS.map(d => path.join(d, 'luci-static'))
+		.concat([ path.join(LUCI_HTDOCS, 'luci-static') ]);
 
 	if (THEME_HTDOCS)
 		roots.push(path.join(THEME_HTDOCS, 'luci-static'));

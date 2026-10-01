@@ -20,6 +20,8 @@ test('reports the installed package versions', async ({ page }) => {
 
 	await expect(page.locator('#view .cbi-section-table')).toContainText('TrustTunnel package');
 	await expect(page.locator('#view .cbi-section-table')).toContainText('1.0.15-r1');
+	await expect(page.locator('#view .cbi-section-table')).toContainText('Runtime package');
+	await expect(page.locator('#view .cbi-section-table')).toContainText('Diagnostics package');
 	await expect(page.locator('#view .cbi-section-table')).toContainText('Client package');
 	await expect(page.locator('#view .cbi-section-table')).toContainText('1.1.7-1');
 	await expect(page.locator('#view .cbi-section-table')).toContainText('Client binary');
@@ -28,6 +30,6 @@ test('reports the installed package versions', async ({ page }) => {
 	// The table carries the theme's generic classes like the status
 	// page's facts table: the bare cbi-section-table markup renders
 	// without padding or row separators.
-	await expect(page.locator('#view table.table.cbi-section-table tr.tr')).toHaveCount(3);
-	await expect(page.locator('#view table.table.cbi-section-table td.td.left')).toHaveCount(3);
+	await expect(page.locator('#view table.table.cbi-section-table tr.tr')).toHaveCount(5);
+	await expect(page.locator('#view table.table.cbi-section-table td.td.left')).toHaveCount(5);
 });

@@ -1,1 +1,1 @@
-{ "package": "1.0.15-r1", "client_package": "1.1.7-1", "client": "1.1.7" }
+{ "package": "1.0.15-r1", "client_package": "1.1.7-1", "client": "1.1.7", "runtime_package": "1.0.15-r1", "diagnostics_package": "1.0.15-r1" }

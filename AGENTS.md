@@ -30,19 +30,27 @@ See `README.md` for the user-facing description.
 ```
 install.sh, uninstall.sh      Router-side installer/uninstaller (POSIX sh)
 packages/
-  luci-app-trusttunnel/       The LuCI app package (feed-style root/ tree)
+  trusttunnel/                The runtime package (the tunnel, no UI)
     Makefile                  OpenWrt package metadata
-    htdocs/luci-static/resources/view/trusttunnel/
-      settings.js status.js log.js diagnostics.js tools.js versions.js
-                                                                        LuCI client-side views
-    root/etc/config/trusttunnel              Default UCI config
+    root/etc/config/trusttunnel              Default UCI config (conffile)
     root/etc/init.d/trusttunnel              procd service script
     root/etc/uci-defaults/40-luci-trusttunnel  First-boot setup
     root/etc/hotplug.d/net/40-trusttunnel    Tun-device reattach hook
     root/usr/libexec/trusttunnel/            Runtime helpers (see below)
+    root/usr/share/ucode/trusttunnel.uc      Shared ucode records module
+                                              (constants + records parser)
+  luci-app-trusttunnel/       The LuCI UI package (depends on the runtime)
+    Makefile                  OpenWrt package metadata
+    htdocs/luci-static/resources/view/trusttunnel/
+      settings.js status.js log.js versions.js  LuCI client-side views
     root/usr/share/luci/menu.d/…json         Menu entry
     root/usr/share/rpcd/acl.d/…json          RPC/UCI ACL
     root/usr/share/rpcd/ucode/luci.trusttunnel  rpcd backend
+  luci-app-trusttunnel-diagnostics/  The optional diagnostics add-on
+    Makefile                  OpenWrt package metadata (depends on the app)
+    htdocs/luci-static/resources/view/trusttunnel/
+      diagnostics.js tools.js                LuCI client-side views
+    root/usr/share/luci/menu.d/…json         Menu entries (Diagnostics, Tools)
   trusttunnel-client/         Per-arch packaging of vendor binaries
 repo-site/                    Jekyll templates for the GitHub Pages package
                               repository site (index pages, layout)
@@ -72,15 +80,17 @@ repositories — apk: `/etc/apk/repositories.d/trusttunnel.list` (the
 `src/gz trusttunnel` line in `/etc/opkg/customfeeds.conf` plus the feed
 key under both the stable name and the usign fingerprint in
 `/etc/opkg/keys/`; installs `kmod-tun ip-full nftables curl ca-bundle`
-and then `luci-app-trusttunnel` (pulling `trusttunnel-client` as a
-dependency); restarts `rpcd`; runs `/etc/uci-defaults/40-luci-trusttunnel`
+and then `luci-app-trusttunnel` (pulling the `trusttunnel` runtime
+and `trusttunnel-client` as its dependencies); restarts `rpcd`; runs `/etc/uci-defaults/40-luci-trusttunnel`
 immediately (idempotent, so the boot-time run changes nothing); and
 restores the previous service state — a first install leaves the service
 disabled. Re-running it updates the packages, the client binary and the
 signing keys; `/etc/config/trusttunnel` is left alone (conffile).
 
-The uninstaller: halts and disables the service; removes both packages in
-one call (for opkg the dependents must come first in the list); tears down
+The uninstaller: halts and disables the service; removes the packages in
+one call (the app, the runtime and the client, plus the optional
+diagnostics package when installed; for opkg the dependents must come
+first in the list); tears down
 the repository configuration and the signing keys; deletes
 `/opt/trusttunnel_client`, `/usr/share/trusttunnel`,
 `/var/cache/trusttunnel` and `/var/etc/trusttunnel`; cleans the leftovers
@@ -102,11 +112,19 @@ one generated client config, and one routing helper. The chain is:
 ```
 /etc/config/trusttunnel            (UCI: main, endpoint, network,
         |                               routing_profile*, domains)
-        | uci-export                (dumps 30 fixed keys to TSV)
+        | uci-export                (dumps 31 fixed keys to TSV)
         v
 /var/etc/trusttunnel/settings.tsv  (the "records"; consumed everywhere)
         | records.sh                (sourced accessor library: tt_get,
-        |                               tt_list, tt_bool, tt_count)
+        |                               tt_list, tt_bool, tt_count,
+        |                               tt_mode_is_proxy,
+        |                               tt_assigned_profile_mode + the
+        |                               shared tt_*_DEFAULT constants)
+        | tt-uci.sh                 (sourced: tt_resolve_active_server,
+        |                               the active-server resolution shared
+        |                               by uci-export and the init script)
+        | /usr/share/ucode/trusttunnel.uc (the ucode side of the same
+        |                               constants + records parser)
         v
 /var/etc/trusttunnel/client.toml    (gen-config; the client binary's config)
 /var/etc/trusttunnel/endpoint.pem   (pinned cert, written by init script)
@@ -118,7 +136,7 @@ one generated client config, and one routing helper. The chain is:
 
 `uci-export` is the canonical emitter of the records TSV
 (`section.option<TAB>value`, list options repeat their key). The emitted
-key set — **30 keys, fixed order** — is a hard contract shared by
+key set — **31 keys, fixed order** — is a hard contract shared by
 `records.sh`, `gen-config`, the `routing` helper, the init script's change
 classifier and the ucode backend's `records()` parser. Nothing outside the
 schema ever appears in the file (foreign UCI sections must not leak), and
@@ -285,10 +303,11 @@ Exposes `luci.trusttunnel` RPC methods (the ACL grants read on
   counters (`rx_bytes`/`tx_bytes`, null when no counters exist: the tun
   device's `/proc/net/dev` in tun mode, the meter rules in proxy mode;
   the view diffs consecutive polls for rates).
-- `versions` — what is installed, read-only: the luci app and client
-  package versions as apk/opkg report them (apk on 25.12+, opkg
-  fallback for 22.03–24.10), plus the client binary's own `--version`;
-  no network access.
+- `versions` — what is installed, read-only: the luci app, the trusttunnel
+  runtime, the optional diagnostics package (null when not installed) and
+  the client package versions as apk/opkg report them (apk on 25.12+,
+  opkg fallback for 22.03–24.10), plus the client binary's own
+  `--version`; no network access.
 - `service` — start/stop/restart/reload with a post-start liveness probe.
 - `ping` — ping each configured endpoint host (or a given target).
 - `probe` — external IP through the tunnel vs. direct (curl + api.ipify.org).
@@ -301,11 +320,23 @@ Exposes `luci.trusttunnel` RPC methods (the ACL grants read on
   vendor's `setup_wizard`, parses the produced settings and returns the
   endpoint fields; secrets go through `write_secret_tmp` (mode 0600).
 
-Imports note: the backend imports `fs` and `math` module functions only.
-`ci.yml` gates that every used module function is imported and that the
-file compiles under the pinned ucode.
+Imports note: the backend imports `fs` and `math` module functions
+plus the shared `trusttunnel` module (constants + records parser, at
+`/usr/share/ucode/trusttunnel.uc`). `ci.yml` gates that every used
+module function is imported (both files) and that the backend compiles
+under the pinned ucode, with an extra `-L` pointing at the tree's copy
+of `/usr/share/ucode` so the named import resolves.
 
 ### LuCI views
+
+The views are split across two packages: the core
+(`luci-app-trusttunnel`) ships `status.js`, `settings.js`, `log.js` and
+`versions.js`; the optional `luci-app-trusttunnel-diagnostics` ships
+`diagnostics.js` and `tools.js` with their menu entries. Everything they
+call (the single `luci.trusttunnel` backend object, the ACL, the menu
+parent) lives in the core, so the optional package is a pure add-on —
+installing the core alone shows the four operational pages, installing
+the add-on adds the two check pages.
 
 - `status.js` — verdict banner, facts (state/mode/server/proxy address,
   traffic), Start/Stop buttons and a rules preview for the assigned
@@ -360,23 +391,59 @@ file compiles under the pinned ucode.
 
 ## Packages and versioning
 
+### `trusttunnel/Makefile`
+
+- The runtime package: the service, the routing, the records helpers and
+  the UCI config, with no LuCI interface. `luci-app-trusttunnel`
+  hard-depends on it (and the diagnostics add-on on the app), so a
+  headless router can run the tunnel with `trusttunnel` alone.
+- `PKG_VERSION` comes from the same `git describe --tags --abbrev=0`
+  mechanism as the app (tag `vX.Y.Z` → `X.Y.Z`; same fallback, must track
+  the last released version) — the runtime releases with the app and can
+  never be ahead of or behind it.
+- `DEPENDS:=+trusttunnel-client +ip-full +nftables`. **Do not add
+  `kmod-tun` or `ca-bundle` here**: they belong on
+  `trusttunnel-client`'s own DEPENDS and arrive transitively. **Do not
+  add `luci-base`, `curl` or `ucode-mod-math`**: they are the UI
+  package's (the runtime's files never invoke them). `test_deps.sh`
+  enforces all of this.
+- `PKG_BUILD_DIR` is overridden BEFORE `package.mk` is included; the
+  `root/` tree is staged into it by `Build/Prepare` and installed from
+  there by `Package/trusttunnel/install`.
+- The conffiles block declares `/etc/config/trusttunnel` — the runtime
+  owns the settings file, NOT the UI package (a conffile declared by two
+  packages would fight over the file on upgrades).
+- `Build/Compile` chmods the shipped scripts explicitly — the git index is
+  NOT a reliable carrier of exec bits (zip downloads, Windows). `ci.yml`
+  separately verifies index modes are `100755`.
+
 ### `luci-app-trusttunnel/Makefile`
 
 - `PKG_VERSION` comes from `git describe --tags --abbrev=0` (tag `vX.Y.Z`
   → version `X.Y.Z`), falling back to the last released version (currently
   `1.0.33`). The fallback must track the latest release — the release
   workflow fails a tag build whose artifact does not carry the tag.
-- `LUCI_DEPENDS:=+trusttunnel-client +luci-base +ip-full +nftables +curl
-  +ucode-mod-math`. **Do not add `kmod-tun` or `ca-bundle` here**: they
-  belong on `trusttunnel-client`'s own DEPENDS and arrive transitively.
-  `test_deps.sh` enforces this.
-- The `Package/luci-app-trusttunnel/conffiles` block must stay BEFORE
-  `include $(TOPDIR)/feeds/luci/luci.mk` (luci.mk freezes the list
-  immediately; a late declaration loses `/etc/config/trusttunnel` on
-  upgrades).
-- `Build/Compile` chmods the shipped scripts explicitly — the git index is
-  NOT a reliable carrier of exec bits (zip downloads, Windows). `ci.yml`
-  separately verifies index modes are `100755`.
+- `LUCI_DEPENDS:=+trusttunnel +luci-base +curl +ucode-mod-math`.
+  **Do not add `trusttunnel-client`, `ip-full`, `nftables`, `kmod-tun` or
+  `ca-bundle` here**: they belong on `trusttunnel`/`trusttunnel-client`
+  and arrive transitively. `test_deps.sh` enforces this.
+- No conffiles (`/etc/config/trusttunnel` is the runtime's) and no
+  `Build/Compile` (no scripts ship in the UI package) — luci.mk copies
+  `htdocs/` and `root/` as-is.
+
+### `luci-app-trusttunnel-diagnostics/Makefile`
+
+- The optional add-on: ships the Diagnostics and Tools views plus their
+  menu entries; everything else (the backend, the ACL, the runtime, the
+  other views) stays in the app package. It is NOT a dependency of the
+  app — the app must never `+luci-app-trusttunnel-diagnostics` — and
+  it hard-depends on `+luci-app-trusttunnel` (the menu parent and the
+  ACL live there).
+- The version comes from the same tag-derived mechanism as the app
+  (same fallback, must track the last released version): the package is
+  released together with the app and can never be ahead of or behind it.
+- No conffiles, no `Build/Compile` (no scripts to chmod); luci.mk copies
+  `htdocs/` and `root/` as for the app.
 
 ### `trusttunnel-client/Makefile`
 
@@ -427,8 +494,9 @@ absent, so the plain suite runs anywhere.
   sed-rewrites the script's hardcoded paths into a scratch tree, stubs
   init/routing/logger, and covers filters | guards | attach | invariants.
 - `tests/test_views_runtime.sh` + `tests/views_runtime.js` — executes the
-  four views against mocks that replicate the CURRENT LuCI runtime
-  contracts (`uci.load()` resolving with the package-name list, no plain
+  views (searched across the core and the diagnostics package trees)
+  against mocks that replicate the CURRENT LuCI runtime contracts
+  (`uci.load()` resolving with the package-name list, no plain
   `form.Section`, `E()` reading only `arguments[2]`) and asserts the
   rendered output. Needs node (skips, exit 77, without it). This is the
   gate the syntax-only view checks cannot provide: the v1.0.16-1.0.20
@@ -609,17 +677,20 @@ The `gate` job runs first and refuses any run that is not a `v*` or
 run on main and republishes the repositories and the site only, never a
 GitHub release. A mis-triggered run fails before any SDK work starts.
 
-- `build` — `luci-app-trusttunnel` via `openwrt/gh-action-sdk@v7` on
-  25.12.5 (apk) and 22.03.7 (ipk). The SDK is pinned with `VERSION_PATH`
-  to the release tarballs — **never the snapshot SDK** (snapshot feeds hit
-  a curl Kconfig recursive dependency) — and the SDK feeds are restricted
-  to the needed set via `tests/integration/restricted-feeds.sh`, whose
-  `--verify` gate checks the hardcoded pins against the SDK image's
-  `feeds.conf.default` (update them together with the SDK bump).
-  `FEED_DIR` must be an absolute path and must contain `.git` (luci.mk
-  findrev derives the version from it). `fail-fast: false`; artifact file
-  names must match the tag. Skipped on `client-v*` tags — a client-only
-  release does not touch the app.
+- `build` — the LuCI app packages (`luci-app-trusttunnel` and the
+  optional `luci-app-trusttunnel-diagnostics`) plus the `trusttunnel`
+  runtime via
+  `openwrt/gh-action-sdk@v7` on 25.12.5 (apk) and 22.03.7 (ipk). The SDK
+  is pinned with `VERSION_PATH` to the release tarballs — **never the
+  snapshot SDK** (snapshot feeds hit a curl Kconfig recursive dependency)
+  — and the SDK feeds are restricted to the needed set via
+  `tests/integration/restricted-feeds.sh`, whose `--verify` gate checks
+  the hardcoded pins against the SDK image's `feeds.conf.default`
+  (update them together with the SDK bump). `FEED_DIR` must be an
+  absolute path and must contain `.git` (luci.mk findrev derives the
+  version from it). `fail-fast: false`; artifact file names must match
+  the tag. Skipped on `client-v*` tags — a client-only release does not
+  touch the app.
 - `build-client` — the client package per subtarget arch (the full matrix
   is in the workflow; the ipk list is the apk list minus
   `aarch64_cortex-a76`). apk files get an `-<arch>` suffix and an

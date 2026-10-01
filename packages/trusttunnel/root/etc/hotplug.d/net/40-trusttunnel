@@ -27,9 +27,15 @@ RECORDS=/var/etc/trusttunnel/settings.tsv
 OUTDIR=/var/etc/trusttunnel
 [ ! -f "$RECORDS" ] && exit 0
 
+# The records accessors and the mode check come from the shared records
+# library (the same one gen-config, routing and the init script use).
+TT_RECORDS=$RECORDS
+# shellcheck source=/dev/null
+. /usr/libexec/trusttunnel/records.sh
+
 # The tun reattach dance is tun-mode only: in proxy mode the client binds a
 # SOCKS listener and no tun device or routing table exists to attach.
-[ "$(awk -F '\t' '$1 == "main.mode" { print $2; exit }' "$RECORDS" 2>/dev/null)" = "proxy" ] && exit 0
+tt_mode_is_proxy && exit 0
 
 # A remove/unbind of the recorded attached device: the tunnel device is
 # gone, so detach — the blackhole dies with it and marked traffic falls

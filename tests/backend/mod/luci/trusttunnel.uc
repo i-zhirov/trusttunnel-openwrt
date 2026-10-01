@@ -2,6 +2,11 @@
 
 import { popen, readfile, writefile, access, unlink, stat, chmod } from 'fs';
 import { rand, srand } from 'math';
+// The shared constants and the records parser: the schema is a hard
+// contract with the shell side (records.sh), so it is loaded from the
+// trusttunnel module instead of being re-declared here.
+import { LIBDIR, OUTDIR, RECORDS, CLIENT, DEV_STATS, TABLE_DEFAULT,
+         load_records, first, mode_is_proxy } from 'trusttunnel';
 
 // The scratch_path() helper below uses rand(), which lives in the math module,
 // not in the ucode core. The module is declared in LUCI_DEPENDS as
@@ -9,12 +14,6 @@ import { rand, srand } from 'math';
 // config import and the domain check break with it.
 let seed = time();
 srand(seed);
-
-const LIBDIR = '/usr/libexec/trusttunnel';
-const OUTDIR = '/var/etc/trusttunnel';
-const RECORDS = OUTDIR + '/settings.tsv';
-const CLIENT = '/opt/trusttunnel_client/trusttunnel_client';
-const DEV_STATS = '/proc/net/dev';
 
 // Run a command and return { code, out }. With capture the output carries
 // stdout only and stderr is dropped — the right mode wherever the output is
@@ -62,40 +61,6 @@ function secret_file(prefix, data) {
 // Read the UCI value at the given dotted path. The output is trimmed.
 function uci_value(path) {
 	return trim(run('uci -q get ' + shell_quote(path), true).out);
-}
-
-// Parse the records TSV (section.option<TAB>value, one line per list
-// value) into a key -> array map. Lines without a tab separator are
-// skipped.
-function load_records() {
-	let raw = readfile(RECORDS);
-	let out = {};
-
-	if (raw == null)
-		return out;
-
-	let lines = split(raw, '\n');
-	for (let i = 0; i < length(lines); i++) {
-		let line = lines[i];
-		let t = index(line, '\t');
-		if (t < 0)
-			continue;
-
-		let key = substr(line, 0, t);
-		let value = substr(line, t + 1);
-		if (!(key in out))
-			out[key] = [];
-		push(out[key], value);
-	}
-
-	return out;
-}
-
-// First value for a key, or the default when the key is absent or its
-// first value is empty.
-function first(rec, key, dflt) {
-	let v = rec[key];
-	return length(v) && length(v[0]) ? v[0] : dflt;
 }
 
 // The host part of an endpoint address: "host:port", "[v6]:port" or a bare
@@ -308,7 +273,7 @@ return {
 		status: {
 			args: { },
 			call: function() {
-				let rec = load_records();
+				let rec = load_records(RECORDS);
 				let rs = kernel_state();
 				let pname = first(rec, 'routing_profile.name', '');
 				let pmode = first(rec, 'routing_profile.mode', '');
@@ -463,7 +428,7 @@ return {
 				if (length(target)) {
 					push(hosts, target);
 				} else {
-					let rec = load_records();
+					let rec = load_records(RECORDS);
 					let addrs = rec['endpoint.address'] ?? [];
 
 					if (!length(addrs))
@@ -486,12 +451,12 @@ return {
 		probe: {
 			args: { },
 			call: function() {
-				let rec = load_records();
+				let rec = load_records(RECORDS);
 				let via, plain;
 
 				// The tunnel leg is bound through the tun device in tun
 				// mode and through the SOCKS listener in proxy mode.
-				if (first(rec, 'main.mode', 'tun') == 'proxy') {
+				if (mode_is_proxy(rec)) {
 					let addr = first(rec, 'proxy.address', '');
 
 					if (!length(addr))
@@ -542,7 +507,7 @@ return {
 				if (!length(raw))
 					return { error: 'a domain is required' };
 
-				let rec = load_records();
+				let rec = load_records(RECORDS);
 				let pname = first(rec, 'routing_profile.name', '');
 				let pmode = first(rec, 'routing_profile.mode', '');
 				let list_key;
@@ -594,7 +559,7 @@ return {
 				// mode): in proxy mode the legacy semantics stay — the
 				// proxied connections tunnel except the "do not bypass"
 				// list. In tun mode nothing is routed by default.
-				if (first(rec, 'main.mode', 'tun') == 'proxy')
+				if (mode_is_proxy(rec))
 					return {
 						domain: raw, normalized: lc_raw,
 						verdict: in_list ? 'direct' : 'tunnel',
@@ -631,7 +596,7 @@ return {
 		diagnose: {
 			args: { },
 			call: function() {
-				let rec = load_records();
+				let rec = load_records(RECORDS);
 				let rs = kernel_state();
 				// The routing checks report "absent" as a failure only while
 				// the service is running; when it is stopped or mid-restart
@@ -648,7 +613,7 @@ return {
 				let pname = first(rec, 'routing_profile.name', '');
 				let pmode = first(rec, 'routing_profile.mode', '');
 				let mtu_cfg = first(rec, 'network.mtu', '1350');
-				let table = first(rec, 'network.table', '880');
+				let table = first(rec, 'network.table', TABLE_DEFAULT);
 				let mode = first(rec, 'main.mode', 'tun');
 				let paddr = first(rec, 'proxy.address', '');
 

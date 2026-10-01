@@ -163,14 +163,24 @@ jobs:
           # Kept separate from the feed so the action's bin/ move cannot
           # dump foreign packages into the repository tree.
           ARTIFACTS_DIR: ${{ github.workspace }}/out
-          PACKAGES: luci-app-trusttunnel
+          # The optional diagnostics package and the trusttunnel runtime
+          # build in the same SDK pass (all noarch, one x86-64 build
+          # serves every arch).
+          PACKAGES: luci-app-trusttunnel luci-app-trusttunnel-diagnostics trusttunnel
 
       - name: Collect the built packages
         run: |
           mkdir -p dist
-          find out/bin/ -name "luci-app-trusttunnel*.${{ matrix.ext }}" -exec cp {} dist/ \;
+          find out/bin/ \( -name "luci-app-trusttunnel*.${{ matrix.ext }}" \
+                           -o -name "trusttunnel-[0-9]*.${{ matrix.ext }}" \
+                           -o -name "trusttunnel_[0-9]*.${{ matrix.ext }}" \) \
+            -exec cp {} dist/ \;
           if [ -z "$(find dist -name "luci-app-trusttunnel*.${{ matrix.ext }}" -print -quit)" ]; then
             echo "::error::no luci-app-trusttunnel package was built"
+            exit 1
+          fi
+          if [ -z "$(find dist \( -name "trusttunnel-[0-9]*.${{ matrix.ext }}" -o -name "trusttunnel_[0-9]*.${{ matrix.ext }}" \) -print -quit)" ]; then
+            echo "::error::no trusttunnel package was built"
             exit 1
           fi
 
@@ -180,21 +190,27 @@ jobs:
       # whose packages did not match their tag shipped unusable releases
       # in the past). Dispatch runs build whatever HEAD is checked out, so
       # the assertion is skipped there.
-      - name: Assert the package file name matches the tag
+      - name: Assert the package file names match the tag
         if: startsWith(github.ref, 'refs/tags/')
         env:
           EXT: ${{ matrix.ext }}
         run: |
           tag="${GITHUB_REF_NAME#v}"
+          # The ipk names are globbed on purpose: the luci.mk apps ship
+          # <name>_<tag>_all.ipk (luci.mk ignores PKG_RELEASE), while the
+          # plain trusttunnel package ships <name>_<tag>-<release>_all.ipk
+          # — a glob cannot drift from the OpenWrt naming formula again.
           if [ "$EXT" = apk ]; then
-            expected="dist/luci-app-trusttunnel-${tag}-r1.apk"
+            expected="dist/luci-app-trusttunnel-${tag}-r1.apk dist/luci-app-trusttunnel-diagnostics-${tag}-r1.apk dist/trusttunnel-${tag}-r1.apk"
           else
-            expected="dist/luci-app-trusttunnel_${tag}_all.ipk"
+            expected="dist/luci-app-trusttunnel_${tag}*_all.ipk dist/luci-app-trusttunnel-diagnostics_${tag}*_all.ipk dist/trusttunnel_${tag}*_all.ipk"
           fi
-          if [ ! -f "$expected" ]; then
-            echo "::error::the built package does not match the tag: expected $expected"
-            exit 1
-          fi
+          for f in $expected; do
+            if ! ls $f >/dev/null 2>&1; then
+              echo "::error::the built package does not match the tag: expected $f"
+              exit 1
+            fi
+          done
 
       - name: Upload the packages
         uses: actions/upload-artifact@v7
@@ -715,15 +731,19 @@ jobs:
             # assets (the first ipk-less release) are skipped, which
             # gh would otherwise report as an error.
             names="$(gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null || true)"
-            if printf '%s\n' "$names" | grep -Eq '^(luci-app-trusttunnel|trusttunnel-client)-[0-9].*\.apk$'; then
+            if printf '%s\n' "$names" | grep -Eq '^(luci-app-trusttunnel|luci-app-trusttunnel-diagnostics|trusttunnel|trusttunnel-client)-[0-9].*\.apk$'; then
               gh release download "$tag" \
                 --pattern 'luci-app-trusttunnel-*.apk' \
+                --pattern 'luci-app-trusttunnel-diagnostics-*.apk' \
+                --pattern 'trusttunnel-[0-9]*.apk' \
                 --pattern 'trusttunnel-client-*.apk' \
                 --dir staging/prior-apk --clobber
             fi
-            if printf '%s\n' "$names" | grep -Eq '^(luci-app-trusttunnel|trusttunnel-client)_[0-9].*\.ipk$'; then
+            if printf '%s\n' "$names" | grep -Eq '^(luci-app-trusttunnel|luci-app-trusttunnel-diagnostics|trusttunnel|trusttunnel-client)_[0-9].*\.ipk$'; then
               gh release download "$tag" \
                 --pattern 'luci-app-trusttunnel_*.ipk' \
+                --pattern 'luci-app-trusttunnel-diagnostics_*.ipk' \
+                --pattern 'trusttunnel_[0-9]*.ipk' \
                 --pattern 'trusttunnel-client_*.ipk' \
                 --dir staging/prior-opkg --clobber
             fi
@@ -826,14 +846,16 @@ jobs:
           # against the current Makefile before skipping a rebuild.
           cp packages/trusttunnel-client/Makefile staging/releases/25.12.5/trusttunnel-client.Makefile
 
-          # The noarch LuCI app lands in every architecture directory —
-          # current and prior versions alike, so the whole version
-          # history is installable everywhere. Prior first: the fresh
-          # build wins on a same-version collision. On a client-v*
+          # The noarch LuCI app packages land in every architecture
+          # directory — current and prior versions alike, so the whole
+          # version history is installable everywhere. Prior first: the
+          # fresh build wins on a same-version collision. On a client-v*
           # release there is no fresh build (staging/luci-apk is empty),
           # and the prior merge above is the only source of the app.
           for d in staging/releases/25.12.5/packages/*/trusttunnel/; do
-            for f in staging/prior-apk/luci-app-trusttunnel-[0-9]*.apk; do
+            for f in staging/prior-apk/luci-app-trusttunnel-[0-9]*.apk \
+                     staging/prior-apk/luci-app-trusttunnel-diagnostics-[0-9]*.apk \
+                     staging/prior-apk/trusttunnel-[0-9]*.apk; do
               [ -e "$f" ] && cp "$f" "$d/"
             done
             for f in staging/luci-apk/*.apk; do
@@ -910,14 +932,17 @@ jobs:
             mkdir -p "staging/releases/22.03.7/packages/$arch/trusttunnel"
             cp "$f" "staging/releases/22.03.7/packages/$arch/trusttunnel/"
           done
-          # The noarch LuCI app lands in every feed directory — current
-          # and prior versions alike, so the whole version history is
-          # installable everywhere. The feed key travels with every feed:
-          # install.sh fetches it from the feed directory. On a client-v*
-          # release there is no fresh build (staging/luci-ipk is empty),
-          # and the prior merge above is the only source of the app.
+          # The noarch LuCI app packages land in every feed directory —
+          # current and prior versions alike, so the whole version
+          # history is installable everywhere. The feed key travels with
+          # every feed: install.sh fetches it from the feed directory. On
+          # a client-v* release there is no fresh build (staging/luci-ipk
+          # is empty), and the prior merge above is the only source of
+          # the app.
           for d in staging/releases/22.03.7/packages/*/trusttunnel/; do
-            for f in staging/prior-opkg/luci-app-trusttunnel_[0-9]*.ipk; do
+            for f in staging/prior-opkg/luci-app-trusttunnel_[0-9]*.ipk \
+                     staging/prior-opkg/luci-app-trusttunnel-diagnostics_[0-9]*.ipk \
+                     staging/prior-opkg/trusttunnel_[0-9]*.ipk; do
               [ -e "$f" ] && cp "$f" "$d/"
             done
             for f in staging/luci-ipk/*.ipk; do
@@ -1000,7 +1025,23 @@ jobs:
           # make apk look for an Alpine-style APKINDEX.tar.gz.
           printf '%s\n' 'file:///repo/x86_64/trusttunnel/packages.adb' > /etc/apk/repositories.d/trusttunnel.list
           apk update
-          apk add luci-app-trusttunnel
+          apk add luci-app-trusttunnel luci-app-trusttunnel-diagnostics
+          # The runtime package is the app's dependency: the service must
+          # have landed with it.
+          apk info -e trusttunnel >/dev/null || {
+            echo "the trusttunnel runtime package is not installed"
+            exit 1
+          }
+          test -x /etc/init.d/trusttunnel || {
+            echo "the trusttunnel init script is missing"
+            exit 1
+          }
+          # The optional package's views must have landed (the install
+          # above proves the index serves it; this proves the content).
+          test -f /www/luci-static/resources/view/trusttunnel/diagnostics.js || {
+            echo "the diagnostics view is missing"
+            exit 1
+          }
           # Full path: the client is not on PATH. The version output
           # proves the right statically-linked binary landed.
           /opt/trusttunnel_client/trusttunnel_client --version
@@ -1035,7 +1076,19 @@ jobs:
           # /Packages.gz itself and verifies Packages.sig against the key.
           printf '%s\n' 'src/gz trusttunnel file:///repo/x86_64/trusttunnel' > /etc/opkg/customfeeds.conf
           opkg update
-          opkg install luci-app-trusttunnel
+          opkg install luci-app-trusttunnel luci-app-trusttunnel-diagnostics
+          opkg list-installed | grep -q '^trusttunnel ' || {
+            echo "the trusttunnel runtime package is not installed"
+            exit 1
+          }
+          test -x /etc/init.d/trusttunnel || {
+            echo "the trusttunnel init script is missing"
+            exit 1
+          }
+          test -f /www/luci-static/resources/view/trusttunnel/diagnostics.js || {
+            echo "the diagnostics view is missing"
+            exit 1
+          }
           /opt/trusttunnel_client/trusttunnel_client --version
           /opt/trusttunnel_client/trusttunnel_client --version | grep -q "$CLIENT_VERSION" || {
             echo "the installed client is not $CLIENT_VERSION"

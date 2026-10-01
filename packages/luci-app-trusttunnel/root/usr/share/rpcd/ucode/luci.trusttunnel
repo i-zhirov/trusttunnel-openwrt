@@ -2,6 +2,11 @@
 
 import { popen, readfile, writefile, access, unlink, stat, chmod } from 'fs';
 import { rand, srand } from 'math';
+// The shared constants and the records parser: the schema is a hard
+// contract with the shell side (records.sh), so it is loaded from the
+// trusttunnel module instead of being re-declared here.
+import { LIBDIR, OUTDIR, RECORDS, CLIENT, DEV_STATS, TABLE_DEFAULT,
+         load_records, first, mode_is_proxy } from 'trusttunnel';
 
 // The scratch_path() helper below uses rand(), which lives in the math module,
 // not in the ucode core. The module is declared in LUCI_DEPENDS as
@@ -9,12 +14,6 @@ import { rand, srand } from 'math';
 // config import and the domain check break with it.
 let seed = time();
 srand(seed);
-
-const LIBDIR = '/usr/libexec/trusttunnel';
-const OUTDIR = '/var/etc/trusttunnel';
-const RECORDS = OUTDIR + '/settings.tsv';
-const CLIENT = '/opt/trusttunnel_client/trusttunnel_client';
-const DEV_STATS = '/proc/net/dev';
 
 // Run a command and return { code, out }. With capture the output carries
 // stdout only and stderr is dropped — the right mode wherever the output is
@@ -62,40 +61,6 @@ function secret_file(prefix, data) {
 // Read the UCI value at the given dotted path. The output is trimmed.
 function uci_value(path) {
 	return trim(run('uci -q get ' + shell_quote(path), true).out);
-}
-
-// Parse the records TSV (section.option<TAB>value, one line per list
-// value) into a key -> array map. Lines without a tab separator are
-// skipped.
-function load_records() {
-	let raw = readfile(RECORDS);
-	let out = {};
-
-	if (raw == null)
-		return out;
-
-	let lines = split(raw, '\n');
-	for (let i = 0; i < length(lines); i++) {
-		let line = lines[i];
-		let t = index(line, '\t');
-		if (t < 0)
-			continue;
-
-		let key = substr(line, 0, t);
-		let value = substr(line, t + 1);
-		if (!(key in out))
-			out[key] = [];
-		push(out[key], value);
-	}
-
-	return out;
-}
-
-// First value for a key, or the default when the key is absent or its
-// first value is empty.
-function first(rec, key, dflt) {
-	let v = rec[key];
-	return length(v) && length(v[0]) ? v[0] : dflt;
 }
 
 // The host part of an endpoint address: "host:port", "[v6]:port" or a bare
@@ -308,7 +273,7 @@ return {
 		status: {
 			args: { },
 			call: function() {
-				let rec = load_records();
+				let rec = load_records(RECORDS);
 				let rs = kernel_state();
 				let pname = first(rec, 'routing_profile.name', '');
 				let pmode = first(rec, 'routing_profile.mode', '');
@@ -372,16 +337,19 @@ return {
 			}
 		},
 
-		// What is installed, for the Versions tab on the Settings page.
-		// The package versions come from the package manager (apk on
-		// 25.12+, opkg on 22.03-24.10; the other command does not exist
-		// there), the client binary version from the binary itself. A
-		// package that is not installed (or a missing binary) reports
+		// What is installed, for the Versions page. The package versions
+		// come from the package manager (apk on 25.12+, opkg on 22.03-
+		// 24.10; the other command does not exist there), the client
+		// binary version from the binary itself. The runtime package
+		// (trusttunnel) is the service the app is a frontend for, so a
+		// headless install reports it and not the app; the diagnostics
+		// package is the optional add-on, null when it is not installed.
+		// A package that is not installed (or a missing binary) reports
 		// null, never an error. Nothing here touches the network.
 		versions: {
 			args: { },
 			call: function() {
-				let res = { package: null, client_package: null, client: null };
+				let res = { package: null, client_package: null, client: null, runtime_package: null, diagnostics_package: null };
 
 				let apk = run('apk list -I luci-app-trusttunnel', true);
 				if (apk.code == 0) {
@@ -407,6 +375,32 @@ return {
 					let m = match(opkg.out, /Version: ([^ \t\n]+)/);
 					if (m)
 						res.client_package = m[1];
+				}
+
+				apk = run('apk list -I trusttunnel', true);
+				if (apk.code == 0) {
+					let m = match(apk.out, /trusttunnel-([^ \t\n]+)/);
+					if (m)
+						res.runtime_package = m[1];
+				}
+				if (res.runtime_package == null) {
+					let opkg = run('opkg info trusttunnel', true);
+					let m = match(opkg.out, /Version: ([^ \t\n]+)/);
+					if (m)
+						res.runtime_package = m[1];
+				}
+
+				apk = run('apk list -I luci-app-trusttunnel-diagnostics', true);
+				if (apk.code == 0) {
+					let m = match(apk.out, /luci-app-trusttunnel-diagnostics-([^ \t\n]+)/);
+					if (m)
+						res.diagnostics_package = m[1];
+				}
+				if (res.diagnostics_package == null) {
+					let opkg = run('opkg info luci-app-trusttunnel-diagnostics', true);
+					let m = match(opkg.out, /Version: ([^ \t\n]+)/);
+					if (m)
+						res.diagnostics_package = m[1];
 				}
 
 				let cv = run(CLIENT + ' --version', true);
@@ -463,7 +457,7 @@ return {
 				if (length(target)) {
 					push(hosts, target);
 				} else {
-					let rec = load_records();
+					let rec = load_records(RECORDS);
 					let addrs = rec['endpoint.address'] ?? [];
 
 					if (!length(addrs))
@@ -486,12 +480,12 @@ return {
 		probe: {
 			args: { },
 			call: function() {
-				let rec = load_records();
+				let rec = load_records(RECORDS);
 				let via, plain;
 
 				// The tunnel leg is bound through the tun device in tun
 				// mode and through the SOCKS listener in proxy mode.
-				if (first(rec, 'main.mode', 'tun') == 'proxy') {
+				if (mode_is_proxy(rec)) {
 					let addr = first(rec, 'proxy.address', '');
 
 					if (!length(addr))
@@ -542,7 +536,7 @@ return {
 				if (!length(raw))
 					return { error: 'a domain is required' };
 
-				let rec = load_records();
+				let rec = load_records(RECORDS);
 				let pname = first(rec, 'routing_profile.name', '');
 				let pmode = first(rec, 'routing_profile.mode', '');
 				let list_key;
@@ -594,7 +588,7 @@ return {
 				// mode): in proxy mode the legacy semantics stay — the
 				// proxied connections tunnel except the "do not bypass"
 				// list. In tun mode nothing is routed by default.
-				if (first(rec, 'main.mode', 'tun') == 'proxy')
+				if (mode_is_proxy(rec))
 					return {
 						domain: raw, normalized: lc_raw,
 						verdict: in_list ? 'direct' : 'tunnel',
@@ -631,7 +625,7 @@ return {
 		diagnose: {
 			args: { },
 			call: function() {
-				let rec = load_records();
+				let rec = load_records(RECORDS);
 				let rs = kernel_state();
 				// The routing checks report "absent" as a failure only while
 				// the service is running; when it is stopped or mid-restart
@@ -648,7 +642,7 @@ return {
 				let pname = first(rec, 'routing_profile.name', '');
 				let pmode = first(rec, 'routing_profile.mode', '');
 				let mtu_cfg = first(rec, 'network.mtu', '1350');
-				let table = first(rec, 'network.table', '880');
+				let table = first(rec, 'network.table', TABLE_DEFAULT);
 				let mode = first(rec, 'main.mode', 'tun');
 				let paddr = first(rec, 'proxy.address', '');
 

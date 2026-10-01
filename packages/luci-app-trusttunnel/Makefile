@@ -19,54 +19,27 @@ PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=Ilia Zhirov <i.zhirov@adguard.com>
 
 LUCI_TITLE:=LuCI support for TrustTunnel (full tunnel)
-LUCI_DESCRIPTION:=Runs the TrustTunnel client on OpenWrt and routes LAN traffic through the tunnel with a killswitch and a LuCI interface.
+LUCI_DESCRIPTION:=The TrustTunnel LuCI interface: status, settings, client log and versions pages over the trusttunnel runtime.
 # Every dependency below is used by THIS package's own files — nothing is
-# carried for the client's sake. +trusttunnel-client is a hard dependency
-# (this package configures and runs the client binaries in
-# /opt/trusttunnel_client; both package managers pull the client from the
-# same repository, which is what lets it update with `apk upgrade` /
-# `opkg upgrade`). kmod-tun and ca-bundle live on trusttunnel-client's own
-# DEPENDS (the binaries create the tun device and do TLS against a CA
-# bundle) and arrive here transitively — the app must NOT repeat them.
-# ip-full (`ip rule`/`ip route`), nftables (`nft` is called directly by the
-# routing helper and the diagnostics — fw4 pulling it on stock images is
-# not enough), curl (diagnostics, the address probes) and ucode-mod-math are
-# invoked by this package's own files.
-LUCI_DEPENDS:=+trusttunnel-client +luci-base +ip-full +nftables +curl +ucode-mod-math
+# carried for another package's sake. +trusttunnel is the runtime (the
+# service, the routing, the UCI config and the client binaries' owner,
+# pulling +trusttunnel-client transitively), so the app must NOT repeat
+# +trusttunnel-client, +ip-full, +nftables, kmod-tun or ca-bundle — they
+# all arrive through the runtime, exactly as they did through the client
+# before the split. curl (the diagnostics probes in the backend) and
+# ucode-mod-math (the backend's rand()/srand()) are invoked by this
+# package's own backend file.
+LUCI_DEPENDS:=+trusttunnel +luci-base +curl +ucode-mod-math
 # Without this override luci.mk would substitute the LuCI project's own
 # address, and package metadata would point support at the wrong place.
 LUCI_URL:=https://github.com/i-zhirov/trusttunnel-openwrt
 LUCI_PKGARCH:=all
 
-# The conffiles declaration must precede `include luci.mk`: luci.mk's last
-# line expands BuildPackage, and the pack stage freezes the conffiles list
-# with an immediate assignment at that moment. A declaration after the
-# include is parsed too late, the captured list stays empty, and a package
-# update would then overwrite /etc/config/trusttunnel with defaults —
-# destroying the endpoint settings, the certificate and the service state.
-define Package/luci-app-trusttunnel/conffiles
-/etc/config/trusttunnel
-endef
+# The UCI config is the runtime package's conffile (/etc/config/trusttunnel
+# is owned by trusttunnel now); the app ships only the views, the menu,
+# the ACL and the backend, so there is no conffiles block here.
 
 include $(TOPDIR)/feeds/luci/luci.mk
-
-# Executable bits set explicitly rather than taken from the repository:
-# luci.mk copies root/ with `cp -pR`, so modes come from the source files,
-# and the git index is not a reliable carrier (bits are lost in zip
-# downloads, on permission-less file systems, and on Windows). Without
-# this block the built package would ship scripts that procd cannot start
-# — with no log line at all. records.sh is sourced with `.`, not executed,
-# so it stays 0644.
-define Build/Compile
-	chmod 0755 \
-		$(PKG_BUILD_DIR)/root/etc/init.d/trusttunnel \
-		$(PKG_BUILD_DIR)/root/etc/uci-defaults/40-luci-trusttunnel \
-		$(PKG_BUILD_DIR)/root/etc/hotplug.d/net/40-trusttunnel \
-		$(PKG_BUILD_DIR)/root/usr/libexec/trusttunnel/gen-config \
-		$(PKG_BUILD_DIR)/root/usr/libexec/trusttunnel/routing \
-		$(PKG_BUILD_DIR)/root/usr/libexec/trusttunnel/uci-export
-	chmod 0644 $(PKG_BUILD_DIR)/root/usr/libexec/trusttunnel/records.sh
-endef
 
 # luci.mk's include above is what emits the package build. The marker
 # below is load-bearing, not a signature: include/scan.mk discovers the

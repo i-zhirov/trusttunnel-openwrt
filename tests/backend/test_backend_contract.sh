@@ -51,6 +51,9 @@ docker info >/dev/null 2>&1 || tt_skip "docker daemon not running"
 BASE="$(dirname "$0")"
 MOD="$BASE/mod/luci/trusttunnel.uc"
 BACKEND=packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel
+# The shared records module lives in the runtime package (the UI's
+# backend imports it by name through the module search path).
+BACKEND_LIB=packages/trusttunnel/root/usr/share/ucode/trusttunnel.uc
 
 # retry <tries> <sleep> <cmd...> — run the command up to <tries> times,
 # sleeping <sleep> seconds between attempts; succeed on the first exit 0.
@@ -75,7 +78,11 @@ retry() {
 docker image inspect tt-ucode-gate >/dev/null 2>&1 || tt_skip "tt-ucode-gate image missing (build tests/backend/Dockerfile first)"
 docker build -q -t tt-backend-rootfs -f "$BASE/lab.Dockerfile" "$BASE" >/dev/null || tt_skip "lab image build failed"
 
+# The backend imports the shared constants/records module by name
+# ('trusttunnel'), which the -L mod/*.uc search path resolves to
+# mod/trusttunnel.uc — so the live lib travels with the backend.
 cp "$BACKEND" "$MOD"
+cp "$BACKEND_LIB" "$BASE/mod/trusttunnel.uc"
 
 # Method and args for a golden file name (the arg-derived suffix after the
 # method name is not part of the contract). Prints "method<TAB>args" so the

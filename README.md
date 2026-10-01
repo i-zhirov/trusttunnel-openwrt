@@ -86,8 +86,9 @@ The script then:
    architecture, in the official OpenWrt layout — and installs the signing
    key.
 3. Installs the required packages `kmod-tun ip-full nftables curl
-   ca-bundle`, then `luci-app-trusttunnel` with `trusttunnel-client` as
-   its dependency (binaries in `/opt/trusttunnel_client`).
+   ca-bundle`, then `luci-app-trusttunnel` with the `trusttunnel`
+   runtime (the service and the routing) and `trusttunnel-client` as
+   its dependencies (binaries in `/opt/trusttunnel_client`).
 4. Restarts `rpcd` so the new backend code is loaded, and runs
    `/etc/uci-defaults/40-luci-trusttunnel` immediately: it creates the
    firewall zone, the `lan → trusttunnel` forwarding and the Default
@@ -99,6 +100,12 @@ The script then:
 
 Run the installer again to pull a newer package and client binary and to
 refresh the signing keys; `/etc/config/trusttunnel` is left alone.
+
+The Diagnose and Tools pages are an optional add-on; install the
+`luci-app-trusttunnel-diagnostics` package separately from the same
+repository (`apk add luci-app-trusttunnel-diagnostics` on OpenWrt 25.12+,
+`opkg install luci-app-trusttunnel-diagnostics` on 22.03–24.10). The core
+app works without it.
 
 ## Configuration
 
@@ -219,8 +226,9 @@ address as seen from the LAN) with the credentials above.
 
 ## LuCI pages
 
-The Status, Client log and Diagnostics pages live under **Services →
-TrustTunnel** (Settings is covered under Configuration).
+The Status, Settings, Client log and Versions pages live under **Services
+→ TrustTunnel**; the Diagnose and Tools pages come from the optional
+`luci-app-trusttunnel-diagnostics` package (see Installation).
 
 ### Status page
 
@@ -425,12 +433,14 @@ Run the uninstaller:
 sh -c "$(wget -O - https://raw.githubusercontent.com/i-zhirov/trusttunnel-openwrt/main/uninstall.sh)"
 ```
 
-It halts and disables the service, removes both packages, tears down the
-repository configuration and the signing keys the installer put in place,
-deletes the client binaries and caches (plus the leftovers of earlier
-package versions), restarts `rpcd` and checks the kernel for leftover
-routing state. It asks whether to remove the firewall zone (default: yes)
-and the settings file (default: no — a reinstall keeps it).
+It halts and disables the service, removes the packages (the app, the
+runtime and the client, plus the optional diagnostics package when it is
+installed), tears down the repository configuration and the signing keys
+the installer put in place, deletes the client binaries and caches (plus the
+leftovers of earlier package versions), restarts `rpcd` and checks the
+kernel for leftover routing state. It asks whether to remove the firewall
+zone (default: yes) and the settings file (default: no — a reinstall
+keeps it).
 
 Flags: `-y` answers every question with yes; `-c` keeps
 `/etc/config/trusttunnel` without asking. Shared dependencies (`kmod-tun`,

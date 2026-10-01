@@ -80,6 +80,7 @@ fi
 node "$HERE/stub/server.js" \
 	--port "$PORT" \
 	--app "$ROOT/packages/luci-app-trusttunnel/htdocs" \
+	--app "$ROOT/packages/luci-app-trusttunnel-diagnostics/htdocs" \
 	--luci "$LUCI_HTDOCS" \
 	--goldens "$ROOT/tests/backend/goldens" \
 	$THEME_ARG &

@@ -42,12 +42,12 @@ jobs:
           for path in \
             install.sh \
             uninstall.sh \
-            packages/luci-app-trusttunnel/root/etc/init.d/trusttunnel \
-            packages/luci-app-trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel \
-            packages/luci-app-trusttunnel/root/etc/hotplug.d/net/40-trusttunnel \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/gen-config \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/routing \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/uci-export; do
+            packages/trusttunnel/root/etc/init.d/trusttunnel \
+            packages/trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel \
+            packages/trusttunnel/root/etc/hotplug.d/net/40-trusttunnel \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/gen-config \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/routing \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/uci-export; do
             mode=$(git ls-files -s -- "$path" | awk '{print $1}')
             if [ "$mode" != "100755" ]; then
               echo "::error::$path has index mode $mode, expected 100755"
@@ -131,15 +131,17 @@ jobs:
             install.sh \
             uninstall.sh \
             tests/run.sh \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/records.sh \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/gen-config \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/routing \
-            packages/luci-app-trusttunnel/root/usr/libexec/trusttunnel/uci-export \
-            packages/luci-app-trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel \
-            packages/luci-app-trusttunnel/root/etc/hotplug.d/net/40-trusttunnel \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/records.sh \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/tt-uci.sh \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/gen-config \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/routing \
+            packages/trusttunnel/root/usr/libexec/trusttunnel/uci-export \
+            packages/trusttunnel/root/etc/uci-defaults/40-luci-trusttunnel \
+            packages/trusttunnel/root/etc/hotplug.d/net/40-trusttunnel \
             tests/test_deps.sh \
             tests/test_hotplug.sh \
             tests/test_release_workflow.sh \
+            tests/test_tt_uci.sh \
             tests/test_uci_defaults.sh \
             tests/test_init_regenerate.sh \
             tests/integration/run.sh \
@@ -156,32 +158,35 @@ jobs:
       # A syntax error in the init script would take the service down at
       # boot, so it is parsed standalone in addition to the lint above.
       - name: Check the init script syntax
-        run: sh -n packages/luci-app-trusttunnel/root/etc/init.d/trusttunnel
+        run: sh -n packages/trusttunnel/root/etc/init.d/trusttunnel
 
-      # The backend calls module functions (math/fs/ubus/uci) that live
-      # outside the ucode core; a used function without a matching import
-      # parses fine but throws at runtime (the tmp_path() rand() case),
-      # so every used module function must appear in the module's import
-      # line. A function counts as used when it is followed by "(" as a
-      # whole word, and as imported when its module import line contains
-      # it as a whole word.
+      # The backend and its shared module call functions (math/fs/ubus/
+      # uci) that live outside the ucode core; a used function without a
+      # matching import parses fine but throws at runtime (the tmp_path()
+      # rand() case), so every used module function must appear in the
+      # module's import line. A function counts as used when it is
+      # followed by "(" as a whole word, and as imported when its module
+      # import line contains it as a whole word.
       - name: Check that every used ucode module function is imported
         run: |
-          backend=packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel
           fail=0
-          for pair in \
-            math:rand math:srand math:sqrt math:pow math:abs \
-            fs:readfile fs:writefile fs:popen fs:access fs:unlink \
-            fs:stat fs:mkdir fs:chmod fs:mkstemp fs:opendir \
-            ubus:connect uci:cursor; do
-            mod=${pair%%:*}
-            fn=${pair#*:}
-            if grep -Eq "[[:<:]]${fn}\(" "$backend"; then
-              if ! grep -Eq "^[[:space:]]*import \{[^}]*[[:<:]]${fn}[[:>:]][^}]*\} from '${mod}'" "$backend"; then
-                echo "::error::$mod.$fn() is used in $backend but not imported from '$mod'"
-                fail=1
+          for backend in \
+            packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel \
+            packages/trusttunnel/root/usr/share/ucode/trusttunnel.uc; do
+            for pair in \
+              math:rand math:srand math:sqrt math:pow math:abs \
+              fs:readfile fs:writefile fs:popen fs:access fs:unlink \
+              fs:stat fs:mkdir fs:chmod fs:mkstemp fs:opendir \
+              ubus:connect uci:cursor; do
+              mod=${pair%%:*}
+              fn=${pair#*:}
+              if grep -Eq "[[:<:]]${fn}\(" "$backend"; then
+                if ! grep -Eq "^[[:space:]]*import \{[^}]*[[:<:]]${fn}[[:>:]][^}]*\} from '${mod}'" "$backend"; then
+                  echo "::error::$mod.$fn() is used in $backend but not imported from '$mod'"
+                  fail=1
+                fi
               fi
-            fi
+            done
           done
           exit "$fail"
 
@@ -195,8 +200,12 @@ jobs:
       # fails if the compiler accepts it.
       - name: Check the backend syntax with the pinned ucode
         run: |
+          # The backend imports the shared 'trusttunnel' module by name;
+          # the extra -L resolves it to the tree's copy of
+          # /usr/share/ucode/trusttunnel.uc.
           if ! docker run --rm -v "$PWD:/ws" -w /ws tt-ucode-gate \
               /opt/ucode/build/ucode -L "/opt/ucode/build/*.so" \
+              -L "/ws/packages/trusttunnel/root/usr/share/ucode/*.uc" \
               -c packages/luci-app-trusttunnel/root/usr/share/rpcd/ucode/luci.trusttunnel; then
             echo "::error::the backend does not compile under the pinned ucode"
             exit 1
@@ -234,17 +243,22 @@ jobs:
       # appears in the file.
       - name: Check that every LuCI module used by the views is required
         run: |
-          views=packages/luci-app-trusttunnel/htdocs/luci-static/resources/view/trusttunnel
+          # The views are split across the core package and the optional
+          # diagnostics package; both trees are checked.
           fail=0
-          for f in "$views"/*.js; do
-            [ -f "$f" ] || continue
-            for mod in ui dom rpc uci form view poll fs network validation; do
-              if grep -Eq "[[:<:]]${mod}\.[A-Za-z_][A-Za-z0-9_]*\(" "$f"; then
-                if ! grep -Eq "^'require ${mod}'" "$f"; then
-                  echo "::error::$(basename "$f") uses $mod.*() but does not declare 'require $mod'"
-                  fail=1
+          for views in \
+            packages/luci-app-trusttunnel/htdocs/luci-static/resources/view/trusttunnel \
+            packages/luci-app-trusttunnel-diagnostics/htdocs/luci-static/resources/view/trusttunnel; do
+            for f in "$views"/*.js; do
+              [ -f "$f" ] || continue
+              for mod in ui dom rpc uci form view poll fs network validation; do
+                if grep -Eq "[[:<:]]${mod}\.[A-Za-z_][A-Za-z0-9_]*\(" "$f"; then
+                  if ! grep -Eq "^'require ${mod}'" "$f"; then
+                    echo "::error::$(basename "$f") uses $mod.*() but does not declare 'require $mod'"
+                    fail=1
+                  fi
                 fi
-              fi
+              done
             done
           done
           exit "$fail"
@@ -256,11 +270,15 @@ jobs:
       - name: Check the JavaScript syntax of the views
         run: |
           fail=0
-          for f in packages/luci-app-trusttunnel/htdocs/luci-static/resources/view/trusttunnel/*.js; do
-            if ! node -e 'const vm = require("vm"); const fs = require("fs"); const src = fs.readFileSync(process.argv[1], "utf8"); new vm.Script("(function(){\n" + src + "\n})"); console.log("ok: " + process.argv[1]);' "$f"; then
-              echo "::error::$f failed to parse as JavaScript"
-              fail=1
-            fi
+          for views in \
+            packages/luci-app-trusttunnel/htdocs/luci-static/resources/view/trusttunnel \
+            packages/luci-app-trusttunnel-diagnostics/htdocs/luci-static/resources/view/trusttunnel; do
+            for f in "$views"/*.js; do
+              if ! node -e 'const vm = require("vm"); const fs = require("fs"); const src = fs.readFileSync(process.argv[1], "utf8"); new vm.Script("(function(){\n" + src + "\n})"); console.log("ok: " + process.argv[1]);' "$f"; then
+                echo "::error::$f failed to parse as JavaScript"
+                fail=1
+              fi
+            done
           done
           exit "$fail"
 
