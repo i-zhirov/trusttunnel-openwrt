@@ -1,7 +1,7 @@
 # TrustTunnel OpenWrt package repositories
 
 This site hosts the package repositories that
-[install.sh](https://raw.githubusercontent.com/i-zhirov/trusttunnel-openwrt/main/install.sh)
+[install.sh](https://raw.githubusercontent.com/TrustTunnel/TrustTunnelOpenWrt/master/install.sh)
 configures on the router:
 
 - [releases/](releases/) — the signed package feeds in the official
@@ -13,9 +13,9 @@ configures on the router:
   index, the public signing key and every released version of the
   packages. Repository URLs for the router (the arch is the device's own
   package architecture):
-  `https://i-zhirov.github.io/trusttunnel-openwrt/releases/25.12.5/packages/<arch>/trusttunnel/packages.adb`
+  `https://trusttunnel.github.io/TrustTunnelOpenWrt/releases/25.12.5/packages/<arch>/trusttunnel/packages.adb`
   and
-  `https://i-zhirov.github.io/trusttunnel-openwrt/releases/22.03.7/packages/<arch>/trusttunnel`
+  `https://trusttunnel.github.io/TrustTunnelOpenWrt/releases/22.03.7/packages/<arch>/trusttunnel`
 
 The repositories are cumulative: they serve every released version of
 the LuCI app — with the latest release (`__TAG__`) on top of all earlier
@@ -27,13 +27,13 @@ own, as a `client-v*` release: the repositories are re-published with
 the new client while the LuCI app stays at its current version.
 
 The GitHub
-[releases](https://github.com/i-zhirov/trusttunnel-openwrt/releases)
+[releases](https://github.com/TrustTunnel/TrustTunnelOpenWrt/releases)
 carry the same package files for manual download.
 
 ## Installing
 
 ```sh
-sh -c "$(wget -O - https://raw.githubusercontent.com/i-zhirov/trusttunnel-openwrt/main/install.sh)"
+sh -c "$(wget -O - https://raw.githubusercontent.com/TrustTunnel/TrustTunnelOpenWrt/master/install.sh)"
 ```
 
 ## Updating
@@ -59,11 +59,11 @@ specific `trusttunnel-client` version:
 
 ```sh
 # apk (25.12+), version as listed in the feed's index:
-apk add trusttunnel-client=1.0.49-r1
+apk add trusttunnel-client=1.1.7-r1
 # opkg (22.03–24.10) has no pkg=version syntax: download the versioned
 # ipk from the feed, install it (--force-downgrade is needed only when
 # a newer build is already installed) and hold it across upgrades:
-wget -O /tmp/tt-client.ipk https://i-zhirov.github.io/trusttunnel-openwrt/releases/22.03.7/packages/<arch>/trusttunnel/trusttunnel-client_1.0.49-1_<arch>.ipk
+wget -O /tmp/tt-client.ipk https://trusttunnel.github.io/TrustTunnelOpenWrt/releases/22.03.7/packages/<arch>/trusttunnel/trusttunnel-client_1.1.7-1_<arch>.ipk
 opkg install --force-downgrade /tmp/tt-client.ipk
 opkg flag hold trusttunnel-client
 ```

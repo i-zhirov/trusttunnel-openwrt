@@ -62,9 +62,9 @@ per-architecture builds but have seen less hands-on verification on real
 devices — reports from those platforms are especially valuable.
 
 Usage reports, bug reports and pull requests are welcome: open an
-[issue](https://github.com/i-zhirov/trusttunnel-openwrt/issues) for
+[issue](https://github.com/TrustTunnel/TrustTunnelOpenWrt/issues) for
 anything that does not behave, and
-[pull requests](https://github.com/i-zhirov/trusttunnel-openwrt/pulls)
+[pull requests](https://github.com/TrustTunnel/TrustTunnelOpenWrt/pulls)
 for fixes and improvements. When reporting a problem on a platform other
 than x86_64/mips, mention the router model and the OpenWrt release —
 device-specific quirks usually reproduce only with that context.
@@ -74,8 +74,12 @@ device-specific quirks usually reproduce only with that context.
 Run the installer:
 
 ```sh
-sh -c "$(wget -O - https://raw.githubusercontent.com/i-zhirov/trusttunnel-openwrt/main/install.sh)"
+sh -c "$(wget -O - https://raw.githubusercontent.com/TrustTunnel/TrustTunnelOpenWrt/master/install.sh)"
 ```
+
+Routers configured with an older installer URL can switch to the current
+repository by running this command again — it re-points the package
+manager at the current feed (settings and service state are preserved).
 
 The script then:
 
@@ -447,7 +451,7 @@ one the feed lists.
 Run the uninstaller:
 
 ```sh
-sh -c "$(wget -O - https://raw.githubusercontent.com/i-zhirov/trusttunnel-openwrt/main/uninstall.sh)"
+sh -c "$(wget -O - https://raw.githubusercontent.com/TrustTunnel/TrustTunnelOpenWrt/master/uninstall.sh)"
 ```
 
 It halts and disables the service, removes the packages (the app, the
@@ -580,11 +584,11 @@ an IP address, an `IP:port` pair, or a CIDR range.
   the service is off.
 - **Repositories and signing.** The repositories are served from the
   GitHub Pages site of this project
-  (`https://i-zhirov.github.io/trusttunnel-openwrt`), in the official
+  (`https://trusttunnel.github.io/TrustTunnelOpenWrt`), in the official
   OpenWrt layout `releases/<version>/packages/<arch>/trusttunnel/`: the
   `25.12.5` tree holds the apk feeds, the `22.03.7` tree the opkg feeds —
   one signed feed directory per device architecture. A release is a
-  `vX.Y.Z` tag push on main: the release workflow builds the packages,
+  `vX.Y.Z` tag push on master: the release workflow builds the packages,
   verifies them end to end, and publishes the repositories, the site and
   a GitHub release from the tag (the pipeline refuses runs that are not
   tag pushes). The site is served straight from CI, and no branch ever

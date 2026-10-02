@@ -5,5 +5,5 @@
 # template of this repository.
 github:
   source:
-    branch: main
+    branch: master
     path: repo-site/
