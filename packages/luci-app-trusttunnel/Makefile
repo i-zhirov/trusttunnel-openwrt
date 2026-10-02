@@ -32,7 +32,7 @@ LUCI_DESCRIPTION:=The TrustTunnel LuCI interface: status, settings, client log a
 LUCI_DEPENDS:=+trusttunnel +luci-base +curl +ucode-mod-math
 # Without this override luci.mk would substitute the LuCI project's own
 # address, and package metadata would point support at the wrong place.
-LUCI_URL:=https://github.com/i-zhirov/trusttunnel-openwrt
+LUCI_URL:=https://github.com/TrustTunnel/TrustTunnelOpenWrt
 LUCI_PKGARCH:=all
 
 # The UCI config is the runtime package's conffile (/etc/config/trusttunnel

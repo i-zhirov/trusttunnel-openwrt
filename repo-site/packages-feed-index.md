@@ -1,6 +1,6 @@
 ---
 layout: repo-index
-title: "trusttunnel feed — __ARCH__ — trusttunnel-openwrt"
+title: "trusttunnel feed — __ARCH__ — TrustTunnelOpenWrt"
 ---
 
 # trusttunnel feed — `__ARCH__`

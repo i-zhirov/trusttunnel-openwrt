@@ -31,7 +31,7 @@ name: integration
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ master ]
   pull_request:
 
 # A per-ref group: a new push to the same branch supersedes the previous

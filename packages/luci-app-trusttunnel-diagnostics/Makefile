@@ -19,7 +19,7 @@ LUCI_DESCRIPTION:=Adds the Diagnose and Tools pages to the TrustTunnel LuCI inte
 # brings luci-base and everything the app itself needs); the core must
 # NOT depend back on this package — it is an optional add-on.
 LUCI_DEPENDS:=+luci-app-trusttunnel +luci-base
-LUCI_URL:=https://github.com/i-zhirov/trusttunnel-openwrt
+LUCI_URL:=https://github.com/TrustTunnel/TrustTunnelOpenWrt
 LUCI_PKGARCH:=all
 
 include $(TOPDIR)/feeds/luci/luci.mk
