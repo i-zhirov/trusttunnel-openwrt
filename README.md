@@ -1,5 +1,14 @@
 # TrustTunnel distribution for OpenWrt
 
+> **This repository has moved and is now archived.** The project lives at
+> [TrustTunnel/TrustTunnelOpenWrt](https://github.com/TrustTunnel/TrustTunnelOpenWrt)
+> — code, releases and the signed package repositories are maintained
+> there (`https://trusttunnel.github.io/TrustTunnelOpenWrt`). This
+> repository's Pages site keeps serving the last released packages, so
+> installed routers keep working; to switch feeds and receive updates,
+> re-run the installer from the new repository:
+> `sh -c "$(wget -O - https://raw.githubusercontent.com/TrustTunnel/TrustTunnelOpenWrt/master/install.sh)"`
+
 TrustTunnel client daemon for OpenWrt routers: it runs the tunnel, exposes
 a LuCI control page and delivers the tunnel to the LAN. Targets OpenWrt
 **22.03 and newer** (`apk`-based systems 25.12+, `opkg`-based 22.03–24.10).
