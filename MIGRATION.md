@@ -23,6 +23,22 @@ it after the go-live step completes.
   private — the release pipeline and all verification harnesses are
   hermetic and never depend on the public Pages URL.
 
+## Progress
+
+- **Phase 1 — done.** PR #22 (`repo: retarget URLs and branch for the
+  TrustTunnel org move`) merged as `b3e1018` on 2026-10-02.
+- **Phase 2 — in progress.** Target renamed to `TrustTunnelOpenWrt`
+  (still private, no branches). Signing keys **rotated**: new EC P-256
+  (apk) and usign Ed25519 (opkg) keypairs generated 2026-10-02; the
+  private halves are the `TT_APK_SIGN_KEY` / `TT_OPKG_SIGN_KEY`
+  secrets on the new repo (set) and are also kept outside the repo at
+  `~/stuff/projects/trusttunnel-openwrt-keys/` (back them up); the new
+  public halves are committed by the `release/rotate-signing-keys`
+  PR. **Pages cannot be enabled while the repo is private on the
+  current plan** (API: "Your current plan does not support GitHub
+  Pages for this repository") — Pages enablement moved to the go-live
+  block, right after the visibility flip.
+
 ## Verified facts (2026-10-02, against `origin/main`)
 
 - Target repo exists, is empty (no branches, no releases), default
@@ -32,7 +48,10 @@ it after the go-live step completes.
   archive the old repo).
 - The org already uses GitHub Pages (`trusttunnel.org` site), so no
   org-level Pages friction. Pages is **not** enabled on the target repo
-  yet (API returns 404).
+  yet (API returns 404) and **cannot be enabled while the repo is
+  private on the current plan** — the create-Pages API answers "Your
+  current plan does not support GitHub Pages for this repository".
+  Pages enablement is part of the go-live block now.
 - The old repo has **10 releases** (`v1.0.26` … `v1.0.35`) and matching
   tags.
 - **Releases are tag-based** (release.yml): `on: push: tags:
@@ -169,7 +188,10 @@ Notes:
 
 1. Make the target repo **public** (Settings → Danger Zone). This is
    what unblocks router access to the feeds.
-2. **Archive-continuity decision** (see Notes) — two options:
+2. Enable Pages on the target repo: Settings → Pages → Source:
+   **GitHub Actions** (only possible once the repo is public on the
+   current plan).
+3. **Archive-continuity decision** (see Notes) — two options:
    - **Option A — complete archive on the new site (expensive):**
      push the tags `v1.0.26` → `v1.0.35` in **strictly ascending
      order, one at a time**, waiting for each release run to complete
@@ -187,10 +209,10 @@ Notes:
      gracefully). The new site carries `1.0.36+`; `v1.0.26`–`v1.0.35`
      remain installable from the **old site, which keeps serving after
      the archive**.
-3. Verify publicly: `curl -I` the site root and a feed URL
+4. Verify publicly: `curl -I` the site root and a feed URL
    (`.../releases/25.12.5/packages/x86_64/trusttunnel/packages.adb`);
    confirm the canonical-case URLs resolve.
-4. Old repo wrap-up — **before** archiving (archived repos are
+5. Old repo wrap-up — **before** archiving (archived repos are
    read-only):
    - edit the old repo's README/description to point at the new repo;
    - archive `i-zhirov/trusttunnel-openwrt` (Danger Zone → Archive).
@@ -198,7 +220,7 @@ Notes:
      — installed routers stay functional but receive no further
      updates until they re-run the new `install.sh` (per the
      archived-repo decision).
-5. Communicate: release notes on the `1.0.36` release with the
+6. Communicate: release notes on the `1.0.36` release with the
    migration instruction for existing routers:
    `sh -c "$(wget -O - https://raw.githubusercontent.com/TrustTunnel/TrustTunnelOpenWrt/master/install.sh)"`
 
@@ -218,9 +240,11 @@ Notes:
   site, new ones on the new site — but a migrated router pinned to an
   old version would need the old feed URL. Acceptable per the
   archived-repo decision; Option A avoids the split at 10× CI cost.
-- **Key rotation:** if the signing keys are ever rotated, old routers on
-  the frozen feed need `install.sh` re-run regardless — already covered
-  by the migration note.
+- **Key rotation (done 2026-10-02):** new keypairs were generated and
+  the public halves committed; old routers on the frozen old feed keep
+  the old keys (the archived site and its signatures are unchanged), so
+  they need `install.sh` re-run only to switch to the new repository —
+  which also brings the new public keys.
 - **Legacy filters:** the "-lite / dropped i18n" filter and the merge
   patterns in release.yml already cover the current package set
   (`luci-app-trusttunnel`, `luci-app-trusttunnel-diagnostics`,
