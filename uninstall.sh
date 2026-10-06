@@ -1,6 +1,6 @@
 #!/bin/sh
 # Uninstall of luci-app-trusttunnel for OpenWrt 22.03+.
-#   sh -c "$(wget -O - https://raw.githubusercontent.com/TrustTunnel/TrustTunnelOpenWrt/master/uninstall.sh)"
+#   sh -c "$(wget -O - https://raw.githubusercontent.com/i-zhirov/trusttunnel-openwrt/main/uninstall.sh)"
 #
 # Stops the service, removes it from auto-start, deletes the packages in
 # one package-manager call (apk on 25.12+, opkg on 22.03-24.10; the

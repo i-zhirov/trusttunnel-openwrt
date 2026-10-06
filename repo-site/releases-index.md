@@ -1,9 +1,9 @@
 ---
 layout: repo-index
-title: "releases — TrustTunnelOpenWrt"
+title: "releases — trusttunnel-openwrt"
 ---
 
-# releases — TrustTunnelOpenWrt
+# releases — trusttunnel-openwrt
 
 Signed package repositories in the official OpenWrt layout
 (`releases/<version>/packages/<arch>/<feed>/`): one release tree per

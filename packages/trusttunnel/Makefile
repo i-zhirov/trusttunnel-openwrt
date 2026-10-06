@@ -29,7 +29,7 @@ define Package/trusttunnel
   SECTION:=net
   CATEGORY:=Network
   TITLE:=TrustTunnel full-tunnel runtime
-  URL:=https://github.com/TrustTunnel/TrustTunnelOpenWrt
+  URL:=https://github.com/i-zhirov/trusttunnel-openwrt
   # The runtime is pure shell and config: one noarch package serves
   # every device architecture (the ipk name carries _all, like the LuCI
   # apps). PKGARCH is set INSIDE the package define — Package/Default

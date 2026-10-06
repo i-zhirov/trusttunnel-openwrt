@@ -71,11 +71,11 @@ jobs:
       - name: Check the run is a v* or client-v* tag push (or a main dispatch)
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "$GITHUB_REF" != "refs/heads/master" ]; then
-              echo "::error::workflow_dispatch republishes from master only (got ref $GITHUB_REF); refusing the run"
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "::error::workflow_dispatch republishes from main only (got ref $GITHUB_REF); refusing the run"
               exit 1
             fi
-            echo "Dispatch on master: republishing the repositories and the site (no release)."
+            echo "Dispatch on main: republishing the repositories and the site (no release)."
             exit 0
           fi
           case "$GITHUB_REF" in
@@ -415,7 +415,7 @@ jobs:
           # releases/25.12.5/, ipk in releases/22.03.7/ (the matrix
           # version IS the tree segment; the official
           # releases/<version>/packages/<arch>/<feed>/ layout).
-          url="https://trusttunnel.github.io/TrustTunnelOpenWrt/releases/${{ matrix.version }}/packages/${{ matrix.arch }}/trusttunnel/${pkg}"
+          url="https://i-zhirov.github.io/trusttunnel-openwrt/releases/${{ matrix.version }}/packages/${{ matrix.arch }}/trusttunnel/${pkg}"
           mkdir -p dist
           tmp="$(mktemp)"
           if ! curl -fsSL -o "$tmp" "$url" 2>/dev/null; then
@@ -428,7 +428,7 @@ jobs:
           # produced it matches the current Makefile. The recipe copy
           # lives at the release-tree root (one per tree, shared by every
           # architecture — not inside the feed directories).
-          mkurl="https://trusttunnel.github.io/TrustTunnelOpenWrt/releases/${{ matrix.version }}/trusttunnel-client.Makefile"
+          mkurl="https://i-zhirov.github.io/trusttunnel-openwrt/releases/${{ matrix.version }}/trusttunnel-client.Makefile"
           tmpmk="$(mktemp)"
           if curl -fsSL -o "$tmpmk" "$mkurl" 2>/dev/null \
             && diff -q "$tmpmk" packages/trusttunnel-client/Makefile >/dev/null; then
@@ -659,7 +659,7 @@ jobs:
     # under the default success() rule — but a skipped dependency must
     # not block the publish, while a FAILED build-client (or anything
     # else) still must.
-    if: ${{ !failure() && !cancelled() && (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master')) }}
+    if: ${{ !failure() && !cancelled() && (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     steps:
       # Provides the repo-site templates and the committed public halves
@@ -1354,7 +1354,7 @@ jobs:
         with:
           path: _site
 
-      # Publishes https://trusttunnel.github.io/TrustTunnelOpenWrt/ from
+      # Publishes https://i-zhirov.github.io/trusttunnel-openwrt/ from
       # the artifact — no branch is involved.
       - name: Deploy to GitHub Pages
         uses: actions/deploy-pages@v4

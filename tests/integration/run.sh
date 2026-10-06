@@ -438,9 +438,9 @@ st_pkgs() {
 		fi
 	else
 		# Download the matching assets of the latest (or pinned) release.
-		_api="https://api.github.com/repos/TrustTunnel/TrustTunnelOpenWrt/releases/latest"
+		_api="https://api.github.com/repos/i-zhirov/trusttunnel-openwrt/releases/latest"
 		[ "$TT_RELEASE_TAG" = "latest" ] || \
-			_api="https://api.github.com/repos/TrustTunnel/TrustTunnelOpenWrt/releases/tags/$TT_RELEASE_TAG"
+			_api="https://api.github.com/repos/i-zhirov/trusttunnel-openwrt/releases/tags/$TT_RELEASE_TAG"
 		_json=$(retry_out 3 5 curl -fsSL "$_api" 2>/dev/null) || _json=""
 		if [ -z "$_json" ]; then
 			_tt_fail "could not fetch the release info from $_api"
@@ -457,7 +457,7 @@ for a in r.get("assets", []):
 		_missing=0
 		for _name in $_names; do
 			if ! retry 3 5 curl -fsSL -o "$SCRATCH/pkgs/$_name" \
-					"https://github.com/TrustTunnel/TrustTunnelOpenWrt/releases/download/$_tag/$_name" \
+					"https://github.com/i-zhirov/trusttunnel-openwrt/releases/download/$_tag/$_name" \
 					>/dev/null 2>&1; then
 				_missing=$((_missing + 1))
 			fi

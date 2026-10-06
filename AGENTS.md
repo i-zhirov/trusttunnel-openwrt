@@ -60,7 +60,7 @@ tests/integration/            Dockerized end-to-end suite: real install.sh
                               against a router and a TrustTunnel endpoint
                               container (see "Testing"; own workflow)
 .github/workflows/ci.yml      CI gates (test + lint + contract checks)
-.github/workflows/integration.yml  End-to-end suite on PRs/master/dispatch
+.github/workflows/integration.yml  End-to-end suite on PRs/main/dispatch
 .github/workflows/release.yml Release pipeline (build, sign, verify, publish)
 key-build.pub, opkg-key.pub   PUBLIC halves of the repo signing keys (committed)
 LICENSE                       Apache-2.0
@@ -555,7 +555,7 @@ absent, so the plain suite runs anywhere.
   `TT_PM=apk|opkg`, `TT_REPO_DIR`, `TT_FILTER`,
   `TT_LOGS_DIR`, `TT_RELEASE_TAG` — see `tests/integration/README.md`.
   Docker-gated (skip 77), deliberately NOT picked up by `tests/run.sh`;
-  `integration.yml` runs it on PRs/master/dispatch, and the release
+  `integration.yml` runs it on PRs/main/dispatch, and the release
   pipeline reuses it against the release's own artifacts. Every network
   request in the docker harnesses is retried (transient registry/mirror/
   lab-net failures must not fail a run): the `retry`/`retry_out` helpers
@@ -657,7 +657,7 @@ reproducible equivalents:
   they are wrapped in a function expression).
 
 Separate from ci.yml, `.github/workflows/integration.yml` runs the
-dockerized end-to-end suite on PRs, master pushes and manual dispatch: a
+dockerized end-to-end suite on PRs, main pushes and manual dispatch: a
 matrix job builds this tree's packages with the pinned SDKs (with the
 `restricted-feeds.sh --verify` gate against the SDK image's
 `feeds.conf.default`), then one job per package manager runs
@@ -674,7 +674,7 @@ never publishes).
 
 The `gate` job runs first and refuses any run that is not a `v*` or
 `client-v*` tag push; `workflow_dispatch` is the sole exception — it must
-run on master and republishes the repositories and the site only, never a
+run on main and republishes the repositories and the site only, never a
 GitHub release. A mis-triggered run fails before any SDK work starts.
 
 - `build` — the LuCI app packages (`luci-app-trusttunnel` and the
@@ -805,7 +805,7 @@ package managers rely on. No branch ever holds packages.
   concerns (for example with a semicolon) signals a commit that must
   be split. A body is optional; when present, wrap it at 72 chars,
   explain what changed and why, and do not prefix paragraphs with
-  file names. Merged to `master` via PRs; feature work happens on
+  file names. Merged to `main` via PRs; feature work happens on
   branches.
 - **i18n**: the interface is English-only — no translation package is
   built or installed. New user-visible strings in views still use `_()`,

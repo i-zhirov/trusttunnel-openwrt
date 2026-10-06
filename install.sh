@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install of luci-app-trusttunnel for OpenWrt 22.03+.
-#   sh -c "$(wget -O - https://raw.githubusercontent.com/TrustTunnel/TrustTunnelOpenWrt/master/install.sh)"
+#   sh -c "$(wget -O - https://raw.githubusercontent.com/i-zhirov/trusttunnel-openwrt/main/install.sh)"
 # Configures the trusttunnel package repository (apk on 25.12+, opkg on
 # 22.03-24.10), installs the LuCI application with its dependencies, then
 # refreshes rpcd and seeds the default routing profile. A running service is
@@ -25,7 +25,7 @@ fi
 
 # The repository base URL; overridable for mirrors and testing. The keys
 # and the index URLs are derived from it.
-TT_REPO_URL="${TT_REPO_URL:-https://trusttunnel.github.io/TrustTunnelOpenWrt}"
+TT_REPO_URL="${TT_REPO_URL:-https://i-zhirov.github.io/trusttunnel-openwrt}"
 
 # The release tree segment mirrors the official OpenWrt layout: the
 # repositories live under releases/<version>/, where <version> is the

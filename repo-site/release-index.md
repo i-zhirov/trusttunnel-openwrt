@@ -1,6 +1,6 @@
 ---
 layout: repo-index
-title: "releases — __TREE__ — TrustTunnelOpenWrt"
+title: "releases — __TREE__ — trusttunnel-openwrt"
 ---
 
 # releases — `__TREE__`
@@ -15,7 +15,7 @@ architecture — `DISTRIB_ARCH` in `/etc/openwrt_release`, or
 `/etc/apk/arch` on 25.12+):
 
 ```text
-https://trusttunnel.github.io/TrustTunnelOpenWrt/releases/__TREE__/packages/<arch>/trusttunnel
+https://i-zhirov.github.io/trusttunnel-openwrt/releases/__TREE__/packages/<arch>/trusttunnel
 ```
 
 Architectures:
